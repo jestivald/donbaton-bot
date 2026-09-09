@@ -284,6 +284,36 @@ async def test_custom_devices_preserved_and_early_renewal_blocked_but_topup_allo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('panel_limit,expected', [(None, 0), (0, 0), (8, 8)])
+async def test_import_preserves_actual_panel_device_rights_and_original_bot_audit(monkeypatch, panel_limit, expected):
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, target, snapshot, _ = await legacy_seed(db, devices=1, custom=True)
+        snapshot['panel']['hwid_device_limit'] = panel_limit
+        quota = await activate(db, sub, target, snapshot)
+        assert quota.legacy_state['snapshot']['subscription']['device_limit'] == 1
+        assert quota.legacy_state['snapshot']['panel']['hwid_device_limit'] is panel_limit
+        assert sub.device_limit == expected
+        sub.device_limit = 1  # A generic sync must not reduce the actual preserved right.
+        payload = await apply_panel_policy(db, sub, {}, panel_user=sample(BASELINE), now=NOW)
+        assert sub.device_limit == payload['hwid_device_limit'] == expected
+        end = sub.end_date
+        sub.status = 'expired'
+        await update_entitlement(db, sub, target, now=end + timedelta(seconds=1))
+        assert sub.device_limit == target.device_limit
+        assert quota.legacy_state['snapshot']['subscription']['device_limit'] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('panel_limit', [-1, True, '3', 3.0])
+async def test_import_rejects_ambiguous_panel_device_limits(monkeypatch, panel_limit):
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, target, snapshot, _ = await legacy_seed(db)
+        snapshot['panel']['hwid_device_limit'] = panel_limit
+        with pytest.raises(LtePolicyError, match='hwid_device_limit'):
+            await import_legacy_quota(db, sub, target, snapshot=snapshot, **IMPORT, now=NOW)
+
+
+@pytest.mark.asyncio
 async def test_unlimited_is_explicit_and_cannot_sell_useless_topups(monkeypatch):
     async with memory_session(monkeypatch, TABLES) as db:
         sub, target, snapshot, _ = await legacy_seed(db, base_gb=0, custom=True, strategy='NO_RESET')

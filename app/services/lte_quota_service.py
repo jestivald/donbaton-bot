@@ -25,6 +25,7 @@ from app.services.lte_accounting_service import (
     ceil_units,
     legacy_budget,
     legacy_compatibility_end,
+    legacy_device_limit,
     legacy_is_unlimited,
     legacy_pool_boundary,
     physical_counter_delta,
@@ -355,6 +356,7 @@ async def import_legacy_quota(
     subscription.purchased_traffic_gb = 0
     subscription.traffic_reset_at = None
     subscription.traffic_used_gb = 0.0
+    subscription.device_limit = legacy_device_limit(state)
     subscription.connected_squads = list(tariff.allowed_squads)
     if state['snapshot']['panel']['status'] == 'DISABLED':
         subscription.status = 'disabled'
@@ -917,9 +919,8 @@ async def apply_panel_policy(db, subscription, payload, *, panel_user=None, now=
             paid_until=subscription.end_date,
         )
     if quota.legacy_state and now < legacy_compatibility_end(quota.legacy_state):
-        original = quota.legacy_state['snapshot']['subscription']
-        subscription.device_limit = original['device_limit']
-        result['hwid_device_limit'] = original['device_limit']
+        subscription.device_limit = legacy_device_limit(quota.legacy_state)
+        result['hwid_device_limit'] = subscription.device_limit
     status = await _with_telemetry_status(_status(quota, topups, now), now=now, heartbeat=heartbeat)
     subscription._lte_quota_status = status
     active = subscription.status in ('active', 'trial') and _now(subscription.end_date) > now

@@ -28,7 +28,10 @@ def configured(monkeypatch):
 
 async def test_parallel_duplicate_import_keeps_one_original_snapshot(postgres_database):
     async with postgres_sessions(postgres_database, TABLES, count=3) as (first, second, watcher):
-        sub, target, source, _ = await legacy_seed(first, grants=[(1, NOW + timedelta(days=30))])
+        sub, target, source, _ = await legacy_seed(
+            first, grants=[(1, NOW + timedelta(days=30))], devices=1, custom=True
+        )
+        source['panel']['hwid_device_limit'] = None
         other = await second.get(Subscription, sub.id)
         locked = asyncio.Event()
 
@@ -46,6 +49,9 @@ async def test_parallel_duplicate_import_keeps_one_original_snapshot(postgres_da
         assert snapshots == [source, source]
         assert (await first.execute(select(func.count()).select_from(LteQuota))).scalar_one() == 1
         assert (await first.execute(select(func.count()).select_from(TrafficPurchase))).scalar_one() == 1
+        await first.refresh(sub)
+        assert sub.device_limit == 0
+        assert snapshots[0]['subscription']['device_limit'] == 1
 
 
 async def test_parallel_samples_refresh_legacy_json_instead_of_losing_or_doubling_usage(postgres_database):

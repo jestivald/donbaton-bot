@@ -192,6 +192,8 @@ def build_legacy_state(*, snapshot, migration_id, plan_sha256, counter_epoch, ta
             raise LegacyAccountingError('renewal_requires_expiry must be explicit')
         panel = source['panel']
         _integer(panel['id'], 'panel.id', minimum=1)
+        if 'hwid_device_limit' in panel and panel['hwid_device_limit'] is not None:
+            _integer(panel['hwid_device_limit'], 'panel.hwid_device_limit')
         for name in ('limit_bytes', 'used_bytes', 'lifetime_bytes'):
             _integer(panel[name], f'panel.{name}')
         if panel['status'] not in ('ACTIVE', 'LIMITED', 'DISABLED', 'EXPIRED'):
@@ -304,6 +306,13 @@ def legacy_compatibility_end(state) -> datetime:
     original = timestamp(state['original_paid_until'])
     converted = state['runtime'].get('trial_converted_at')
     return min(original, timestamp(converted)) if converted else original
+
+
+def legacy_device_limit(state) -> int:
+    """Keep actual panel access while retaining the original bot value for audit."""
+    snapshot = state['snapshot']
+    limit = snapshot['panel'].get('hwid_device_limit', (snapshot['subscription'] or {}).get('device_limit', 0))
+    return 0 if limit is None else limit
 
 
 def legacy_pool_boundary(state) -> datetime:
