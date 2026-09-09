@@ -2381,7 +2381,7 @@
 - `docs/apple-iap-consumable-topups.md` — файл
 - `docs/apple-iap-ios-requirements.md` — файл
 - `docs/contests-api.md` — файл
-- `docs/donbaton-catalog.draft.json` — файл
+- `docs/donbaton-catalog.json` — файл
 - `docs/grace-access.md` — файл
 - `docs/handoffs/`
 - `docs/menu_stats_api_usage.md` — файл
