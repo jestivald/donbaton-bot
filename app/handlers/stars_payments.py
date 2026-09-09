@@ -484,6 +484,11 @@ async def handle_pre_checkout_query(query: types.PreCheckoutQuery):
                     )
                     return
                 texts = get_texts(user.language or DEFAULT_LANGUAGE)
+                from app.services.legacy_checkout_guard import RETIRED_CHECKOUT_MESSAGE, stars_invoice_retired
+
+                if await stars_invoice_retired(db, user.id, query.invoice_payload):
+                    await query.answer(ok=False, error_message=RETIRED_CHECKOUT_MESSAGE)
+                    return
         except Exception as db_error:
             logger.error('Ошибка подключения к БД в pre_checkout_query', db_error=db_error)
             await query.answer(
@@ -552,6 +557,23 @@ async def handle_successful_payment(message: types.Message, db: AsyncSession, st
 
         # Обработка оплаты платного триала
         if payment.invoice_payload and payment.invoice_payload.startswith('trial_'):
+            from app.services.legacy_checkout_guard import stars_invoice_retired
+
+            if await stars_invoice_retired(db, user.id, payment.invoice_payload):
+                # The old pre-checkout may have succeeded before cutover. The
+                # Stars finalizer credits once by the actual Telegram charge ID.
+                success = await PaymentService(message.bot).process_stars_payment(
+                    db=db,
+                    user_id=user.id,
+                    stars_amount=payment.total_amount,
+                    payload=payment.invoice_payload,
+                    telegram_payment_charge_id=payment.telegram_payment_charge_id,
+                )
+                if success:
+                    await message.answer('Счёт относится к прежним условиям. Оплаченные средства зачислены на баланс.')
+                else:
+                    await message.answer('Не удалось завершить зачисление. Обратитесь в поддержку с номером платежа.')
+                return
             await _handle_trial_payment(
                 message=message,
                 db=db,

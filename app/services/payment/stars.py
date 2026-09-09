@@ -141,6 +141,11 @@ class TelegramStarsMixin:
                 payload,
                 user_id,
             )
+            from app.services.legacy_checkout_guard import stars_invoice_retired
+
+            retired_invoice = await stars_invoice_retired(db, user_id, payload)
+            if retired_invoice:
+                simple_payload = None  # Preserve the charged amount; never buy replacement terms.
 
             transaction_description = (
                 f'Оплата подписки через Telegram Stars ({stars_amount} ⭐)'
@@ -180,6 +185,17 @@ class TelegramStarsMixin:
                     stars_amount=stars_amount,
                     payload_data=simple_payload,
                     telegram_payment_charge_id=telegram_payment_charge_id,
+                )
+
+            if retired_invoice:
+                return await self._finalize_stars_balance_topup(
+                    db=db,
+                    user=user,
+                    transaction=transaction,
+                    amount_kopeks=amount_kopeks,
+                    stars_amount=stars_amount,
+                    telegram_payment_charge_id=telegram_payment_charge_id,
+                    allow_auto_purchase=False,
                 )
 
             return await self._finalize_stars_balance_topup(
@@ -565,6 +581,7 @@ class TelegramStarsMixin:
         amount_kopeks: int,
         stars_amount: int,
         telegram_payment_charge_id: str,
+        allow_auto_purchase: bool = True,
     ) -> bool:
         """Начисляет баланс пользователю после оплаты Stars и запускает автопокупку."""
 
@@ -661,6 +678,13 @@ class TelegramStarsMixin:
                 )
             except Exception as error:  # pragma: no cover - диагностический лог
                 logger.error('Ошибка отправки уведомления о пополнении Stars', error=error, exc_info=True)
+
+        if not allow_auto_purchase:
+            # The user paid an obsolete invoice, not the new catalog offer.
+            from app.services.user_cart_service import user_cart_service
+
+            await user_cart_service.clear_topup_intent(user.id)
+            return True
 
         # Проверяем наличие сохраненной корзины для возврата к оформлению подписки
         try:

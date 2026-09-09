@@ -1,0 +1,11 @@
+ARG BOT_IMAGE
+FROM ${BOT_IMAGE}
+ARG XRAY_SHA256
+USER root
+COPY --chmod=0755 xray /usr/local/bin/xray
+COPY lte_telemetry.py /app/scripts/donbaton/lte_telemetry.py
+RUN test -n "${XRAY_SHA256}" && printf '%s  /usr/local/bin/xray\n' "${XRAY_SHA256}" | sha256sum -c -
+USER app
+HEALTHCHECK NONE
+ENTRYPOINT ["/app/.venv/bin/python", "/app/scripts/donbaton/lte_telemetry.py"]
+CMD ["--config", "/run/secrets/lte-telemetry.json"]

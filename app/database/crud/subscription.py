@@ -237,15 +237,27 @@ async def create_trial_subscription(
         existing = await get_subscription_by_user_id(db, user_id)
 
     if existing and existing.is_trial and existing.status == SubscriptionStatus.PENDING.value:
-        existing.status = SubscriptionStatus.ACTIVE.value
-        existing.start_date = datetime.now(UTC)
-        existing.end_date = end_date
-        existing.traffic_limit_gb = traffic_limit_gb
-        existing.device_limit = device_limit
-        existing.connected_squads = final_squads
-        existing.tariff_id = tariff_id
+        from app.services.lte_quota_service import activate_pending_trial_quota
+
+        await _lock_subscription_row(db, existing)
+        await db.refresh(existing, ['network_category', 'is_trial', 'status', 'start_date', 'end_date'])
+        if not existing.is_trial or existing.status != SubscriptionStatus.PENDING.value:
+            return existing
+        handled_trial = await activate_pending_trial_quota(db, existing, now=datetime.now(UTC))
+        if not handled_trial:
+            existing.status = SubscriptionStatus.ACTIVE.value
+            existing.start_date = datetime.now(UTC)
+            existing.end_date = end_date
+            existing.traffic_limit_gb = traffic_limit_gb
+            existing.device_limit = device_limit
+            existing.connected_squads = final_squads
+            existing.tariff_id = tariff_id
         if not existing.remnawave_short_id:
             existing.remnawave_short_id = await generate_unique_short_id(db)
+        if settings.DONBATON_LTE_ENABLED and settings.DONBATON_LTE_ACCOUNTING_READY:
+            from app.services.lte_quota_service import initialize_trial_quota
+
+            await initialize_trial_quota(db, existing, legacy_traffic_limit_gb=traffic_limit_gb)
         await db.commit()
         await db.refresh(existing)
         logger.info(
@@ -291,6 +303,11 @@ async def create_trial_subscription(
 
     db.add(subscription)
     try:
+        if settings.DONBATON_LTE_ENABLED and settings.DONBATON_LTE_ACCOUNTING_READY:
+            from app.services.lte_quota_service import initialize_trial_quota
+
+            await db.flush()
+            await initialize_trial_quota(db, subscription, legacy_traffic_limit_gb=traffic_limit_gb)
         await db.commit()
     except IntegrityError as exc:
         # Всегда откатываем транзакцию и убираем объект из сессии — независимо от
@@ -364,7 +381,7 @@ async def _revive_paid_subscription(
     Mirrors the classic extend branch — extend from the current end_date if still
     alive, otherwise start a fresh period from now and reset used traffic.
     """
-    await _prepare_donbaton_subscription(db, subscription)
+    await _prepare_donbaton_subscription(db, subscription, converting_trial=subscription.is_trial)
     now = datetime.now(UTC)
     was_alive = subscription.end_date is not None and subscription.end_date > now
 
@@ -572,10 +589,10 @@ async def resolve_trial_conversion_candidate(
     return await _alive_trial_conversion_candidate(db, user_id, existing)
 
 
-async def _prepare_donbaton_subscription(db, subscription, tariff_id=None, *, new=False):
+async def _prepare_donbaton_subscription(db, subscription, tariff_id=None, *, new=False, converting_trial=False):
     """Snapshot paid network terms before committing a creation or explicit switch."""
     from app.services.donbaton_catalog import network_category
-    from app.services.lte_quota_service import initialize_quota, update_entitlement
+    from app.services.lte_quota_service import initialize_quota, update_entitlement, validate_legacy_renewal
 
     target_id = tariff_id if tariff_id is not None else subscription.tariff_id
     if not target_id:
@@ -583,10 +600,12 @@ async def _prepare_donbaton_subscription(db, subscription, tariff_id=None, *, ne
     tariff = await db.get(Tariff, target_id)
     if not network_category(tariff) and not network_category(subscription):
         return
+    if network_category(subscription) and not new:
+        await validate_legacy_renewal(db, subscription)
     expired = subscription.end_date is not None and subscription.end_date <= datetime.now(UTC)
     if new:
         await initialize_quota(db, subscription, tariff)
-    elif expired or (tariff_id is not None and tariff_id != subscription.tariff_id):
+    elif expired or converting_trial or (tariff_id is not None and tariff_id != subscription.tariff_id):
         await update_entitlement(db, subscription, tariff)
     else:
         await initialize_quota(db, subscription, tariff)
@@ -765,6 +784,9 @@ async def replace_subscription(
     # Lock — защита от гонки с параллельным add_subscription_traffic / housekeeping
     # (юзер мог докупить трафик ровно в момент replace). Берём ДО любых мутаций.
     await _lock_subscription_row(db, subscription)
+    await _prepare_donbaton_subscription(
+        db, subscription, tariff_id, converting_trial=subscription.is_trial and not is_trial
+    )
 
     current_time = datetime.now(UTC)
     old_squads = set(subscription.connected_squads or [])
@@ -805,11 +827,12 @@ async def replace_subscription(
     # на случай если ранее в сессии были загружены TrafficPurchase объекты.
     from app.database.models import TrafficPurchase
 
-    await db.execute(
-        delete(TrafficPurchase)
-        .where(TrafficPurchase.subscription_id == subscription.id)
-        .execution_options(synchronize_session='fetch')
-    )
+    if not await _uses_lte_accounting(db, subscription):
+        await db.execute(
+            delete(TrafficPurchase)
+            .where(TrafficPurchase.subscription_id == subscription.id)
+            .execution_options(synchronize_session='fetch')
+        )
     subscription.purchased_traffic_gb = 0  # Сбрасываем докупленный трафик при замене подписки
     subscription.traffic_reset_at = None  # Сбрасываем дату сброса трафика
     subscription.device_limit = device_limit
@@ -884,6 +907,17 @@ async def _lock_subscription_row(db: AsyncSession, subscription: Subscription) -
     await db.refresh(subscription, ['traffic_limit_gb', 'purchased_traffic_gb', 'traffic_reset_at'])
 
 
+async def _uses_lte_accounting(db: AsyncSession, subscription: Subscription) -> bool:
+    """Read the category under the caller's row lock, including a concurrent import."""
+    from app.services.lte_quota_service import NETWORK_CATEGORIES, is_managed
+
+    if is_managed(subscription):
+        return True
+    # A migration may have committed after the caller loaded its ORM object.
+    category = await db.scalar(select(Subscription.network_category).where(Subscription.id == subscription.id))
+    return category in NETWORK_CATEGORIES
+
+
 async def _housekeep_expired_purchases(
     db: AsyncSession,
     subscription: Subscription,
@@ -909,6 +943,14 @@ async def _housekeep_expired_purchases(
 
     # Lock subscription row — защита от lost update с конкурентным add_subscription_traffic
     await _lock_subscription_row(db, subscription)
+
+    # Imported purchases are an audit record of the aggregate legacy pool.
+    # Their expiry and remaining rights are handled by the LTE ledger.
+    if await _uses_lte_accounting(db, subscription):
+        subscription.traffic_limit_gb = 0
+        subscription.purchased_traffic_gb = 0
+        subscription.traffic_reset_at = None
+        return 0
 
     current_total = subscription.traffic_limit_gb or 0
 
@@ -980,6 +1022,12 @@ async def _apply_base_limit_preserving_active_purchases(
 
     # Lock subscription row — защита от lost update с конкурентным add_subscription_traffic
     await _lock_subscription_row(db, subscription)
+
+    if await _uses_lte_accounting(db, subscription):
+        subscription.traffic_limit_gb = 0
+        subscription.purchased_traffic_gb = 0
+        subscription.traffic_reset_at = None
+        return 0, 0
 
     # Безлимит — на безлимитном тарифе докупки не имеют смысла. Удаляем ВСЕ
     # TrafficPurchase (включая активные), чтобы они не "воскресли" при возврате
@@ -1118,7 +1166,12 @@ async def extend_subscription(
     # Повторный lock в той же транзакции — noop (SubscriptionRenewalService уже мог
     # взять lock через with_for_update).
     await _lock_subscription_row(db, subscription)
-    await _prepare_donbaton_subscription(db, subscription, tariff_id)
+    await _prepare_donbaton_subscription(
+        db,
+        subscription,
+        tariff_id,
+        converting_trial=subscription.is_trial and convert_trial and tariff_id is not None and days > 0,
+    )
 
     logger.info('🔄 Продление подписки', subscription_id=subscription.id, days=days)
     logger.info(
@@ -1523,6 +1576,11 @@ async def add_subscription_devices(db: AsyncSession, subscription: Subscription,
         .execution_options(populate_existing=True)
     )
     subscription = locked_result.scalar_one()
+
+    from app.services.lte_quota_service import LtePolicyError, is_managed
+
+    if is_managed(subscription):
+        raise LtePolicyError('Количество устройств закреплено за тарифом Wi-Fi/LTE')
 
     # Check max device limit
     max_devices = settings.MAX_DEVICES_LIMIT
@@ -2519,8 +2577,10 @@ async def create_pending_subscription(
         existing_subscription = await get_subscription_by_user_id(db, user_id)
 
     if existing_subscription:
+        await _lock_subscription_row(db, existing_subscription)
+        await db.refresh(existing_subscription, ['network_category', 'is_trial', 'status', 'start_date', 'end_date'])
         if (
-            existing_subscription.status == SubscriptionStatus.ACTIVE.value
+            existing_subscription.status in ALIVE_SUBSCRIPTION_STATUSES
             and existing_subscription.end_date > current_time
         ):
             logger.warning(
@@ -2528,6 +2588,21 @@ async def create_pending_subscription(
                 trial_label=trial_label,
                 user_id=user_id,
             )
+            return existing_subscription
+
+        from app.services.lte_quota_service import LtePolicyError, is_managed
+
+        if is_managed(existing_subscription):
+            if (
+                not is_trial
+                or not existing_subscription.is_trial
+                or existing_subscription.status != SubscriptionStatus.PENDING.value
+            ):
+                raise LtePolicyError('Использованную подписку нельзя повторно выдать как пробный пакет')
+            # The unpaid retry still represents the original offer. Its quota,
+            # duration and device allowance are moved only on actual activation.
+            await db.commit()
+            await db.refresh(existing_subscription)
             return existing_subscription
 
         existing_subscription.status = SubscriptionStatus.PENDING.value
@@ -2542,6 +2617,12 @@ async def create_pending_subscription(
         if tariff_id is not None:
             existing_subscription.tariff_id = tariff_id
 
+        if is_trial and settings.DONBATON_LTE_ENABLED and settings.DONBATON_LTE_ACCOUNTING_READY:
+            from app.services.lte_quota_service import initialize_trial_quota
+
+            await initialize_trial_quota(
+                db, existing_subscription, legacy_traffic_limit_gb=traffic_limit_gb, now=current_time
+            )
         await db.commit()
         await db.refresh(existing_subscription)
 
@@ -2571,6 +2652,11 @@ async def create_pending_subscription(
     )
 
     db.add(subscription)
+    if is_trial and settings.DONBATON_LTE_ENABLED and settings.DONBATON_LTE_ACCOUNTING_READY:
+        from app.services.lte_quota_service import initialize_trial_quota
+
+        await db.flush()
+        await initialize_trial_quota(db, subscription, legacy_traffic_limit_gb=traffic_limit_gb, now=current_time)
     await db.commit()
     await db.refresh(subscription)
 
@@ -2688,7 +2774,12 @@ async def activate_pending_subscription(
         conditions.append(Subscription.id == subscription_id)
 
     result = await db.execute(
-        select(Subscription).where(and_(*conditions)).order_by(Subscription.created_at.desc()).limit(1)
+        select(Subscription)
+        .where(and_(*conditions))
+        .order_by(Subscription.created_at.desc())
+        .limit(1)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     pending_subscription = result.scalar_one_or_none()
 
@@ -2703,19 +2794,22 @@ async def activate_pending_subscription(
         status=pending_subscription.status,
     )
 
-    # Обновляем статус подписки на ACTIVE
+    from app.services.lte_quota_service import activate_pending_trial_quota
+
     current_time = datetime.now(UTC)
-    pending_subscription.status = SubscriptionStatus.ACTIVE.value
+    handled_trial = await activate_pending_trial_quota(db, pending_subscription, now=current_time)
+    if not handled_trial:
+        pending_subscription.status = SubscriptionStatus.ACTIVE.value
 
-    # Если указан период, обновляем дату окончания
-    if period_days is not None:
-        effective_start = pending_subscription.start_date or current_time
-        effective_start = max(effective_start, current_time)
-        pending_subscription.end_date = effective_start + timedelta(days=period_days)
+        # Если указан период, обновляем дату окончания
+        if period_days is not None:
+            effective_start = pending_subscription.start_date or current_time
+            effective_start = max(effective_start, current_time)
+            pending_subscription.end_date = effective_start + timedelta(days=period_days)
 
-    # Обновляем дату начала, если она не установлена или в прошлом
-    if not pending_subscription.start_date or pending_subscription.start_date < current_time:
-        pending_subscription.start_date = current_time
+        # Обновляем дату начала, если она не установлена или в прошлом
+        if not pending_subscription.start_date or pending_subscription.start_date < current_time:
+            pending_subscription.start_date = current_time
 
     await db.commit()
     await db.refresh(pending_subscription)
@@ -2741,7 +2835,8 @@ async def activate_pending_trial_subscription(
 
     # Находим pending подписку по ID
     result = await db.execute(
-        select(Subscription).where(
+        select(Subscription)
+        .where(
             and_(
                 Subscription.id == subscription_id,
                 Subscription.user_id == user_id,
@@ -2749,6 +2844,8 @@ async def activate_pending_trial_subscription(
                 Subscription.is_trial == True,
             )
         )
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     pending_subscription = result.scalar_one_or_none()
 
@@ -2764,23 +2861,26 @@ async def activate_pending_trial_subscription(
         status=pending_subscription.status,
     )
 
-    # Обновляем статус подписки на ACTIVE
+    from app.services.lte_quota_service import activate_pending_trial_quota
+
     current_time = datetime.now(UTC)
-    pending_subscription.status = SubscriptionStatus.ACTIVE.value
+    handled_trial = await activate_pending_trial_quota(db, pending_subscription, now=current_time)
+    if not handled_trial:
+        pending_subscription.status = SubscriptionStatus.ACTIVE.value
 
-    # Обновляем даты
-    if not pending_subscription.start_date or pending_subscription.start_date < current_time:
-        pending_subscription.start_date = current_time
+        # Обновляем даты
+        if not pending_subscription.start_date or pending_subscription.start_date < current_time:
+            pending_subscription.start_date = current_time
 
-    # Пересчитываем end_date на основе duration_days если есть
-    duration_days = pending_subscription.duration_days if hasattr(pending_subscription, 'duration_days') else None
-    if duration_days:
-        pending_subscription.end_date = current_time + timedelta(days=duration_days)
-    elif pending_subscription.end_date and pending_subscription.end_date < current_time:
-        # Если end_date в прошлом, пересчитываем
-        from app.config import settings
+        # Пересчитываем end_date на основе duration_days если есть
+        duration_days = pending_subscription.duration_days if hasattr(pending_subscription, 'duration_days') else None
+        if duration_days:
+            pending_subscription.end_date = current_time + timedelta(days=duration_days)
+        elif pending_subscription.end_date and pending_subscription.end_date < current_time:
+            # Если end_date в прошлом, пересчитываем
+            from app.config import settings
 
-        pending_subscription.end_date = current_time + timedelta(days=settings.TRIAL_DURATION_DAYS)
+            pending_subscription.end_date = current_time + timedelta(days=settings.TRIAL_DURATION_DAYS)
 
     await db.commit()
     await db.refresh(pending_subscription)

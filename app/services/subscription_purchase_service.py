@@ -305,6 +305,10 @@ class MiniAppSubscriptionPurchaseService:
     async def build_options(
         self, db: AsyncSession, user: User, subscription_id: int | None = None
     ) -> PurchaseOptionsContext:
+        from app.services.legacy_checkout_guard import RETIRED_CHECKOUT_MESSAGE, cutover_enabled
+
+        if cutover_enabled():
+            raise PurchaseValidationError(RETIRED_CHECKOUT_MESSAGE, code='managed_catalog_required')
         from app.database.crud.subscription import get_subscription_by_user_id
 
         if settings.is_multi_tariff_enabled():
@@ -991,6 +995,10 @@ class MiniAppSubscriptionPurchaseService:
         context: PurchaseOptionsContext,
         pricing: PurchasePricingResult,
     ) -> dict[str, Any]:
+        from app.services.legacy_checkout_guard import RETIRED_CHECKOUT_MESSAGE, cutover_enabled
+
+        if cutover_enabled():
+            raise PurchaseValidationError(RETIRED_CHECKOUT_MESSAGE, code='managed_catalog_required')
         user = context.user
         texts = get_texts(getattr(user, 'language', None))
 

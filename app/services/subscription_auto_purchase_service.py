@@ -244,6 +244,12 @@ async def _prepare_auto_extend_context(
     user: User,
     cart_data: dict,
 ) -> AutoExtendContext | None:
+    from app.services.legacy_checkout_guard import saved_tariff_cart_retired
+
+    if await saved_tariff_cart_retired(db, cart_data):
+        await _delete_cart_for_subscription(user.id, cart_data)
+        await user_cart_service.clear_topup_intent(user.id)
+        return None
     from app.database.crud.subscription import get_subscription_by_user_id
 
     saved_subscription_id = cart_data.get('subscription_id')
@@ -313,6 +319,17 @@ async def _prepare_auto_extend_context(
             '🔁 Автопокупка: у пользователя нет активной подписки для продления', format_user_id=_format_user_id(user)
         )
         return None
+
+    from app.services.legacy_checkout_guard import cutover_enabled
+
+    if cutover_enabled():
+        from app.database.crud.tariff import get_tariff_by_id
+        from app.services.donbaton_catalog import validate_user_tariff_purchase
+        from app.services.lte_quota_service import validate_legacy_renewal
+
+        await validate_legacy_renewal(db, subscription)
+        target_tariff = await get_tariff_by_id(db, int(cart_data['tariff_id']))
+        await validate_user_tariff_purchase(db, user, target_tariff)
 
     # Block auto-renewal of classic subscriptions when tariff mode is enabled
     if settings.is_tariffs_mode() and not subscription.tariff_id:
@@ -521,9 +538,14 @@ async def _auto_extend_subscription(
 ) -> bool:
     # Lazy import to avoid circular dependency
     from app.cabinet.routes.websocket import notify_user_subscription_renewed
+    from app.services.lte_quota_service import LtePolicyError
 
     try:
         prepared = await _prepare_auto_extend_context(db, user, cart_data)
+    except LtePolicyError:
+        await _delete_cart_for_subscription(user.id, cart_data)
+        await user_cart_service.clear_topup_intent(user.id)
+        return False
     except Exception as error:  # pragma: no cover - defensive logging
         logger.error(
             '❌ Автопокупка: ошибка подготовки данных продления для пользователя',
@@ -920,6 +942,21 @@ async def _auto_purchase_tariff(
     user = await lock_user_for_pricing(db, user.id)
 
     # Calculate price via PricingEngine (single source of truth)
+    from app.services.legacy_checkout_guard import cutover_enabled
+
+    if cutover_enabled():
+        from app.services.donbaton_catalog import validate_user_tariff_purchase
+        from app.services.lte_quota_service import LtePolicyError, validate_legacy_renewal
+
+        try:
+            if existing_subscription is not None:
+                await validate_legacy_renewal(db, existing_subscription)
+            await validate_user_tariff_purchase(db, user, tariff)
+        except LtePolicyError:
+            await _delete_cart_for_subscription(user.id, cart_data)
+            await user_cart_service.clear_topup_intent(user.id)
+            return False
+
     device_limit = None
     if existing_subscription and existing_subscription.tariff_id == tariff_id:
         device_limit = existing_subscription.device_limit
@@ -1613,6 +1650,12 @@ async def _auto_add_devices(
         logger.warning('🔁 Автопокупка устройств: у пользователя нет подписки', format_user_id=_format_user_id(user))
         await _delete_cart_for_subscription(user.id, cart_data)
         return False
+
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return False  # The credited payment remains on the user's balance.
 
     if subscription.status not in ('active', 'trial', 'disabled', 'limited', 'ACTIVE', 'TRIAL', 'DISABLED', 'LIMITED'):
         logger.warning(
@@ -3088,6 +3131,14 @@ async def _process_single_cart(
     from app.database.crud.transaction import get_user_transactions
 
     cart_mode = cart_data.get('cart_mode') or cart_data.get('mode')
+    from app.services.legacy_checkout_guard import saved_tariff_cart_retired
+
+    if cart_mode in ('extend', 'tariff_purchase', 'daily_tariff_purchase') and await saved_tariff_cart_retired(
+        db, cart_data
+    ):
+        await _delete_cart_for_subscription(user.id, cart_data)
+        await user_cart_service.clear_topup_intent(user.id)
+        return False
     cart_sub_id = _safe_int(cart_data.get('subscription_id'))
 
     # Guard: DISABLED subscription -- stale cart
@@ -3544,6 +3595,12 @@ async def _process_legacy_generic_cart(
     bot: Bot | None = None,
 ) -> bool:
     """Handle old-style carts without an explicit cart_mode (generic FSM carts)."""
+    from app.services.legacy_checkout_guard import cutover_enabled
+
+    if cutover_enabled():
+        await _delete_cart_for_subscription(user.id, cart_data)
+        await user_cart_service.clear_topup_intent(user.id)
+        return False
     # Lazy imports to avoid circular dependency
     from app.cabinet.routes.websocket import (
         notify_user_subscription_activated,

@@ -544,6 +544,10 @@ class PricingEngine:
 
         if subscription.tariff_id is not None:
             if subscription.tariff is None:
+                from app.services.donbaton_catalog import network_category
+
+                if network_category(subscription):
+                    raise ValueError('Условия тарифа не загружены. Обновите страницу перед оплатой.')
                 logger.error(
                     'tariff_id set but tariff relationship not loaded, falling back to classic mode',
                     subscription_id=getattr(subscription, 'id', None),
@@ -566,8 +570,15 @@ class PricingEngine:
         user: User | None = None,
     ) -> RenewalPricing:
         """Price calculation when subscription is linked to a Tariff."""
+        from app.services.donbaton_catalog import network_category
+        from app.services.lte_quota_service import validate_legacy_purchase_transition, validate_legacy_renewal
+
         tariff = subscription.tariff
-        device_limit = subscription.device_limit or 0
+        if network_category(subscription) or network_category(tariff):
+            await validate_legacy_purchase_transition(db, subscription, tariff)
+        if network_category(subscription):
+            await validate_legacy_renewal(db, subscription)
+        device_limit = (tariff.device_limit if network_category(subscription) else subscription.device_limit) or 0
         return await self._calculate_tariff_core(
             tariff,
             period_days,
@@ -597,6 +608,12 @@ class PricingEngine:
 
         if network_category(tariff):
             validate_tariff_for_sale(tariff)
+            prices = tariff.period_prices or {}
+            price = prices.get(str(period_days))
+            if type(period_days) is not int or type(price) is not int or price <= 0:
+                raise ValueError('Этот срок отсутствует в тарифе. Выберите доступный период продления.')
+            if type(device_limit) is not int or device_limit != tariff.device_limit:
+                raise ValueError('Количество устройств закреплено за выбранным тарифом Wi-Fi/LTE')
             if custom_traffic_gb is not None:
                 raise ValueError('Выберите отдельный LTE-пакет после покупки подписки')
         months = calculate_months_from_days(period_days)
@@ -704,12 +721,19 @@ class PricingEngine:
         device_limit: int | None = None,
         custom_traffic_gb: int | None = None,
         user: User | None = None,
+        db: AsyncSession | None = None,
+        subscription: Subscription | None = None,
     ) -> RenewalPricing:
         """Calculate price for a tariff purchase (new or renewal).
 
         Public method that delegates to _calculate_tariff_core.
         If device_limit is None, uses the tariff's included limit (no extra devices).
+
+        Existing callers pass session-bound ORM users. Resolve that same session
+        so old callbacks also validate migrated rights before a price can reach
+        balance charging. Anonymous catalog previews need no subscription lookup.
         """
+        await self._validate_tariff_purchase_transition(tariff, db=db, subscription=subscription, user=user)
         effective_device_limit = device_limit if device_limit is not None else (tariff.device_limit or 0)
         return await self._calculate_tariff_core(
             tariff,
@@ -718,6 +742,52 @@ class PricingEngine:
             custom_traffic_gb=custom_traffic_gb,
             user=user,
         )
+
+    @staticmethod
+    async def _validate_tariff_purchase_transition(tariff, *, db=None, subscription=None, user=None):
+        from sqlalchemy import case, inspect, select
+        from sqlalchemy.ext.asyncio import async_object_session
+
+        from app.database.models import Subscription
+        from app.services.donbaton_catalog import network_category
+        from app.services.lte_quota_service import (
+            LtePolicyError,
+            validate_legacy_purchase_transition,
+            validate_legacy_renewal,
+        )
+
+        if not network_category(tariff) and not network_category(subscription):
+            return
+        if subscription is None and user is None:
+            return
+        if db is None:
+            for obj in (subscription, user, tariff):
+                if obj is not None and inspect(obj, raiseerr=False) is not None:
+                    db = async_object_session(obj)
+                    if db is not None:
+                        break
+        if db is None:
+            raise LtePolicyError('Обновите страницу перед оплатой: необходимо проверить оплаченные LTE-пакеты')
+
+        if subscription is None:
+            query = select(Subscription).where(Subscription.user_id == user.id)
+            if settings.is_multi_tariff_enabled():
+                query = query.where(Subscription.tariff_id == tariff.id)
+            subscription = await db.scalar(
+                query.order_by(
+                    case((Subscription.status == 'active', 0), (Subscription.status == 'trial', 1), else_=2),
+                    Subscription.end_date.desc().nulls_last(),
+                    Subscription.created_at.desc(),
+                )
+                .limit(1)
+                .execution_options(populate_existing=True)
+            )
+        if subscription is None:
+            return
+        if user is not None and subscription.user_id != user.id:
+            raise LtePolicyError('Подписка не принадлежит покупателю')
+        await validate_legacy_purchase_transition(db, subscription, tariff)
+        await validate_legacy_renewal(db, subscription)
 
     # ------------------------------------------------------------------
     # Classic mode

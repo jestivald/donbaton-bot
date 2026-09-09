@@ -212,10 +212,13 @@ async def test_topup_validity_survives_period_rollover_and_expired_activation(mo
         sub.end_date = NOW - timedelta(seconds=1)
         await update_entitlement(db, sub, wifi, now=NOW + timedelta(days=31))
         sub.end_date = NOW + timedelta(days=61)
-        masked = await apply_panel_policy(db, sub, {}, panel_user=sample(110), now=NOW + timedelta(days=31))
-        assert masked['active_internal_squads'] == [WIFI]
+        carried = await apply_panel_policy(db, sub, {}, panel_user=sample(110), now=NOW + timedelta(days=31))
+        assert carried['active_internal_squads'] == [WIFI, LTE]
         assert bucket.amount_bytes - bucket.used_bytes == 30
         assert quota.period_ends_at == NOW + timedelta(days=61)
+        assert (await get_quota_status(db, sub, now=NOW + timedelta(days=31)))['has_carried_lte'] is True
+        ended = await apply_panel_policy(db, sub, {}, panel_user=sample(110), now=NOW + timedelta(days=50))
+        assert ended['active_internal_squads'] == [WIFI]
 
 
 @pytest.mark.asyncio
@@ -389,3 +392,49 @@ async def test_worker_commits_usage_and_only_removes_lte(monkeypatch):
         await db.refresh(quota)
         assert quota.used_bytes == 100
         assert sub.status == 'active'
+
+
+@pytest.mark.asyncio
+async def test_worker_skips_identical_panel_patch_but_commits_new_usage(monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, quota, _ = await seed(db)
+        await apply_panel_policy(db, sub, {}, panel_user=sample(1000), now=NOW)
+        await db.commit()
+        current = sample(1012)
+        current.traffic_limit_bytes = 0
+        current.traffic_limit_strategy = TrafficLimitStrategy.NO_RESET
+        current.active_internal_squads = [{'uuid': LTE}, {'uuid': WIFI}]  # order is immaterial
+        api = SimpleNamespace(get_user_by_id=AsyncMock(return_value=current), update_user=AsyncMock())
+        returned = await reconcile_subscription(db, sub, api, user=await db.get(User, sub.user_id))
+        assert returned is current
+        api.update_user.assert_not_awaited()
+        await db.refresh(quota)
+        assert quota.used_bytes == 12 and quota.counter_bytes == 1012
+        assert quota.last_observed_at is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', [UserStatus.ACTIVE, UserStatus.DISABLED, UserStatus.LIMITED])
+async def test_worker_repairs_changed_access_and_preserves_administrative_disable(monkeypatch, status):
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, quota, _ = await seed(db)
+        await apply_panel_policy(db, sub, {}, panel_user=sample(0), now=NOW)
+        await db.commit()
+        current = sample(100)
+        current.status = status
+        current.traffic_limit_bytes = 0
+        current.traffic_limit_strategy = TrafficLimitStrategy.NO_RESET
+        current.active_internal_squads = [{'uuid': WIFI}, {'uuid': LTE}]
+        api = SimpleNamespace(
+            get_user_by_id=AsyncMock(return_value=current), update_user=AsyncMock(return_value=current)
+        )
+        await reconcile_subscription(db, sub, api, user=await db.get(User, sub.user_id))
+        api.update_user.assert_awaited_once()
+        payload = api.update_user.call_args.kwargs
+        assert payload['active_internal_squads'] == ([] if status == UserStatus.DISABLED else [WIFI])
+        if status == UserStatus.LIMITED:
+            assert payload['status'] == UserStatus.ACTIVE
+        elif status == UserStatus.DISABLED:
+            assert payload.get('status', UserStatus.DISABLED) == UserStatus.DISABLED
+        await db.refresh(quota)
+        assert quota.used_bytes == 100

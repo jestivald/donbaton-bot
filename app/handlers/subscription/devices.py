@@ -63,6 +63,18 @@ async def _resolve_subscription(callback, db_user, db, state=None):
     return await resolve_subscription_from_context(callback, db_user, db, state)
 
 
+async def _device_slot_changes_allowed(callback, subscription):
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        await callback.answer(
+            'Количество устройств закреплено за тарифом. Другой тариф можно выбрать после окончания подписки.',
+            show_alert=True,
+        )
+        return False
+    return True
+
+
 def _get_panel_user_id(subscription, db_user):
     """Get the numeric Remnawave user id for device operations.
 
@@ -187,6 +199,9 @@ async def handle_change_devices(
         )
         return
 
+    if not await _device_slot_changes_allowed(callback, subscription):
+        return
+
     # Проверяем тариф подписки
     tariff = None
     if subscription.tariff_id:
@@ -278,6 +293,9 @@ async def confirm_change_devices(
         return
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
+        return
+
+    if not await _device_slot_changes_allowed(callback, subscription):
         return
 
     # Проверяем тариф подписки
@@ -542,6 +560,9 @@ async def execute_change_devices(
         )
         return
     current_devices = subscription.device_limit
+
+    if not await _device_slot_changes_allowed(callback, subscription):
+        return
 
     # Проверяем тариф подписки
     tariff = None
@@ -1462,6 +1483,9 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
+        return
+
+    if not await _device_slot_changes_allowed(callback, subscription):
         return
 
     # Проверяем тариф подписки

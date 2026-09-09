@@ -35,6 +35,8 @@ from app.database.crud.transaction import create_transaction
 from app.database.crud.user import add_user_balance, get_user_by_id, subtract_user_balance
 from app.database.database import AsyncSessionLocal
 from app.database.models import PaymentMethod, Subscription, Tariff, Transaction, TransactionType, User
+from app.services.donbaton_catalog import network_category
+from app.services.lte_quota_service import LtePolicyError
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
@@ -147,7 +149,7 @@ async def _build_tariff_response(
     # Вычисляем доп. устройства для текущего тарифа (при продлении)
     extra_devices_count = 0
     extra_device_price_per_month = 0
-    if subscription and subscription.tariff_id == tariff.id:
+    if subscription and subscription.tariff_id == tariff.id and not network_category(tariff):
         extra_devices_count = max(0, (subscription.device_limit or 0) - (tariff.device_limit or 0))
         if extra_devices_count > 0:
             extra_device_price_per_month = (
@@ -259,7 +261,7 @@ async def _build_tariff_response(
 
     # Показываем реальное количество устройств (с докупленными) для текущего тарифа
     actual_device_limit = tariff.device_limit
-    if subscription and subscription.tariff_id == tariff.id:
+    if subscription and subscription.tariff_id == tariff.id and not network_category(tariff):
         actual_device_limit = max(tariff.device_limit or 0, subscription.device_limit or 0)
 
     response: dict[str, Any] = {
@@ -779,7 +781,7 @@ async def purchase_tariff(
             existing_subscription = await get_subscription_by_user_id(db, user.id)
         device_limit = None
         effective_device_limit = tariff.device_limit
-        if existing_subscription and existing_subscription.tariff_id == tariff.id:
+        if existing_subscription and existing_subscription.tariff_id == tariff.id and not network_category(tariff):
             device_limit = existing_subscription.device_limit
             if (existing_subscription.device_limit or 0) > (tariff.device_limit or 0):
                 effective_device_limit = existing_subscription.device_limit
@@ -791,6 +793,8 @@ async def purchase_tariff(
             device_limit=device_limit,
             custom_traffic_gb=custom_traffic_gb,
             user=user,
+            db=db,
+            subscription=existing_subscription,
         )
         price_kopeks = result.final_total
         original_price = result.original_total
@@ -1083,6 +1087,10 @@ async def purchase_tariff(
             )
             await db.rollback()
             await _refund_charge(f"Возврат: ошибка активации тарифа '{refund_tariff_name}'")
+            if isinstance(purchase_error, LtePolicyError):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(purchase_error)
+                ) from purchase_error
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail='Failed to process tariff purchase',
@@ -1281,6 +1289,8 @@ async def purchase_tariff(
 
     except HTTPException:
         raise
+    except LtePolicyError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     except Exception as e:
         logger.error('Failed to purchase tariff for user', user_id=user.id, error=e)
         raise HTTPException(

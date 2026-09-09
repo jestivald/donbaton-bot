@@ -410,6 +410,7 @@ class YooKassaPaymentMixin:
         event_object: dict[str, Any] | None = None,
     ) -> bool:
         """Переносит успешный платёж YooKassa в транзакции и начисляет баланс пользователю."""
+        retired_invoice = False
         try:
             from sqlalchemy import select
 
@@ -621,6 +622,19 @@ class YooKassaPaymentMixin:
             is_simple_subscription = payment_purpose == 'simple_subscription_purchase'
             is_trial_payment = payment_type == 'trial'
             is_recurrent_topup = payment_metadata.get('purpose') == 'recurrent_topup'
+            retired_invoice = False
+            if is_simple_subscription or is_trial_payment:
+                from app.services.legacy_checkout_guard import pending_invoice_retired
+
+                invoice_subscription_id = (
+                    payment_metadata.get('order_id')
+                    if is_simple_subscription
+                    else payment_metadata.get('subscription_id')
+                )
+                retired_invoice = await pending_invoice_retired(db, payment.user_id, invoice_subscription_id)
+                if retired_invoice:
+                    is_simple_subscription = is_trial_payment = False
+                    payment_metadata['donbaton_retired_invoice_credited'] = True
 
             transaction_type = (
                 TransactionType.SUBSCRIPTION_PAYMENT
@@ -954,9 +968,14 @@ class YooKassaPaymentMixin:
                         try:
                             from app.services.payment.common import send_cart_notification_after_topup
 
-                            await send_cart_notification_after_topup(
-                                user, payment.amount_kopeks, db, getattr(self, 'bot', None)
-                            )
+                            if retired_invoice:
+                                from app.services.user_cart_service import user_cart_service
+
+                                await user_cart_service.clear_topup_intent(user.id)
+                            else:
+                                await send_cart_notification_after_topup(
+                                    user, payment.amount_kopeks, db, getattr(self, 'bot', None)
+                                )
                         except Exception as e:
                             logger.error(
                                 'Ошибка при работе с сохраненной корзиной для пользователя',
@@ -1190,6 +1209,10 @@ class YooKassaPaymentMixin:
                 yookassa_payment_id=payment.yookassa_payment_id,
                 error=error,
             )
+            if retired_invoice:
+                # A failed cutover credit must not leave a linked receipt that a
+                # later middleware commit could mistake for delivered money.
+                await db.rollback()
             return False
 
     async def _mark_yookassa_payment_processing_completed(

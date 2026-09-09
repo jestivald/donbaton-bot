@@ -2838,6 +2838,37 @@ class LteQuota(Base):
     counter_bytes = Column(BigInteger, nullable=True)
     last_observed_at = Column(AwareDateTime(), nullable=True)
     accounting_state = Column(String(24), nullable=False, default='pending', server_default='pending')
+    legacy_state = Column(JSON, nullable=True)
+    panel_access_cleared_at = Column(AwareDateTime(), nullable=True)
+    trial_ends_at = Column(AwareDateTime(), nullable=True)
+    pending_period = Column(JSON, nullable=True)
+
+
+class LteOrphanQuota(Base):
+    """Finite panel rights without a fictitious bot user or payment account."""
+
+    __tablename__ = 'lte_orphan_quotas'
+    __table_args__ = (
+        CheckConstraint('limit_bytes >= 0 AND used_bytes >= 0 AND base_used_bytes >= 0', name='ck_lte_orphan_bytes'),
+        CheckConstraint('period_days > 0', name='ck_lte_orphan_period'),
+    )
+
+    panel_id = Column(BigInteger, primary_key=True)
+    end_date = Column(AwareDateTime(), nullable=False)
+    original_status = Column(String(16), nullable=False)
+    limit_bytes = Column(BigInteger, nullable=False, default=0, server_default='0')
+    next_limit_bytes = Column(BigInteger, nullable=True)
+    used_bytes = Column(BigInteger, nullable=False, default=0, server_default='0')
+    base_used_bytes = Column(BigInteger, nullable=False, default=0, server_default='0')
+    period_days = Column(Integer, nullable=False, default=30, server_default='30')
+    period_starts_at = Column(AwareDateTime(), nullable=False)
+    period_ends_at = Column(AwareDateTime(), nullable=False)
+    counter_panel_id = Column(BigInteger, nullable=True)
+    counter_bytes = Column(BigInteger, nullable=True)
+    last_observed_at = Column(AwareDateTime(), nullable=True)
+    accounting_state = Column(String(24), nullable=False, default='prepared', server_default='prepared')
+    legacy_state = Column(JSON, nullable=False)
+    panel_access_cleared_at = Column(AwareDateTime(), nullable=True)
 
 
 class LteTopup(Base):

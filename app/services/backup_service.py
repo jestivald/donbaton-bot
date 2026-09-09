@@ -62,6 +62,7 @@ from app.database.models import (
     LandingPage,
     LavaPayment,
     LegalConsent,
+    LteOrphanQuota,
     LteQuota,
     LteTopup,
     MainMenuButton,
@@ -303,6 +304,7 @@ class BackupService:
             # --- User data (FK: users, promo_groups, subscriptions) ---
             UserPromoGroup,
             TrafficPurchase,
+            LteOrphanQuota,
             LteQuota,
             LteTopup,
             SubscriptionEvent,

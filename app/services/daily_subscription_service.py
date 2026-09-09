@@ -424,7 +424,17 @@ class DailySubscriptionService:
                 try:
                     # Находим все истекшие докупки
                     now = datetime.now(UTC)
-                    query = select(TrafficPurchase).where(TrafficPurchase.expires_at <= now)
+                    from app.services.lte_quota_service import NETWORK_CATEGORIES
+
+                    query = (
+                        select(TrafficPurchase)
+                        .join(Subscription, Subscription.id == TrafficPurchase.subscription_id)
+                        .where(
+                            TrafficPurchase.expires_at <= now,
+                            Subscription.network_category.is_(None)
+                            | Subscription.network_category.not_in(NETWORK_CATEGORIES),
+                        )
+                    )
                     result = await db.execute(query)
                     expired_purchases = result.scalars().all()
                     stats['checked'] = len(expired_purchases)
@@ -465,13 +475,22 @@ class DailySubscriptionService:
         # Получаем подписку вместе с тарифом — тариф нужен для определения
         # стратегии сброса панели (выравнивание докупки)
         subscription_query = (
-            select(Subscription).where(Subscription.id == subscription_id).options(selectinload(Subscription.tariff))
+            select(Subscription)
+            .where(Subscription.id == subscription_id)
+            .options(selectinload(Subscription.tariff))
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         subscription_result = await db.execute(subscription_query)
         subscription = subscription_result.scalar_one_or_none()
 
         if not subscription:
             return
+
+        from app.services.lte_quota_service import is_managed
+
+        if is_managed(subscription):
+            return  # The LTE ledger owns imported purchases, including their expiry.
 
         # Считаем сколько ГБ нужно убрать
         total_expired_gb = sum(p.traffic_gb for p in expired_purchases)

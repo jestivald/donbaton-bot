@@ -32,6 +32,13 @@ class LteTopupData(BaseModel):
 
 class LteQuotaData(BaseModel):
     next_period_limit_bytes: int | None = None
+    legacy_compatibility_until: datetime | None = None
+    period_mode: str | None = None
+    is_unlimited: bool = False
+    renewal_requires_expiry: bool = False
+    has_carried_lte: bool = False
+    legacy_pool_bytes: int = 0
+    legacy_pool_expires_at: datetime | None = None
     limit_bytes: int
     used_bytes: int
     remaining_bytes: int

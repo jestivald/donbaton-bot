@@ -56,6 +56,13 @@ async def get_renewal_options(
     if _actual_status in _non_renewable:
         return []
 
+    from app.services.lte_quota_service import LtePolicyError, validate_legacy_renewal
+
+    try:
+        await validate_legacy_renewal(db, subscription)
+    except LtePolicyError:
+        return []
+
     # Determine available periods
     # Скрытый/неактивный тариф (например, триальный после промокода) —
     # не показываем его периоды, используем стандартные
@@ -162,12 +169,15 @@ async def renew_subscription(
     user = await lock_user_for_pricing(db, user.id)
 
     # Unified pricing via PricingEngine
-    pricing = await pricing_engine.calculate_renewal_price(
-        db,
-        subscription,
-        request.period_days,
-        user=user,
-    )
+    try:
+        pricing = await pricing_engine.calculate_renewal_price(
+            db,
+            subscription,
+            request.period_days,
+            user=user,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     price_kopeks = pricing.final_total
     promo_offer_discount_value = pricing.promo_offer_discount
     promo_offer_discount_percent = pricing.breakdown.get('offer_discount_pct', 0)

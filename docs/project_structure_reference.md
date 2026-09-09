@@ -597,7 +597,7 @@
   Классы: нет
   Функции: `run_alembic_upgrade` — Run ``alembic upgrade head``, handling fresh and legacy databases., `stamp_alembic_head` — Stamp the DB as being at head without running migrations (for existing DBs).
 - `app/database/models.py` — Python-модуль
-  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (20 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `LteQuota`, `LteTopup`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`
+  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (20 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `LteQuota`, `LteOrphanQuota`, `LteTopup`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`
   Функции: нет
 
 #### app/database/crud
@@ -1481,15 +1481,21 @@
 - `app/services/lava_service.py` — Python-модуль
   Классы: `LavaAPIError` (1 методов), `LavaService` (20 методов)
   Функции: нет
+- `app/services/legacy_checkout_guard.py` — Python-модуль
+  Классы: нет
+  Функции: `cutover_enabled`, `pending_invoice_retired`, `stars_invoice_retired`, `saved_tariff_cart_retired`
 - `app/services/legal_consent_service.py` — Python-модуль
   Классы: `LegalConsentRequirement`
   Функции: `get_requirement` — Требование согласия для НОВОГО пользователя кабинета., `missing_documents` — Какие из обязательных документов пользователь не отметил., `record_consent` — Записать факт согласия. Сбой записи не должен ронять регистрацию.
 - `app/services/log_rotation_service.py` — Python-модуль
   Классы: `LogRotationStatus`, `LogRotationService` (16 методов)
   Функции: нет
+- `app/services/lte_accounting_service.py` — Python-модуль
+  Классы: `LegacyAccountingError`, `LegacyBudget` (6 методов)
+  Функции: `valid_telemetry_heartbeat` — Trusted producer evidence for both complete node→panel accounting paths., `ceil_units` — Project a nonnegative rational budget without losing the final byte., `physical_counter_delta` — Subtract opaque counters only inside an explicitly established 1:1 epoch., `next_legacy_reset` — Next scheduled boundary from Remnawave 3.4.3, strictly after `after`., `timestamp` — Strict, serializable boundary used by the private import contract., `build_legacy_state` — Validate an explicit final snapshot; no guesses from rounded bot usage., `legacy_budget`, `legacy_is_unlimited`, `legacy_compatibility_end`, `legacy_pool_boundary` — The next loss/reset of aggregate capacity, for expiry-ordered spending., `advance_legacy_state` — Replay calendar/paid-end boundaries once, without inventing bucket usage.
 - `app/services/lte_quota_service.py` — Python-модуль
   Классы: `LtePolicyError`
-  Функции: `is_managed`, `needs_managed_policy` — Classify a preloaded tariff without triggering asynchronous lazy I/O., `validate_tariff_for_sale`, `validate_subscription_transition` — Paid legacy balances need an explicit migration, never an implicit switch., `advance_period` — Skip missed periods without banking allowances or changing the anchor., `consume_bytes` — Consume valid buckets by expiry, including the recurring base bucket., `observe_counter` — Never forgive usage by lowering a baseline or accepting another identity., `initialize_quota`, `update_entitlement`, `credit_topup`, `get_quota_status`, `quota_status_from_subscription` — Only return a deliberately preloaded snapshot, never lazy database I/O., `apply_panel_policy` — Override every managed payload, including sync_squads=False callers., `reconcile_subscription` — Serialize sample, ledger mutation and panel projection against purchases., `run_quota_cycle` — One independent polling pass; no Telegram, payment or email effects.
+  Функции: `is_managed`, `needs_managed_policy` — Classify a preloaded tariff without triggering asynchronous lazy I/O., `validate_tariff_for_sale`, `validate_subscription_transition` — Paid legacy balances need an explicit migration, never an implicit switch., `legacy_renewal_requires_expiry`, `validate_legacy_renewal`, `validate_legacy_purchase_transition` — The synchronous quote guard cannot see valid legacy TrafficPurchase rows., `import_legacy_quota` — Explicit, idempotent transfer; the caller owns the transaction and drain., `import_orphan_quota`, `activate_legacy_quota`, `activate_orphan_quota`, `advance_period` — Skip missed periods without banking allowances or changing the anchor., `consume_bytes` — Consume valid buckets by expiry, including the recurring base bucket., `observe_counter` — Never forgive usage by lowering a baseline or accepting another identity., `initialize_quota`, `initialize_trial_quota` — One new trial allowance expressed in real bytes, with no legacy import., `activate_pending_trial_quota` — Start an unused pending trial at payment time; retries never move dates., `update_entitlement`, `credit_topup`, `get_quota_status`, `quota_status_from_subscription` — Only return a deliberately preloaded snapshot, never lazy database I/O., `apply_panel_policy` — Override every managed payload, including sync_squads=False callers., `reconcile_subscription` — Serialize sample, ledger mutation and panel projection against purchases., `reconcile_orphan_quota` — Preserve finite panel access without creating an application identity., `run_quota_cycle` — One independent polling pass; no Telegram, payment or email effects.
 - `app/services/lte_topup_purchase_service.py` — Python-модуль
   Классы: `LtePurchaseError` (1 методов)
   Функции: `quote_lte_package`, `purchase_lte_topup` — Charge and grant once. Commit both; retry remote delivery separately.
@@ -1586,7 +1592,7 @@
   Классы: нет
   Функции: `build_start_keyboard`, `send_poll_to_users`, `reward_user_for_poll`, `get_next_question`, `get_question_option`
 - `app/services/pricing_engine.py` — Python-модуль
-  Классы: `TariffBreakdown`, `ClassicBreakdown`, `RenewalPricing` (1 методов), `TariffSwitchResult` (2 методов), `PricingEngine` (20 методов)
+  Классы: `TariffBreakdown`, `ClassicBreakdown`, `RenewalPricing` (1 методов), `TariffSwitchResult` (2 методов), `PricingEngine` (21 методов)
   Функции: нет
 - `app/services/privacy_policy_service.py` — Python-модуль
   Классы: `PrivacyPolicyService` (9 методов)
@@ -2770,6 +2776,9 @@
 - `migrations/alembic/versions/0119_donbaton_lte_quotas.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0120_legacy_lte_compatibility.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 
 ## scripts
 
@@ -2779,9 +2788,18 @@
 - `scripts/backfill_remnawave_ids.py` — Python-модуль
   Классы: нет
   Функции: `main`
+- `scripts/donbaton/`
 - `scripts/generate_structure_reference.py` — Python-модуль
   Классы: нет
   Функции: `tracked_paths` — Файлы проекта: отслеживаемые плюс новые, которые git не игнорирует., `describe_module` — Строки «Классы:» и «Функции:» для модуля., `render_entries`, `render`, `build`, `main`
+
+### scripts/donbaton
+
+- `scripts/donbaton/Dockerfile.lte-telemetry` — файл
+- `scripts/donbaton/README.lte-telemetry.md` — файл
+- `scripts/donbaton/lte_telemetry.py` — Python-модуль
+  Классы: `TelemetryError`, `Route`, `Config` (3 методов), `XrayClients` (3 методов), `PanelAPI` (2 методов), `Producer` (4 методов)
+  Функции: `read_outbound`, `counter`, `verify_node`, `fetch_asset`, `serve`, `main`
 
 ## tests
 
@@ -3309,24 +3327,63 @@
 
 ### tests/donbaton
 
+- `tests/donbaton/conftest.py` — Python-модуль
+  Классы: нет
+  Функции: `synthetic_telemetry`
+- `tests/donbaton/test_cabinet_cutover_purchase.py` — Python-модуль
+  Классы: нет
+  Функции: `configured`, `boundaries`, `test_legacy_grant_refusal_is_http_400_before_debit`, `test_active_custom_terms_refuse_renewal_without_charging_old_extra_devices`, `test_expired_custom_same_tariff_quotes_and_purchases_only_target_device_limit`, `test_policy_race_after_debit_refunds_once_and_returns_http_400`
 - `tests/donbaton/test_catalog.py` — Python-модуль
   Классы: нет
   Функции: `plan`, `test_mixed_catalog_isolates_lte_without_reclassifying_legacy_names`, `test_legacy_catalog_retains_original_list_and_traffic_label`, `test_invalid_managed_product_cannot_be_saved`, `test_wifi_cannot_silently_carry_lte_entitlement_or_packages`
+- `tests/donbaton/test_cutover_purchase_guards.py` — Python-модуль
+  Классы: нет
+  Функции: `launch_tariff`, `test_unlisted_or_malformed_period_has_no_price`, `test_approved_thirty_days_keeps_approved_price`, `test_bad_stored_price_cannot_issue_a_free_period`, `test_migrated_subscription_without_loaded_tariff_cannot_use_classic_pricing`, `test_generic_housekeeping_preserves_imported_purchase_archive`, `test_legacy_no_reset_text_does_not_promise_an_unpaid_refill`
+- `tests/donbaton/test_fixed_device_guards.py` — Python-модуль
+  Классы: нет
+  Функции: `seed`, `boundaries`, `assert_unchanged`, `test_cabinet_mutations_reject_before_debit_or_replacing_original_devices`, `test_cabinet_quotes_do_not_offer_purchase_or_reduce_for_imported_unlimited_device_terms`, `test_saved_telegram_callbacks_cannot_charge_managed_device_slots`, `test_saved_add_devices_cart_after_payment_is_discarded_without_spending_credited_balance`, `test_shared_crud_rejects_managed_but_still_updates_ordinary_legacy_subscription`, `test_ordinary_legacy_cabinet_purchase_still_reaches_debit`
+- `tests/donbaton/test_lte_accounting.py` — Python-модуль
+  Классы: нет
+  Функции: `stamp`, `test_snapshot_remaining_conserves_exact_units_with_customer_favouring_final_byte`, `test_overshoot_is_retained_and_cannot_create_negative_remaining`, `test_weighted_and_physical_counters_reject_float_boolean_or_negative_values`, `test_lifetime_is_only_subtracted_inside_same_confirmed_epoch`, `test_month_rolling_uses_original_creation_day_and_short_month_clamp`, `test_other_existing_reset_strategies_have_explicit_boundaries`, `test_naive_or_unknown_calendar_inputs_do_not_silently_assume_a_reset`
+- `tests/donbaton/test_lte_legacy.py` — Python-модуль
+  Классы: нет
+  Функции: `configured`, `legacy_seed`, `activate`, `test_import_preserves_exact_snapshot_and_requires_confirmed_epoch`, `test_import_rejects_stale_subscription_purchase_or_different_plan`, `test_epoch_mismatch_is_sticky_and_cannot_charge_a_mixed_delta`, `test_original_year_calendar_and_early_extension_do_not_change_paid_terms`, `test_custom_devices_preserved_and_early_renewal_blocked_but_topup_allowed`, `test_unlimited_is_explicit_and_cannot_sell_useless_topups`, `test_limited_keeps_wifi_and_administrative_disable_is_preserved`, `test_expired_legacy_without_valid_grants_can_buy_but_live_grants_require_import`, `test_new_trial_is_physical_once_only_and_paid_conversion_starts_full_period`, `test_imported_trial_purchase_finishes_trial_window_without_preserving_trial_devices`, `test_orphan_rights_use_no_fictitious_user_and_do_not_refill_no_reset`, `test_tail_credit_is_once_only_and_charges_every_byte_after_base_expiry`, `test_wifi_purchase_preserves_tail_and_new_topup_then_revokes_lte_at_expiry`, `test_calendar_reset_refills_only_old_pool_and_clears_tail_credit`, `test_pending_trial_starts_saved_duration_at_payment_and_retry_never_refills`, `test_ordinary_expired_activation_settles_unobserved_paid_topup_before_new_base`, `test_expired_old_grant_drop_is_deferred_until_calendar_reset`, `test_no_reset_expiry_preserves_old_forced_clamp_without_resetting_new_topup`, `test_panel_millisecond_precision_preserves_exact_bot_paid_end`, `test_orphan_cannot_project_after_user_fallback_link_claims_the_panel_identity`, `test_expired_cleanup_retries_outage_then_stops_polling_until_reactivation`
+- `tests/donbaton/test_lte_legacy_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `configured`, `test_parallel_duplicate_import_keeps_one_original_snapshot`, `test_parallel_samples_refresh_legacy_json_instead_of_losing_or_doubling_usage`, `test_import_rollback_leaves_all_old_subscription_and_grant_fields`
 - `tests/donbaton/test_lte_lock_postgres.py` — Python-модуль
   Классы: нет
   Функции: `configure_accounting`, `test_parallel_duplicate_purchase_has_one_durable_bucket`, `test_parallel_samples_use_fresh_locked_counter_without_double_charge`, `test_rolled_back_payment_does_not_leave_paid_lte`
 - `tests/donbaton/test_lte_migration.py` — Python-модуль
   Классы: нет
-  Функции: `migration`, `test_upgrade_preserves_legacy_rows_and_matches_new_table_metadata`, `test_backup_round_trips_lte_bytes_and_dates`
+  Функции: `migration`, `test_upgrade_preserves_legacy_rows_and_matches_new_table_metadata`, `test_backup_round_trips_lte_bytes_and_dates`, `test_0120_does_not_convert_existing_0119_balances_and_protects_imported_rights`
 - `tests/donbaton/test_lte_purchase.py` — Python-модуль
   Классы: нет
   Функции: `external_boundaries`, `load_purchase_objects`, `seed`, `persisted_state`, `buy`, `test_debit_bucket_and_receipt_roll_back_together_on_failure`, `test_duplicate_request_survives_new_session_without_second_debit`, `test_reused_request_with_another_package_is_409_without_another_charge`, `test_unavailable_subscription_does_not_charge`, `test_expected_price_mismatch_is_409_without_charge`, `test_panel_none_after_real_rollback_returns_durable_purchase_and_queues_retry`
 - `tests/donbaton/test_lte_quota.py` — Python-модуль
   Классы: нет
-  Функции: `configured`, `tariff`, `seed`, `sample`, `test_exhaustion_preserves_wifi_across_reset_retry_and_topup`, `test_pending_paid_state_survives_locked_reread_with_autoflush_disabled`, `test_regression_and_changed_identity_fail_closed_for_lte_only`, `test_early_renewal_and_tariff_edits_do_not_refill`, `test_topup_validity_survives_period_rollover_and_expired_activation`, `test_expired_paid_activation_requires_fresh_baseline_and_preserves_topups`, `test_topup_and_sampling_never_reactivate_disabled_subscription`, `test_stale_telemetry_and_disabled_accounting_preserve_wifi`, `test_conflicting_operation_id_does_not_grant_more_bytes`, `test_legacy_payload_unchanged_even_when_feature_enabled`, `test_sales_require_separate_verified_squads`, `test_sales_require_operator_accounting_confirmation`, `test_paid_legacy_transition_requires_migration`, `test_period_is_fixed_days_across_february_and_downtime`, `test_earliest_expiry_counts_upload_download_sum_once`, `test_negative_or_noninteger_telemetry_cannot_refill`, `test_uninitialized_managed_tariff_cannot_fall_through_to_upstream`, `test_single_panel_user_renewal_projects_exhausted_lte`, `test_worker_commits_usage_and_only_removes_lte`
+  Функции: `configured`, `tariff`, `seed`, `sample`, `test_exhaustion_preserves_wifi_across_reset_retry_and_topup`, `test_pending_paid_state_survives_locked_reread_with_autoflush_disabled`, `test_regression_and_changed_identity_fail_closed_for_lte_only`, `test_early_renewal_and_tariff_edits_do_not_refill`, `test_topup_validity_survives_period_rollover_and_expired_activation`, `test_expired_paid_activation_requires_fresh_baseline_and_preserves_topups`, `test_topup_and_sampling_never_reactivate_disabled_subscription`, `test_stale_telemetry_and_disabled_accounting_preserve_wifi`, `test_conflicting_operation_id_does_not_grant_more_bytes`, `test_legacy_payload_unchanged_even_when_feature_enabled`, `test_sales_require_separate_verified_squads`, `test_sales_require_operator_accounting_confirmation`, `test_paid_legacy_transition_requires_migration`, `test_period_is_fixed_days_across_february_and_downtime`, `test_earliest_expiry_counts_upload_download_sum_once`, `test_negative_or_noninteger_telemetry_cannot_refill`, `test_uninitialized_managed_tariff_cannot_fall_through_to_upstream`, `test_single_panel_user_renewal_projects_exhausted_lte`, `test_worker_commits_usage_and_only_removes_lte`, `test_worker_skips_identical_panel_patch_but_commits_new_usage`, `test_worker_repairs_changed_access_and_preserves_administrative_disable`
+- `tests/donbaton/test_lte_telemetry.py` — Python-модуль
+  Классы: нет
+  Функции: `proof`, `real_consumer_with_fake_redis`, `test_heartbeat_validation_rejects_untrusted_or_stale_evidence`, `test_repeated_frozen_user_gets_cannot_keep_lte_ready_and_good_proof_recovers`, `test_missing_or_malformed_redis_proof_keeps_wifi_only`, `test_cycle_snapshot_is_rechecked_for_age_and_cannot_extend_a_heartbeat`
+- `tests/donbaton/test_lte_telemetry_producer.py` — Python-модуль
+  Классы: `Clock` (4 методов), `Panel` (2 методов)
+  Функции: `test_panel_client_uses_private_backend_proxy_contract_without_redirects`, `fixture`, `test_two_positive_persisted_counters_publish_exact_epoch_and_node_set`, `test_first_failed_route_clears_previous_lease_and_cancels_sibling`, `test_successful_asset_without_counter_progress_cannot_refresh_health`, `test_invalid_accounting_identity_or_units_invalidate_health`, `test_retry_rechecks_both_routes_and_uses_new_nonces`, `test_lease_uses_oldest_proof_and_does_not_extend_its_age`, `test_stale_completed_evidence_is_rejected`, `test_private_plan_rejects_epoch_mismatch_and_duplicate_identities`, `test_client_config_rejects_direct_fallback`, `test_asset_request_is_bounded_and_uses_explicit_proxy_and_nonce`, `test_valid_range_requires_complete_expected_body_digest`, `test_client_cleanup_terminates_only_owned_processes`
 - `tests/donbaton/test_lte_webhook_sync.py` — Python-модуль
   Классы: нет
   Функции: `test_global_panel_events_never_refill_or_reactivate_managed`, `test_panel_reverse_sync_preserves_purchased_squads_and_status`
+- `tests/donbaton/test_paid_trial_cutover.py` — Python-модуль
+  Классы: нет
+  Функции: `accounting_config`, `test_paid_extend_same_imported_trial_tariff_grants_paid_lte_and_devices`, `test_paid_extend_same_new_trial_tariff_clears_single_trial_allowance`, `test_unpaid_same_tariff_extension_does_not_convert_imported_trial`
+- `tests/donbaton/test_payment_cutover_guards.py` — Python-модуль
+  Классы: нет
+  Функции: `service`, `seed`, `external_boundaries`, `assert_only_credit`, `test_already_charged_legacy_stars_credits_actual_amount_once`, `test_stars_credit_and_receipt_roll_back_together_then_retry_delivers`, `test_yookassa_retired_invoice_credits_exact_record_amount_and_links_receipt_once`, `test_yookassa_failed_cutover_credit_rolls_back_receipt_link_and_balance`, `test_successful_trial_handler_routes_retired_invoice_by_real_charge_id`, `test_stars_precheckout_checks_pending_subscription_category_before_charge`, `test_flags_off_keeps_old_invoice_and_cart_policy_without_extra_queries`, `test_stale_or_repriced_saved_cart_drops_intent_before_debit`, `test_current_managed_30_day_cart_is_not_rejected_as_legacy`, `test_invalid_pending_ids_are_retired_without_database_overflow`, `test_custom_paid_terms_block_direct_autopurchase_before_price_or_debit`, `test_generic_minicart_and_direct_service_cannot_restore_old_global_quota`
+- `tests/donbaton/test_pending_trial_integration.py` — Python-модуль
+  Классы: нет
+  Функции: `clock`, `seed`, `pending`, `test_new_pending_and_retry_preserve_original_offer_and_close_access`, `test_paid_pending_activation_anchors_full_saved_duration_once`, `test_reused_legacy_pending_gets_first_ledger_before_commit`, `test_observed_pending_trial_cannot_be_reissued_by_activation`, `test_flags_off_leave_pending_trial_without_new_ledger`, `test_direct_trial_creation_reusing_pending_keeps_original_duration_and_cap`, `test_expired_managed_trial_cannot_be_recycled_into_unpaid_invoice`
+- `tests/donbaton/test_pricing_transition_integration.py` — Python-модуль
+  Классы: нет
+  Функции: `accounting_config`, `test_expired_legacy_with_valid_grants_has_no_purchase_quote`, `test_expired_legacy_without_live_grants_can_quote_new_paid_term`, `test_imported_custom_early_renewal_cannot_quote_through_purchase_entry`, `test_renewal_missing_managed_marker_still_checks_old_purchase_rows`, `test_detached_buyer_cannot_bypass_database_entitlement_check`
 - `tests/donbaton/test_recurring_guards.py` — Python-модуль
   Классы: нет
   Функции: `recurrent_enabled`, `test_purchase_rejects_managed_before_pending_row_or_provider`, `test_enable_and_direct_mixin_reject_both_entitlement_sources`, `test_legacy_enable_keeps_existing_provider_contract`, `test_old_telegram_callback_gets_clear_rejection`, `test_raw_cabinet_purchase_rejects_disabled_managed_sales`

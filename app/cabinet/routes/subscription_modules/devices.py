@@ -53,6 +53,16 @@ REMNAWAVE_SYNC_TIMEOUT = 10.0
 router = APIRouter()
 
 
+def _require_mutable_device_slots(subscription):
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Количество устройств закреплено за тарифом. Другой тариф можно выбрать после окончания подписки.',
+        )
+
+
 def _resolve_panel_user_id(subscription: Subscription | None, user: User) -> int | None:
     """Resolve RemnaWave panel user id: per-subscription in multi-tariff, user-level otherwise.
 
@@ -102,6 +112,8 @@ async def purchase_devices_legacy(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='No subscription found',
         )
+
+    _require_mutable_device_slots(subscription)
 
     if subscription.status not in ['active', 'trial']:
         raise HTTPException(
@@ -367,6 +379,8 @@ async def purchase_devices(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='У вас нет активной подписки',
             )
+
+        _require_mutable_device_slots(subscription)
 
         if subscription.status not in ['active', 'trial']:
             raise HTTPException(
@@ -667,6 +681,8 @@ async def save_devices_cart(
             detail='У вас нет активной подписки',
         )
 
+    _require_mutable_device_slots(subscription)
+
     if subscription.status not in ['active', 'trial']:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -777,6 +793,19 @@ async def get_device_price(
             'available': False,
             'reason': 'Нет активной подписки',
             'reason_code': 'no_active_subscription',
+        }
+
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        return {
+            'available': False,
+            'reason': 'Количество устройств закреплено за тарифом',
+            'reason_code': 'fixed_network_plan',
+            'current_device_limit': subscription.device_limit,
+            'min_device_limit': subscription.device_limit,
+            'can_reduce': 0,
+            'connected_devices_count': 0,
         }
 
     tariff = None
@@ -1191,6 +1220,19 @@ async def get_device_reduction_info(
             'connected_devices_count': 0,
         }
 
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        return {
+            'available': False,
+            'reason': 'Количество устройств закреплено за тарифом',
+            'reason_code': 'fixed_network_plan',
+            'current_device_limit': subscription.device_limit,
+            'min_device_limit': subscription.device_limit,
+            'can_reduce': 0,
+            'connected_devices_count': 0,
+        }
+
     # Check if it's a trial subscription
     if subscription.is_trial:
         return {
@@ -1290,6 +1332,8 @@ async def reduce_devices(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='No subscription found',
         )
+
+    _require_mutable_device_slots(subscription)
 
     if subscription.is_trial:
         raise HTTPException(

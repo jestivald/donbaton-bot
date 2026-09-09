@@ -12,17 +12,31 @@ from app.utils.formatting import format_price_kopeks
 
 
 def format_lte_status(category, quota):
-    if category == 'wifi':
+    if category == 'wifi' and not (quota and quota.get('has_carried_lte')):
         return '📶 Wi-Fi: безлимит'
-    if category != 'wifi_lte':
+    if category not in ('wifi', 'wifi_lte'):
         return ''
     if quota is None:
         return '📶 Wi-Fi: безлимит\n📱 LTE: данные пакета обновляются'
     from datetime import datetime
+    from zoneinfo import ZoneInfo
 
-    date = datetime.fromisoformat(quota['period_ends_at']).strftime('%d.%m.%Y %H:%M UTC')
-    remaining = quota['remaining_bytes'] / 1024**3
-    result = f'📶 Wi-Fi: безлимит\n📱 LTE: осталось {remaining:.2f} ГиБ\nОбновление пакета: {date}'
+    from app.config import settings
+
+    def date_text(value):
+        return datetime.fromisoformat(value).astimezone(ZoneInfo(settings.TIMEZONE)).strftime('%d.%m.%Y %H:%M %Z')
+
+    if quota.get('is_unlimited'):
+        result = '📶 Wi-Fi: безлимит\n📱 LTE: безлимит'
+    else:
+        remaining = quota['remaining_bytes'] / 1024**3
+        result = f'📶 Wi-Fi: безлимит\n📱 LTE: осталось {remaining:.2f} ГиБ'
+        if quota.get('period_ends_at') and quota.get('period_mode') not in ('legacy_no_reset', 'trial'):
+            result += f'\nОбновление пакета: {date_text(quota["period_ends_at"])}'
+    if quota.get('legacy_compatibility_until'):
+        result += f'\nПрежние оплаченные условия действуют до {date_text(quota["legacy_compatibility_until"])}'
+    if quota.get('renewal_requires_expiry'):
+        result += '\nНовый тариф можно выбрать после окончания подписки.'
     if quota.get('exhausted'):
         result += '\nПакет LTE закончился. Wi-Fi продолжает работать до окончания подписки.'
     elif quota.get('accounting_state') != 'ready':
