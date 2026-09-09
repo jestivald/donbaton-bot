@@ -22,6 +22,7 @@ from app.external.remnawave_api import (
     UserStatus,
     is_user_not_found_error,
 )
+from app.services.lte_quota_service import apply_panel_policy, initialize_quota, is_managed, needs_managed_policy
 from app.services.panel_expiry import panel_expire_at
 from app.utils.subscription_utils import (
     resolve_hwid_device_limit_for_payload,
@@ -263,6 +264,7 @@ class SubscriptionService:
             await db.refresh(user)
             preserve_open_grace = (
                 subscription.id in open_grace_ids
+                and not is_managed(subscription)
                 and user.status == 'active'
                 and subscription.actual_status in (SubscriptionStatus.EXPIRED.value, SubscriptionStatus.LIMITED.value)
             )
@@ -335,6 +337,7 @@ class SubscriptionService:
                         api,
                         user,
                         subscription,
+                        db=db,
                         user_tag=user_tag,
                         hwid_limit=hwid_limit,
                         ext_squad_uuid=ext_squad_uuid,
@@ -512,11 +515,14 @@ class SubscriptionService:
         if ext_squad_uuid is not None:
             common_kwargs['external_squad_uuid'] = ext_squad_uuid
 
+        common_kwargs = await apply_panel_policy(db, subscription, common_kwargs)
+
         # If this subscription already has a Remnawave user — update it
         if subscription.remnawave_id:
             try:
                 existing = await api.get_user_by_id(subscription.remnawave_id)
                 if existing:
+                    common_kwargs = await apply_panel_policy(db, subscription, common_kwargs, panel_user=existing)
                     if settings.RESET_DEVICES_ON_RENEWAL:
                         if not await api.reset_user_devices(existing.id):
                             logger.error('⚠️ Не удалось сбросить HWID', panel_user_id=existing.id)
@@ -552,6 +558,7 @@ class SubscriptionService:
         # аккаунт при первом же продлении, а оплаченный оригинал осиротел бы.
         adopted = await self._adopt_panel_user_by_short_uuid(api, subscription)
         if adopted is not None:
+            common_kwargs = await apply_panel_policy(db, subscription, common_kwargs, panel_user=adopted)
             # Та же защита частично-уникального индекса, что и на других
             # писателях: иначе IntegrityError прилетал бы уже ПОСЛЕ update_user,
             # то есть панель изменена, а транзакция отката.
@@ -600,6 +607,9 @@ class SubscriptionService:
             expire_at=panel_expire_at(subscription.end_date, is_active=is_actually_active, creating=True, now=now),
             **common_kwargs,
         )
+        if is_managed(subscription):
+            projected = await apply_panel_policy(db, subscription, common_kwargs, panel_user=updated_user)
+            updated_user = await api.update_user(user_id=updated_user.id, **projected)
         if reset_traffic:
             await self._reset_user_traffic(api, updated_user.id, user, reset_reason)
         return updated_user
@@ -610,6 +620,7 @@ class SubscriptionService:
         user: User,
         subscription: Subscription,
         *,
+        db: AsyncSession | None = None,
         user_tag: str | None,
         hwid_limit: int | None,
         ext_squad_uuid: str | None,
@@ -716,9 +727,12 @@ class SubscriptionService:
         if ext_squad_uuid is not None:
             common_kwargs['external_squad_uuid'] = ext_squad_uuid
 
+        common_kwargs = await apply_panel_policy(db, subscription, common_kwargs)
+
         if existing_users:
             logger.info('🔄 Найден существующий пользователь в панели', _format_user_log=self._format_user_log(user))
             remnawave_user = existing_users[0]
+            common_kwargs = await apply_panel_policy(db, subscription, common_kwargs, panel_user=remnawave_user)
 
             if settings.RESET_DEVICES_ON_RENEWAL:
                 if await api.reset_user_devices(remnawave_user.id):
@@ -748,6 +762,9 @@ class SubscriptionService:
             expire_at=panel_expire_at(subscription.end_date, is_active=is_actually_active, creating=True, now=now),
             **common_kwargs,
         )
+        if is_managed(subscription):
+            projected = await apply_panel_policy(db, subscription, common_kwargs, panel_user=updated_user)
+            updated_user = await api.update_user(user_id=updated_user.id, **projected)
         if reset_traffic:
             await self._reset_user_traffic(api, updated_user.id, user, reset_reason)
         return updated_user
@@ -804,6 +821,7 @@ class SubscriptionService:
             await db.refresh(user)
             preserve_open_grace = (
                 subscription.id in open_grace_ids
+                and not is_managed(subscription)
                 and user.status == 'active'
                 and subscription.actual_status in (SubscriptionStatus.EXPIRED.value, SubscriptionStatus.LIMITED.value)
             )
@@ -907,6 +925,11 @@ class SubscriptionService:
                 # Синхронизация сквадов происходит только при sync_squads=True.
                 if sync_squads and ext_squad_uuid is not None:
                     update_kwargs['external_squad_uuid'] = ext_squad_uuid
+
+                if is_managed(subscription):
+                    await initialize_quota(db, subscription)
+                panel_sample = await api.get_user_by_id(remnawave_id) if is_managed(subscription) else None
+                update_kwargs = await apply_panel_policy(db, subscription, update_kwargs, panel_user=panel_sample)
 
                 completed_grace = False
                 updated_user = None
@@ -1554,7 +1577,8 @@ class SubscriptionService:
             return PropagateSquadsResult(total=0, synced=0)
 
         for sub in subscriptions:
-            sub.connected_squads = squads_to_set
+            if not needs_managed_policy(sub):
+                sub.connected_squads = squads_to_set
         await db.commit()
 
         # Предзагружаем пользователей и тарифы — никаких DB-операций внутри gather
@@ -1580,6 +1604,12 @@ class SubscriptionService:
             async def _sync_one(sub: Subscription) -> bool:
                 async with semaphore:
                     try:
+                        if needs_managed_policy(sub):
+                            from app.database.database import AsyncSessionLocal
+
+                            async with AsyncSessionLocal() as quota_db:
+                                current = await quota_db.get(Subscription, sub.id)
+                                return bool(current and await self.update_remnawave_user(quota_db, current))
                         user = users_map.get(sub.user_id)
                         if not user:
                             return False

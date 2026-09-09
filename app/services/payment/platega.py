@@ -12,9 +12,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, Subscription, TransactionType
+from app.services.donbaton_catalog import network_category
 from app.services.platega_service import PlategaService
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
+
+
+def _ensure_legacy_recurring(tariff: Any, subscription: Any = None) -> None:
+    # This is independent of the managed-sales feature flag: raw tariff lookups,
+    # stale Telegram callbacks and direct cabinet API calls must also be blocked.
+    if network_category(tariff) or network_category(subscription):
+        raise ValueError(
+            'Тарифы Wi-Fi и Wi-Fi + LTE оплачиваются с баланса. '
+            'Пополните баланс и подтвердите покупку; внешняя автооплата пока недоступна.'
+        )
 
 
 def _parse_next_charge(raw: Any) -> datetime | None:
@@ -171,6 +182,8 @@ class PlategaPaymentMixin:
         Platega-рекуррент и баланс-автосписание — взаимоисключающие движки
         продления одной подписки.
         """
+        _ensure_legacy_recurring(tariff, subscription)
+
         # Ленивый импорт: monitoring_service импортирует платёжный слой,
         # прямой импорт на уровне модуля создал бы циклическую зависимость.
         from app.database.crud import platega_subscription as sub_crud
@@ -1110,6 +1123,7 @@ async def enable_platega_sbp_recurring(
     НЕ best-effort: пробрасывает ValueError (нет цены за период) / RuntimeError
     (Platega не отдала transactionId), чтобы UI показал ошибку. Гейт на фичу.
     """
+    _ensure_legacy_recurring(tariff, subscription)
     if not settings.is_platega_recurrent_enabled():
         raise RuntimeError('Platega recurrent is disabled')
     return await _PlategaSbpAgent().create_platega_sbp_subscription(
@@ -1146,6 +1160,7 @@ async def purchase_tariff_with_sbp_recurring(
     Возвращает результат enable + ``subscription_id``. Пробрасывает
     ValueError/RuntimeError — UI показывает сообщение.
     """
+    _ensure_legacy_recurring(tariff)
     if not settings.is_platega_recurrent_enabled():
         raise RuntimeError('Platega recurrent is disabled')
 

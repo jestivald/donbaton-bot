@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.crud.tariff import get_tariff_by_id
+from app.database.crud.tariff import get_sale_tariff_by_id as get_tariff_by_id
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import PaymentMethod, Subscription, TransactionType, User
@@ -456,6 +456,9 @@ async def switch_tariff(
     # (subtract_user_balance re-selects User with populate_existing=True which expires relationships)
     await db.refresh(subscription)
 
+    from app.services.lte_quota_service import update_entitlement
+
+    await update_entitlement(db, subscription, new_tariff)
     subscription.tariff_id = new_tariff.id
     subscription.traffic_limit_gb = new_tariff.traffic_limit_gb
     subscription.device_limit = calc_device_limit_on_tariff_switch(
@@ -605,7 +608,7 @@ async def switch_tariff(
         'success': True,
         'message': f"Switched from '{old_tariff_name}' to '{new_tariff.name}'"
         + (' (devices reset)' if devices_reset else ''),
-        'subscription': _subscription_to_response(subscription, user=user),
+        'subscription': await _subscription_to_response(db, subscription, user=user),
         'old_tariff_name': old_tariff_name,
         'new_tariff_id': new_tariff.id,
         'new_tariff_name': new_tariff.name,

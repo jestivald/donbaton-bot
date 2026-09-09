@@ -207,6 +207,7 @@ class MonitoringService:
         self._notified_users: set[str] = set()
         self._last_cleanup = datetime.now(UTC)
         self._sla_task = None
+        self._lte_task = None
         # In-memory fallback состояния уведомлений об ошибке автоплатежа (на случай
         # недоступности Redis). Ключ — (subscription_id, cycle_token=int(end_date.timestamp())).
         self._autopay_fail_state: dict[tuple[int, int], dict] = {}
@@ -346,6 +347,8 @@ class MonitoringService:
 
         self.is_running = True
         logger.info('🔄 Запуск службы мониторинга')
+        if not self._lte_task or self._lte_task.done():
+            self._lte_task = asyncio.create_task(self._lte_loop())
         # Start dedicated SLA loop with its own interval for timely 5-min checks
         try:
             if not self._sla_task or self._sla_task.done():
@@ -364,6 +367,8 @@ class MonitoringService:
 
     def stop_monitoring(self):
         self.is_running = False
+        if self._lte_task and not self._lte_task.done():
+            self._lte_task.cancel()
         logger.info('ℹ️ Мониторинг остановлен')
         try:
             if self._sla_task and not self._sla_task.done():
@@ -619,6 +624,10 @@ class MonitoringService:
             logger.error('Ошибка проверки истёкших подписок', error=e)
 
     async def update_remnawave_user(self, db: AsyncSession, subscription: Subscription) -> RemnaWaveUser | None:
+        from app.services.lte_quota_service import needs_managed_policy
+
+        if needs_managed_policy(subscription):
+            return await self.subscription_service.update_remnawave_user(db, subscription)
         try:
             from app.database.crud.subscription import is_recently_updated_by_webhook
 
@@ -3082,6 +3091,18 @@ class MonitoringService:
                 )
         except Exception as e:
             logger.error('Ошибка проверки SLA тикетов', error=e)
+
+    async def _lte_loop(self):
+        from app.services.lte_quota_service import run_quota_cycle
+
+        while self.is_running:
+            try:
+                await run_quota_cycle(self.subscription_service)
+            except asyncio.CancelledError:
+                return
+            except Exception as error:
+                logger.error('Ошибка цикла LTE-квот', error=str(error))
+            await asyncio.sleep(settings.DONBATON_LTE_POLL_SECONDS)
 
     async def _sla_loop(self):
         try:

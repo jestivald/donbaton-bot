@@ -82,6 +82,14 @@ logger = structlog.get_logger(__name__)
 
 
 class Settings(BaseSettings):
+    # Enable only after staging verifies disjoint inbounds and WIFI=0/LTE=1 accounting.
+    DONBATON_LTE_ENABLED: bool = False
+    DONBATON_LTE_ACCOUNTING_READY: bool = False
+    DONBATON_WIFI_SQUAD_UUIDS: str = ''
+    DONBATON_LTE_SQUAD_UUIDS: str = ''
+    DONBATON_LTE_POLL_SECONDS: int = Field(30, ge=10, le=300)
+    DONBATON_LTE_MAX_SAMPLE_AGE_SECONDS: int = Field(180, ge=30, le=1800)
+
     BOT_TOKEN: str
     BOT_USERNAME: str | None = None
     ADMIN_IDS: str = ''
@@ -233,6 +241,11 @@ class Settings(BaseSettings):
     REMNAWAVE_WEBHOOK_PATH: str = '/remnawave-webhook'
     REMNAWAVE_WEBHOOK_SECRET: str | None = None  # HMAC-SHA256 shared secret (min 32 chars)
     REMNAWAVE_WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS: bool = True
+    # ДонБатон patch 03: эхо админ-действий с нодами (node.created / modified / disabled /
+    # enabled / deleted). В апстриме выключателя нет — события летят в INFRASTRUCTURE-топик
+    # безусловно. False = не слать. node.connection_lost/restored и node.traffic_notify
+    # этот ключ НЕ трогает (у первых свой ключ выше).
+    REMNAWAVE_WEBHOOK_NOTIFY_NODE_LIFECYCLE: bool = True
     # Coalescing knobs для burst'ов node.connection_lost / node.connection_restored.
     # Окно — сколько секунд буферим события одного типа перед отправкой одной
     # сводки. Cap — жёсткий лимит размера буфера на event_name (защита от

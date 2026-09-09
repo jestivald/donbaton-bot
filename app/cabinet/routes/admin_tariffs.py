@@ -135,6 +135,9 @@ async def list_tariffs(
                 allow_traffic_topup=tariff.allow_traffic_topup,
                 show_in_gift=tariff.show_in_gift,
                 traffic_limit_gb=tariff.traffic_limit_gb,
+                network_category=tariff.network_category,
+                lte_traffic_limit_gb=tariff.lte_traffic_limit_gb,
+                lte_period_days=tariff.lte_period_days,
                 device_limit=tariff.device_limit,
                 tier_level=tariff.tier_level,
                 display_order=tariff.display_order,
@@ -244,6 +247,9 @@ async def get_tariff(
         traffic_topup_packages=tariff.traffic_topup_packages or {},
         max_topup_traffic_gb=tariff.max_topup_traffic_gb,
         traffic_limit_gb=tariff.traffic_limit_gb,
+        network_category=tariff.network_category,
+        lte_traffic_limit_gb=tariff.lte_traffic_limit_gb,
+        lte_period_days=tariff.lte_period_days,
         device_limit=tariff.device_limit,
         device_price_kopeks=tariff.device_price_kopeks,
         max_device_limit=tariff.max_device_limit,
@@ -298,47 +304,54 @@ async def create_new_tariff(
         else {}
     )
 
-    tariff = await create_tariff(
-        db=db,
-        name=request.name,
-        description=request.description,
-        is_active=request.is_active,
-        allow_traffic_topup=request.allow_traffic_topup,
-        traffic_topup_enabled=request.traffic_topup_enabled,
-        traffic_topup_packages=request.traffic_topup_packages,
-        max_topup_traffic_gb=request.max_topup_traffic_gb,
-        traffic_limit_gb=request.traffic_limit_gb,
-        device_limit=request.device_limit,
-        device_price_kopeks=request.device_price_kopeks,
-        max_device_limit=request.max_device_limit,
-        tier_level=request.tier_level,
-        period_prices=period_prices_dict,
-        highlight_period_days=request.highlight_period_days,
-        is_highlighted=request.is_highlighted,
-        allowed_squads=request.allowed_squads,
-        server_traffic_limits=server_limits_dict,
-        promo_group_ids=request.promo_group_ids or None,
-        # Произвольное количество дней
-        custom_days_enabled=request.custom_days_enabled,
-        price_per_day_kopeks=request.price_per_day_kopeks,
-        min_days=request.min_days,
-        max_days=request.max_days,
-        # Произвольный трафик при покупке
-        custom_traffic_enabled=request.custom_traffic_enabled,
-        traffic_price_per_gb_kopeks=request.traffic_price_per_gb_kopeks,
-        min_traffic_gb=request.min_traffic_gb,
-        max_traffic_gb=request.max_traffic_gb,
-        # Дневной тариф
-        is_daily=request.is_daily,
-        daily_price_kopeks=request.daily_price_kopeks,
-        lava_product_id=request.lava_product_id,
-        # Режим сброса трафика
-        traffic_reset_mode=request.traffic_reset_mode,
-        # Внешний сквад
-        external_squad_uuid=request.external_squad_uuid,
-        # Показывать в подарках
-        show_in_gift=request.show_in_gift,
-    )
+    try:
+        tariff = await create_tariff(
+            db=db,
+            name=request.name,
+            description=request.description,
+            is_active=request.is_active,
+            allow_traffic_topup=request.allow_traffic_topup,
+            traffic_topup_enabled=request.traffic_topup_enabled,
+            traffic_topup_packages=request.traffic_topup_packages,
+            max_topup_traffic_gb=request.max_topup_traffic_gb,
+            traffic_limit_gb=request.traffic_limit_gb,
+            network_category=request.network_category,
+            lte_traffic_limit_gb=request.lte_traffic_limit_gb,
+            lte_period_days=request.lte_period_days,
+            device_limit=request.device_limit,
+            device_price_kopeks=request.device_price_kopeks,
+            max_device_limit=request.max_device_limit,
+            tier_level=request.tier_level,
+            period_prices=period_prices_dict,
+            highlight_period_days=request.highlight_period_days,
+            is_highlighted=request.is_highlighted,
+            allowed_squads=request.allowed_squads,
+            server_traffic_limits=server_limits_dict,
+            promo_group_ids=request.promo_group_ids or None,
+            # Произвольное количество дней
+            custom_days_enabled=request.custom_days_enabled,
+            price_per_day_kopeks=request.price_per_day_kopeks,
+            min_days=request.min_days,
+            max_days=request.max_days,
+            # Произвольный трафик при покупке
+            custom_traffic_enabled=request.custom_traffic_enabled,
+            traffic_price_per_gb_kopeks=request.traffic_price_per_gb_kopeks,
+            min_traffic_gb=request.min_traffic_gb,
+            max_traffic_gb=request.max_traffic_gb,
+            # Дневной тариф
+            is_daily=request.is_daily,
+            daily_price_kopeks=request.daily_price_kopeks,
+            lava_product_id=request.lava_product_id,
+            # Режим сброса трафика
+            traffic_reset_mode=request.traffic_reset_mode,
+            # Внешний сквад
+            external_squad_uuid=request.external_squad_uuid,
+            # Показывать в подарках
+            show_in_gift=request.show_in_gift,
+        )
+    except ValueError as error:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
     logger.info('Admin created tariff', admin_id=admin.id, tariff_id=tariff.id, tariff_name=tariff.name)
 
@@ -370,6 +383,9 @@ async def update_existing_tariff(
 
     # Build updates dict
     updates = {}
+    for field in ('network_category', 'lte_traffic_limit_gb', 'lte_period_days'):
+        if field in request.model_fields_set:
+            updates[field] = getattr(request, field)
     if request.name is not None:
         updates['name'] = request.name
     if request.description is not None:
@@ -446,7 +462,11 @@ async def update_existing_tariff(
         updates['show_in_gift'] = request.show_in_gift
 
     if updates:
-        await update_tariff(db, tariff, **updates)
+        try:
+            await update_tariff(db, tariff, **updates)
+        except ValueError as error:
+            await db.rollback()
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     # Update promo groups separately
     if request.promo_group_ids is not None:
@@ -549,6 +569,11 @@ async def toggle_trial_tariff(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='Tariff not found',
         )
+
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(tariff):
+        raise HTTPException(status_code=400, detail='Пробные Wi-Fi/LTE-тарифы пока не поддерживаются')
 
     new_status = not tariff.is_trial_available
 
@@ -663,6 +688,14 @@ async def _background_sync_squads(tariff_id: int, admin_id: int) -> None:
             if not subscriptions:
                 return
 
+            from app.services.donbaton_catalog import network_category
+            from app.services.subscription_service import SubscriptionService
+
+            for managed_sub in [sub for sub in subscriptions if network_category(sub)]:
+                await SubscriptionService().update_remnawave_user(db, managed_sub)
+            subscriptions = [sub for sub in subscriptions if not network_category(sub)]
+            if not subscriptions:
+                return
             new_squads = tariff.allowed_squads or []
             ext_squad_uuid = tariff.external_squad_uuid
 
@@ -812,15 +845,25 @@ async def sync_tariff_squads(
                     return 'skipped'
 
                 try:
-                    await update_panel_user_grace_safe(
-                        api,
-                        sub.id,
-                        user_id=remnawave_id,
-                        active_internal_squads=new_squads,
-                        external_squad_uuid=ext_squad_uuid,
-                    )
-                    # Update local DB only on successful API call
-                    sub.connected_squads = new_squads
+                    from app.services.donbaton_catalog import network_category
+
+                    if network_category(sub):
+                        from app.database.database import AsyncSessionLocal
+                        from app.services.subscription_service import SubscriptionService
+
+                        async with AsyncSessionLocal() as managed_db:
+                            managed_sub = await managed_db.get(Subscription, sub.id)
+                            if not await SubscriptionService().update_remnawave_user(managed_db, managed_sub):
+                                raise RuntimeError('Не удалось синхронизировать Wi-Fi/LTE')
+                    else:
+                        await update_panel_user_grace_safe(
+                            api,
+                            sub.id,
+                            user_id=remnawave_id,
+                            active_internal_squads=new_squads,
+                            external_squad_uuid=ext_squad_uuid,
+                        )
+                        sub.connected_squads = new_squads
                     updated_count += 1
                     consecutive_failures = 0
                     return 'ok'

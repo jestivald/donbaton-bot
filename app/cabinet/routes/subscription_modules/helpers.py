@@ -101,7 +101,8 @@ def _apply_addon_discount(
     }
 
 
-def _subscription_to_response(
+async def _subscription_to_response(
+    db: AsyncSession,
     subscription: Subscription,
     servers: list[ServerInfo] | None = None,
     tariff_name: str | None = None,
@@ -194,7 +195,13 @@ def _subscription_to_response(
     # Проверяем настройку скрытия ссылки (скрывается только текст, кнопки работают)
     hide_link = settings.should_hide_subscription_link()
 
+    from app.services.donbaton_catalog import network_category
+    from app.services.lte_quota_service import get_quota_status
+
+    lte_quota = await get_quota_status(db, subscription) if network_category(subscription) else None
     return SubscriptionResponse(
+        network_category=network_category(subscription),
+        lte_quota=lte_quota,
         id=subscription.id,
         status=actual_status,  # Use actual_status instead of raw status
         is_trial=subscription.is_trial or actual_status == 'trial',

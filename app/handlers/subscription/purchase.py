@@ -500,6 +500,15 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
         device_limit=device_limit_display,
     )
 
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        from app.services.lte_quota_service import get_quota_status
+
+        from .lte import format_lte_status
+
+        message += '\n\n' + format_lte_status(network_category(subscription), await get_quota_status(db, subscription))
+
     if show_devices and devices_list:
         message += '\n\n' + texts.t(
             'SUBSCRIPTION_CONNECTED_DEVICES_TITLE',
@@ -4116,6 +4125,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
 
 
 def register_handlers(dp: Dispatcher):
+    from .lte import register_lte_handlers
+
+    register_lte_handlers(dp)
+
     update_traffic_prices()
 
     dp.callback_query.register(show_subscription_info, F.data == 'menu_subscription')

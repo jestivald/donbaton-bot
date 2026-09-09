@@ -1,4 +1,5 @@
 {
+  "DONBATON_RECURRING_UNAVAILABLE": "پرداخت خودکار از طریق سرویس‌های خارجی هنوز برای طرح‌های Wi-Fi/LTE در دسترس نیست. اشتراک خود را با موجودی حساب تمدید کنید.",
   "ACCESS_DENIED": "❌ دسترسی غیرمجاز",
   "ADDON_INSUFFICIENT_FUNDS_MESSAGE": "⚠️ <b>موجودی ناکافی</b>\n\nهزینه: {required}\nموجودی: {balance}\nکسری: {missing}\n\nروش شارژ را انتخاب کنید.",
   "ADD_COUNTRIES_BUTTON": "🌐 افزودن کشور",

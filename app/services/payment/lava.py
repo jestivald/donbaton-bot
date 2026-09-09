@@ -12,9 +12,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, Subscription, TransactionType
+from app.services.donbaton_catalog import network_category
 from app.services.lava_service import lava_service
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
+
+
+def _ensure_legacy_recurring(tariff: Any, subscription: Any = None) -> None:
+    # Check the tariff as well as the persisted subscription marker, even while
+    # managed sales are disabled or a subscription has not been initialized yet.
+    if network_category(tariff) or network_category(subscription):
+        raise ValueError(
+            'Тарифы Wi-Fi и Wi-Fi + LTE оплачиваются с баланса. '
+            'Пополните баланс и подтвердите покупку; внешняя автооплата пока недоступна.'
+        )
 
 
 # Маппинг sub-method -> includeService для фильтрации методов на странице оплаты Lava
@@ -713,6 +724,8 @@ class LavaPaymentMixin:
         рекуррент провайдера и баланс-автосписание — взаимоисключающие движки
         продления одной подписки.
         """
+        _ensure_legacy_recurring(tariff, subscription)
+
         from app.database.crud import lava_subscription as sub_crud
         from app.services.lava_recurrent import build_recurrent_order_id, resolve_product_charge_days
 
@@ -1192,6 +1205,7 @@ async def enable_lava_recurring(
     НЕ best-effort: пробрасывает ValueError (у тарифа не задан продукт Lava /
     продукт без цены), чтобы UI показал причину. Гейт на фичу.
     """
+    _ensure_legacy_recurring(tariff, subscription)
     if not settings.is_lava_recurrent_enabled():
         raise RuntimeError('Lava recurrent is disabled')
     return await _LavaRecurrentAgent().create_lava_recurrent_subscription(
@@ -1221,6 +1235,7 @@ async def purchase_tariff_with_lava_recurring(
     - в single-режиме подписка другого тарифа → отказ: чарджи продлевали бы
       подписку ЧУЖОГО тарифа по цене выбранного.
     """
+    _ensure_legacy_recurring(tariff)
     if not settings.is_lava_recurrent_enabled():
         raise RuntimeError('Lava recurrent is disabled')
 

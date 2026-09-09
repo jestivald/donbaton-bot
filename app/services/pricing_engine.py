@@ -254,6 +254,16 @@ class PricingEngine:
 
         Для всех типов переключений скидки (group + offer) применяются stacked.
         """
+        from app.services.donbaton_catalog import network_category
+        from app.services.lte_quota_service import LtePolicyError, validate_tariff_for_sale
+
+        if network_category(new_tariff):
+            validate_tariff_for_sale(new_tariff)
+        if network_category(current_tariff) or network_category(new_tariff):
+            raise LtePolicyError(
+                'До окончания подписки можно продлить текущий тариф или докупить LTE. '
+                'Другой тариф можно выбрать после окончания подписки.'
+            )
         current_is_daily = getattr(current_tariff, 'is_daily', False) if current_tariff else False
         new_is_daily = getattr(new_tariff, 'is_daily', False)
 
@@ -582,6 +592,13 @@ class PricingEngine:
         Promo-offer discount applied on the discounted subtotal.
         Device cost is monthly × months_in_period.
         """
+        from app.services.donbaton_catalog import network_category
+        from app.services.lte_quota_service import validate_tariff_for_sale
+
+        if network_category(tariff):
+            validate_tariff_for_sale(tariff)
+            if custom_traffic_gb is not None:
+                raise ValueError('Выберите отдельный LTE-пакет после покупки подписки')
         months = calculate_months_from_days(period_days)
 
         # --- Base price ---

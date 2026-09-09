@@ -1,4 +1,5 @@
 {
+  "DONBATON_RECURRING_UNAVAILABLE": "Для тарифов Wi-Fi/LTE внешняя автооплата пока недоступна. Продлите подписку с баланса.",
   "ACCESS_DENIED": "❌ Доступ запрещен",
   "ADDON_INSUFFICIENT_FUNDS_MESSAGE": "⚠️ <b>Недостаточно средств</b>\n\nСтоимость услуги: {required}\nНа балансе: {balance}\nНе хватает: {missing}\n\nВыберите способ пополнения. Сумма подставится автоматически.",
   "ADD_COUNTRIES_BUTTON": "🌐 Добавить страны",

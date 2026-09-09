@@ -18,13 +18,22 @@ from app.database.crud.subscription import (
     get_subscription_by_id_for_user,
     get_subscription_by_user_id,
 )
-from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
+from app.database.crud.tariff import get_sale_tariff_by_id as get_tariff_by_id, get_tariffs_for_user
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.database import AsyncSessionLocal
 from app.database.models import Tariff, Transaction, TransactionType, User
 from app.localization.texts import Texts, get_texts
 from app.services.admin_notification_service import AdminNotificationService
+from app.services.donbaton_catalog import (
+    CATEGORY_LABELS,
+    NETWORK_CATEGORIES,
+    NETWORK_EXPLANATION,
+    available_categories,
+    category_tariffs,
+    select_category,
+    tariff_traffic_label,
+)
 from app.services.subscription_service import SubscriptionService
 from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_used_traffic
 from app.services.user_cart_service import user_cart_service
@@ -178,6 +187,8 @@ def format_tariffs_list_text(
             '∞' if traffic_gb == 0 else texts.t('TARIFF_PURCHASE_TRAFFIC_GB', '{traffic} ГБ').format(traffic=traffic_gb)
         )
 
+        traffic = tariff_traffic_label(tariff, traffic)
+
         # Цена
         is_daily = getattr(tariff, 'is_daily', False)
         price_text = ''
@@ -229,12 +240,24 @@ def get_tariffs_keyboard(
     tariffs: list[Tariff],
     language: str,
     purchased_tariff_ids: set[int] | None = None,
+    categories: list[str] | None = None,
+    selected_category: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Создает компактную клавиатуру выбора тарифов (только названия)."""
     texts = get_texts(language)
     if purchased_tariff_ids is None:
         purchased_tariff_ids = set()
     buttons = []
+    if categories:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=('✓ ' if category == selected_category else '') + CATEGORY_LABELS[category],
+                    callback_data=f'tariff_category:{category}',
+                )
+                for category in categories
+            ]
+        )
 
     badge = texts.t('TARIFF_BEST_VALUE_BADGE', '⭐ выгодно')
     for tariff in tariffs:
@@ -343,6 +366,8 @@ def get_tariff_confirm_keyboard(
     tariff_id: int,
     period: int,
     language: str,
+    *,
+    category: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Создает клавиатуру подтверждения покупки тарифа."""
     texts = get_texts(language)
@@ -357,24 +382,7 @@ def get_tariff_confirm_keyboard(
     # Альтернатива оплате с баланса: оформление через СБП-автопродление
     # Platega (первое списание = подтверждение привязки в банке, дальше —
     # автосписания по каденсу тарифа).
-    if settings.is_platega_recurrent_enabled():
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('SBP_PURCHASE_BUTTON', '⚡ Оформить с автооплатой СБП'),
-                    callback_data=f'tariff_sbp:{tariff_id}',
-                )
-            ]
-        )
-    if settings.is_lava_recurrent_enabled():
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('LAVA_PURCHASE_BUTTON', '⚡ Оформить с автооплатой Lava'),
-                    callback_data=f'tariff_lava:{tariff_id}',
-                )
-            ]
-        )
+    buttons.extend(_sbp_purchase_rows(tariff_id, texts, category=category))
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_select:{tariff_id}')])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -384,6 +392,8 @@ def get_tariff_insufficient_balance_keyboard(
     period: int,
     language: str,
     missing_kopeks: int = 0,
+    *,
+    category: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Создает клавиатуру при недостаточном балансе.
 
@@ -398,7 +408,7 @@ def get_tariff_insufficient_balance_keyboard(
     """
     texts = get_texts(language)
     back_button = InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_select:{tariff_id}')
-    sbp_rows = _sbp_purchase_rows(tariff_id, texts)
+    sbp_rows = _sbp_purchase_rows(tariff_id, texts, category=category)
 
     if settings.is_auto_purchase_after_topup_enabled() and missing_kopeks > 0:
         from app.keyboards.inline import get_payment_methods_keyboard
@@ -474,8 +484,10 @@ def get_tariff_extend_insufficient_balance_keyboard(
     )
 
 
-def _sbp_purchase_rows(tariff_id: int, texts) -> list[list[InlineKeyboardButton]]:
+def _sbp_purchase_rows(tariff_id: int, texts, *, category: str | None = None) -> list[list[InlineKeyboardButton]]:
     """Ряды оформления привязкой провайдера — те же, что на confirm-экранах."""
+    if category in NETWORK_CATEGORIES:
+        return []
     rows: list[list[InlineKeyboardButton]] = []
     if settings.is_platega_recurrent_enabled():
         rows.append(
@@ -506,7 +518,7 @@ def format_tariff_info_for_user(
     """Форматирует информацию о тарифе для пользователя."""
     texts = get_texts(language)
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
     text = texts.t(
         'TARIFF_PURCHASE_INFO',
@@ -533,6 +545,8 @@ def get_daily_tariff_confirm_keyboard(
     tariff_id: int,
     language: str,
     back_callback: str = 'menu_buy',
+    *,
+    category: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Создает клавиатуру подтверждения покупки суточного тарифа."""
     texts = get_texts(language)
@@ -544,24 +558,7 @@ def get_daily_tariff_confirm_keyboard(
             )
         ],
     ]
-    if settings.is_platega_recurrent_enabled():
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('SBP_PURCHASE_BUTTON', '⚡ Оформить с автооплатой СБП'),
-                    callback_data=f'tariff_sbp:{tariff_id}',
-                )
-            ]
-        )
-    if settings.is_lava_recurrent_enabled():
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('LAVA_PURCHASE_BUTTON', '⚡ Оформить с автооплатой Lava'),
-                    callback_data=f'tariff_lava:{tariff_id}',
-                )
-            ]
-        )
+    buttons.extend(_sbp_purchase_rows(tariff_id, texts, category=category))
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -570,13 +567,15 @@ def get_daily_tariff_insufficient_balance_keyboard(
     tariff_id: int,
     language: str,
     back_callback: str = 'menu_buy',
+    *,
+    category: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Создает клавиатуру при недостаточном балансе для суточного тарифа."""
     texts = get_texts(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'), callback_data='balance_topup')],
-            *_sbp_purchase_rows(tariff_id, texts),
+            *_sbp_purchase_rows(tariff_id, texts, category=category),
             [InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)],
         ]
     )
@@ -752,7 +751,7 @@ async def format_custom_tariff_preview(
     traffic_display = (
         texts.t('TARIFF_PURCHASE_TRAFFIC_GB', '{traffic} ГБ').format(traffic=traffic_gb)
         if traffic_gb > 0
-        else format_traffic(tariff.traffic_limit_gb)
+        else tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
     )
 
     text = texts.t('TARIFF_PURCHASE_CUSTOM_TITLE', '📦 <b>{name}</b>\n\n<b>Настройте параметры:</b>\n').format(
@@ -815,6 +814,10 @@ async def show_tariffs_list(
 ):
     """Показывает список тарифов для покупки."""
     texts = get_texts(db_user.language)
+    previous = await state.get_data()
+    requested_category = previous.get('network_category')
+    if callback.data and callback.data.startswith('tariff_category:'):
+        requested_category = callback.data.split(':', 1)[1]
     await state.clear()
 
     # Получаем доступные тарифы
@@ -834,12 +837,16 @@ async def show_tariffs_list(
         await callback.answer()
         return
 
+    categories = available_categories(tariffs)
+    selected_category = select_category(tariffs, requested_category)
+    await state.update_data(network_category=selected_category)
+
     # Один доступный тариф — сразу к периоду/подтверждению, без экрана «выбора из одной кнопки».
     # Кроме случая, когда покупать нечего: в мультитарифе `_proceed_with_selected_tariff`
     # на уже активном тарифе только показывает всплывающее уведомление и выходит,
     # ничего не перерисовывая, — кнопка «Купить подписку» выглядела бы мёртвой.
     # Тогда показываем список: там тариф помечен галочкой и понятно, почему.
-    if len(tariffs) == 1:
+    if len(tariffs) == 1 and not categories:
         _already_owned = False
         if settings.is_multi_tariff_enabled():
             from app.database.crud.subscription import get_active_subscriptions_by_user_id
@@ -869,11 +876,16 @@ async def show_tariffs_list(
             has_period_discounts = True
 
     # Формируем текст со списком тарифов и их характеристиками
-    tariffs_text = format_tariffs_list_text(tariffs, db_user, has_period_discounts, purchased_tariff_ids)
+    visible_tariffs = category_tariffs(tariffs, selected_category)
+    tariffs_text = format_tariffs_list_text(visible_tariffs, db_user, has_period_discounts, purchased_tariff_ids)
+    if categories:
+        tariffs_text += '\n' + NETWORK_EXPLANATION
 
     await callback.message.edit_text(
         tariffs_text,
-        reply_markup=get_tariffs_keyboard(tariffs, db_user.language, purchased_tariff_ids),
+        reply_markup=get_tariffs_keyboard(
+            visible_tariffs, db_user.language, purchased_tariff_ids, categories, selected_category
+        ),
     )
 
     await callback.answer()
@@ -953,7 +965,7 @@ async def _proceed_with_selected_tariff(
             else ''
         )
         user_balance = db_user.balance_kopeks or 0
-        traffic = format_traffic(tariff.traffic_limit_gb)
+        traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
         if user_balance >= daily_price:
             await callback.message.edit_text(
@@ -977,7 +989,10 @@ async def _proceed_with_selected_tariff(
                     balance=format_price_kopeks(user_balance),
                 ),
                 reply_markup=get_daily_tariff_confirm_keyboard(
-                    tariff_id, db_user.language, back_callback=back_callback
+                    tariff_id,
+                    db_user.language,
+                    back_callback=back_callback,
+                    category=getattr(tariff, 'network_category', None),
                 ),
                 parse_mode='HTML',
             )
@@ -1032,7 +1047,10 @@ async def _proceed_with_selected_tariff(
                     '\n\n🛒 <i>Корзина сохранена! После пополнения баланса подписка будет оформлена автоматически.</i>',
                 ),
                 reply_markup=get_daily_tariff_insufficient_balance_keyboard(
-                    tariff_id, db_user.language, back_callback=back_callback
+                    tariff_id,
+                    db_user.language,
+                    back_callback=back_callback,
+                    category=getattr(tariff, 'network_category', None),
                 ),
                 parse_mode='HTML',
             )
@@ -1327,6 +1345,9 @@ async def handle_custom_confirm(
 
     try:
         # Списываем баланс
+        from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+        await validate_user_tariff_purchase(db, db_user, tariff)
         success = await subtract_user_balance(
             db,
             db_user,
@@ -1685,7 +1706,7 @@ async def select_tariff_period(
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
     if user_balance >= final_price:
         # Показываем подтверждение
@@ -1717,7 +1738,9 @@ async def select_tariff_period(
                 balance=format_price_kopeks(user_balance),
                 after=format_price_kopeks(user_balance - final_price),
             ),
-            reply_markup=get_tariff_confirm_keyboard(tariff_id, period, db_user.language),
+            reply_markup=get_tariff_confirm_keyboard(
+                tariff_id, period, db_user.language, category=getattr(tariff, 'network_category', None)
+            ),
             parse_mode='HTML',
         )
     else:
@@ -1764,7 +1787,11 @@ async def select_tariff_period(
                 '\n\n🛒 <i>Корзина сохранена! После пополнения баланса подписка будет оформлена автоматически.</i>',
             ),
             reply_markup=get_tariff_insufficient_balance_keyboard(
-                tariff_id, period, db_user.language, missing_kopeks=missing
+                tariff_id,
+                period,
+                db_user.language,
+                missing_kopeks=missing,
+                category=getattr(tariff, 'network_category', None),
             ),
             parse_mode='HTML',
         )
@@ -1894,6 +1921,9 @@ async def confirm_tariff_purchase(
     saved_promo_source = getattr(db_user, 'promo_offer_discount_source', None) if consume_promo else None
     saved_promo_expires = getattr(db_user, 'promo_offer_discount_expires_at', None) if consume_promo else None
     try:
+        from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+        await validate_user_tariff_purchase(db, db_user, tariff)
         success = await subtract_user_balance(
             db,
             db_user,
@@ -2201,7 +2231,7 @@ async def confirm_tariff_purchase(
 
     await state.clear()
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
     await callback.message.edit_text(
         texts.t(
@@ -2301,6 +2331,9 @@ async def confirm_daily_tariff_purchase(
 
     try:
         # Списываем первый день сразу
+        from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+        await validate_user_tariff_purchase(db, db_user, tariff)
         success = await subtract_user_balance(
             db,
             db_user,
@@ -2505,7 +2538,7 @@ async def confirm_daily_tariff_purchase(
 
     await state.clear()
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
     await callback.message.edit_text(
         texts.t(
@@ -2780,7 +2813,7 @@ async def show_tariff_extend(
         await callback.answer()
         return
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
     # Проверяем есть ли у пользователя скидки по периодам
     promo_group = db_user.get_primary_promo_group() if hasattr(db_user, 'get_primary_promo_group') else None
@@ -2879,7 +2912,7 @@ async def select_tariff_extend_period(
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
     if user_balance >= final_price:
         discount_text = ''
@@ -3066,6 +3099,9 @@ async def confirm_tariff_extend(
 
     try:
         # Списываем баланс
+        from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+        await validate_user_tariff_purchase(db, db_user, tariff)
         success = await subtract_user_balance(
             db,
             db_user,
@@ -3164,7 +3200,7 @@ async def confirm_tariff_extend(
 
         await state.clear()
 
-        traffic = format_traffic(tariff.traffic_limit_gb)
+        traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
         await callback.message.edit_text(
             texts.t(
@@ -3384,6 +3420,22 @@ async def show_tariff_switch_list(
     subscription, _sub_id = await _resolve_switch_subscription(callback, db_user, db, state)
     if not subscription:
         return
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        await callback.message.edit_text(
+            'До окончания подписки можно продлить текущий тариф или докупить LTE. '
+            'Другой тариф можно выбрать после окончания подписки.',
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text='Моя подписка', callback_data='menu_subscription'),
+                    ]
+                ]
+            ),
+        )
+        await callback.answer()
+        return
 
     # Истёкшая подписка: смены тарифа нет, предлагаем купить новый тариф с нуля
     # (раньше кнопка «Тариф» вела сюда в тупик на истёкшей подписке).
@@ -3530,7 +3582,7 @@ async def select_tariff_switch(
                 )
                 return
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
     # Проверяем, суточный ли это тариф
     is_daily = getattr(tariff, 'is_daily', False)
@@ -3693,7 +3745,7 @@ async def select_tariff_switch_period(
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
     # Получаем текущий тариф для отображения
     current_tariff_name = texts.t('SUBSCRIPTION_STATUS_UNKNOWN', 'Неизвестно')
@@ -3855,6 +3907,9 @@ async def confirm_tariff_switch(
 
     try:
         # Списываем баланс
+        from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+        await validate_user_tariff_purchase(db, db_user, tariff)
         success = await subtract_user_balance(
             db,
             db_user,
@@ -4000,7 +4055,7 @@ async def confirm_tariff_switch(
 
         await state.clear()
 
-        traffic = format_traffic(tariff.traffic_limit_gb)
+        traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
         # При смене тарифа устанавливается оплаченный период
         time_info = texts.t('TARIFF_SWITCH_PERIOD_LINE', '📅 Период: {days} дней').format(days=days_for_new_tariff)
@@ -4135,6 +4190,9 @@ async def confirm_daily_tariff_switch(
 
     try:
         # Списываем первый день сразу
+        from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+        await validate_user_tariff_purchase(db, db_user, tariff)
         success = await subtract_user_balance(
             db,
             db_user,
@@ -4165,6 +4223,9 @@ async def confirm_daily_tariff_switch(
         from app.database.crud.subscription import calc_device_limit_on_tariff_switch
 
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
+        from app.services.lte_quota_service import update_entitlement
+
+        await update_entitlement(db, subscription, tariff)
         subscription.tariff_id = tariff.id
         subscription.traffic_limit_gb = tariff.traffic_limit_gb
         subscription.device_limit = calc_device_limit_on_tariff_switch(
@@ -4290,7 +4351,7 @@ async def confirm_daily_tariff_switch(
 
         await state.clear()
 
-        traffic = format_traffic(tariff.traffic_limit_gb)
+        traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
         await callback.message.edit_text(
             texts.t(
@@ -4545,6 +4606,22 @@ async def show_instant_switch_list(
     subscription, _sub_id = await _resolve_switch_subscription(callback, db_user, db, state)
     if not subscription:
         return
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        await callback.message.edit_text(
+            'До окончания подписки можно продлить текущий тариф или докупить LTE. '
+            'Другой тариф можно выбрать после окончания подписки.',
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text='Моя подписка', callback_data='menu_subscription'),
+                    ]
+                ]
+            ),
+        )
+        await callback.answer()
+        return
 
     if not subscription.tariff_id:
         # Legacy subscription without tariff — redirect to tariff_switch migration flow
@@ -4715,8 +4792,8 @@ async def preview_instant_switch(
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
 
-    traffic = format_traffic(new_tariff.traffic_limit_gb)
-    current_traffic = format_traffic(current_tariff.traffic_limit_gb)
+    traffic = tariff_traffic_label(new_tariff, format_traffic(new_tariff.traffic_limit_gb))
+    current_traffic = tariff_traffic_label(current_tariff, format_traffic(current_tariff.traffic_limit_gb))
 
     # Проверяем, суточный ли новый тариф
     is_new_daily = getattr(new_tariff, 'is_daily', False)
@@ -5032,6 +5109,9 @@ async def confirm_instant_switch(
         # Списываем баланс если это upgrade
         # upgrade_cost includes both group + offer discounts from PricingEngine
         if is_upgrade and upgrade_cost > 0:
+            from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+            await validate_user_tariff_purchase(db, db_user, new_tariff)
             success = await subtract_user_balance(
                 db,
                 db_user,
@@ -5067,6 +5147,9 @@ async def confirm_instant_switch(
         from app.database.crud.subscription import calc_device_limit_on_tariff_switch
 
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
+        from app.services.lte_quota_service import update_entitlement
+
+        await update_entitlement(db, subscription, new_tariff)
         subscription.tariff_id = new_tariff.id
         subscription.traffic_limit_gb = new_tariff.traffic_limit_gb
         subscription.device_limit = calc_device_limit_on_tariff_switch(
@@ -5106,6 +5189,9 @@ async def confirm_instant_switch(
             # Списываем первый день если ещё не списано (upgrade_cost был 0)
             if upgrade_cost == 0 and daily_price > 0:
                 if user_balance >= daily_price:
+                    from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+                    await validate_user_tariff_purchase(db, db_user, new_tariff)
                     success = await subtract_user_balance(
                         db,
                         db_user,
@@ -5249,7 +5335,7 @@ async def confirm_instant_switch(
 
         await state.clear()
 
-        traffic = format_traffic(new_tariff.traffic_limit_gb)
+        traffic = tariff_traffic_label(new_tariff, format_traffic(new_tariff.traffic_limit_gb))
 
         # Для суточного тарифа другое сообщение об успехе
         if is_new_daily:
@@ -5367,7 +5453,7 @@ async def return_to_saved_tariff_cart(
 
     total_price = cart_data.get('total_price', 0)
     user_balance = db_user.balance_kopeks or 0
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
     # Проверяем баланс (при 100% скидке — пропускаем)
     if total_price > 0 and user_balance < total_price:
@@ -5389,7 +5475,9 @@ async def return_to_saved_tariff_cart(
                     balance=format_price_kopeks(user_balance),
                     missing=format_price_kopeks(missing),
                 ),
-                reply_markup=get_daily_tariff_insufficient_balance_keyboard(tariff_id, db_user.language),
+                reply_markup=get_daily_tariff_insufficient_balance_keyboard(
+                    tariff_id, db_user.language, category=getattr(tariff, 'network_category', None)
+                ),
                 parse_mode='HTML',
             )
         elif cart_mode == 'extend':
@@ -5444,7 +5532,11 @@ async def return_to_saved_tariff_cart(
                     missing=format_price_kopeks(missing),
                 ),
                 reply_markup=get_tariff_insufficient_balance_keyboard(
-                    tariff_id, period, db_user.language, missing_kopeks=missing
+                    tariff_id,
+                    period,
+                    db_user.language,
+                    missing_kopeks=missing,
+                    category=getattr(tariff, 'network_category', None),
                 ),
                 parse_mode='HTML',
             )
@@ -5492,7 +5584,9 @@ async def return_to_saved_tariff_cart(
                 balance=format_price_kopeks(user_balance),
                 after=format_price_kopeks(user_balance - daily_price),
             ),
-            reply_markup=get_daily_tariff_confirm_keyboard(tariff_id, db_user.language),
+            reply_markup=get_daily_tariff_confirm_keyboard(
+                tariff_id, db_user.language, category=getattr(tariff, 'network_category', None)
+            ),
             parse_mode='HTML',
         )
     elif cart_mode == 'extend':
@@ -5579,7 +5673,9 @@ async def return_to_saved_tariff_cart(
                 balance=format_price_kopeks(user_balance),
                 after=format_price_kopeks(user_balance - total_price),
             ),
-            reply_markup=get_tariff_confirm_keyboard(tariff_id, period, db_user.language),
+            reply_markup=get_tariff_confirm_keyboard(
+                tariff_id, period, db_user.language, category=getattr(tariff, 'network_category', None)
+            ),
             parse_mode='HTML',
         )
 
@@ -5652,6 +5748,7 @@ def register_tariff_purchase_handlers(dp: Dispatcher):
     """Регистрирует обработчики покупки по тарифам."""
     # Список тарифов (для режима tariffs)
     dp.callback_query.register(show_tariffs_list, F.data == 'tariff_list')
+    dp.callback_query.register(show_tariffs_list, F.data.startswith('tariff_category:'))
     dp.callback_query.register(show_tariffs_list, F.data == 'buy_subscription_tariffs')
 
     # Выбор тарифа

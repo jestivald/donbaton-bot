@@ -509,7 +509,7 @@
   Классы: `PromoGroupInfo`, `ServerListItem`, `ServerListResponse`, `ServerDetailResponse`, `ServerUpdateRequest`, `ServerToggleResponse`, `ServerTrialToggleResponse`, `ServerStatsResponse`, `ServerSyncResponse`, `ServerSyncRequest`
   Функции: нет
 - `app/cabinet/schemas/subscription.py` — Python-модуль
-  Классы: `ServerInfo`, `TrafficPurchaseInfo`, `SubscriptionData`, `SubscriptionStatusResponse`, `RenewalOptionResponse`, `RenewalRequest`, `TrafficPackageResponse`, `TrafficPurchaseRequest`, `DevicePurchaseRequest`, `AutopayUpdateRequest`, `TrialActivateRequest`, `TrialInfoResponse`, `PurchaseSelectionRequest`, `PurchasePreviewRequest`, `TariffPurchaseRequest`
+  Классы: `ServerInfo`, `TrafficPurchaseInfo`, `LteTopupData`, `LteQuotaData`, `SubscriptionData`, `SubscriptionStatusResponse`, `RenewalOptionResponse`, `RenewalRequest`, `TrafficPackageResponse`, `TrafficPurchaseRequest`, `DevicePurchaseRequest`, `AutopayUpdateRequest`, `TrialActivateRequest`, `TrialInfoResponse`, `PurchaseSelectionRequest`, `PurchasePreviewRequest`, `TariffPurchaseRequest`
   Функции: нет
 - `app/cabinet/schemas/tariffs.py` — Python-модуль
   Классы: `PeriodPrice` (1 методов), `ServerTrafficLimit`, `ServerInfo`, `PromoGroupInfo`, `TariffListItem`, `TariffListResponse`, `TariffDetailResponse`, `ExternalSquadInfoResponse`, `TariffCreateRequest`, `TariffUpdateRequest`, `TariffSortOrderRequest`, `TariffToggleResponse`, `TariffTrialResponse`, `TariffStatsResponse`, `SyncSquadsResponse`
@@ -597,7 +597,7 @@
   Классы: нет
   Функции: `run_alembic_upgrade` — Run ``alembic upgrade head``, handling fresh and legacy databases., `stamp_alembic_head` — Stamp the DB as being at head without running migrations (for existing DBs).
 - `app/database/models.py` — Python-модуль
-  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (20 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`
+  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (20 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `LteQuota`, `LteTopup`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`
   Функции: нет
 
 #### app/database/crud
@@ -787,7 +787,7 @@
   Функции: `create_tabpay_payment` — Создаёт запись о платеже TabPay., `get_tabpay_payment_by_order_id` — Получает платеж по order_id (наш)., `get_tabpay_payment_by_invoice_id` — Получает платёж по идентификатору, выданному TabPay., `get_tabpay_payment_by_id` — Получает платеж по локальному ID., `get_tabpay_payment_by_id_for_update` — Получает платёж с блокировкой FOR UPDATE., `update_tabpay_payment_status` — Обновляет статус платежа., `is_tabpay_event_processed` — Обрабатывалась ли уже пара (id, status) из вебхука., `remember_tabpay_event` — Помечает пару (id, status) обработанной., `get_pending_tabpay_payments` — Возвращает незавершённые платежи пользователя., `link_tabpay_payment_to_transaction` — Связывает платёж с транзакцией.
 - `app/database/crud/tariff.py` — Python-модуль
   Классы: нет
-  Функции: `get_all_tariffs` — Получает все тарифы с опциональной фильтрацией по активности., `get_tariff_by_id` — Получает тариф по ID., `count_tariffs` — Подсчитывает количество тарифов., `get_trial_tariff` — Получает тариф, доступный для триала (is_trial_available=True)., `set_trial_tariff` — Устанавливает тариф как триальный (снимает флаг с других тарифов)., `clear_trial_tariff` — Снимает флаг триала со всех тарифов., `get_all_active_tariffs` — Get all active tariffs., `get_tariffs_for_user` — Получает тарифы, доступные для пользователя с учетом его промогруппы., `create_tariff` — Создает новый тариф., `update_tariff` — Обновляет существующий тариф., `delete_tariff` — Удаляет тариф., `get_tariff_subscriptions_count` — Подсчитывает количество подписок на тарифе., `get_active_subscriptions_count_by_tariff_id` — Подсчитывает количество активных (active/trial) подписок на тарифе., `set_tariff_promo_groups` — Устанавливает промогруппы для тарифа., `add_promo_group_to_tariff` — Добавляет промогруппу к тарифу., `remove_promo_group_from_tariff` — Удаляет промогруппу из тарифа., `get_tariffs_with_subscriptions_count` — Получает тарифы с количеством подписок., `reorder_tariffs` — Изменяет порядок отображения тарифов., `sync_default_tariff_from_config` — Синхронизирует дефолтный тариф из конфига (.env) в БД., `load_period_prices_from_db` — Загружает периоды/цены из тарифа в PERIOD_PRICES., `ensure_tariffs_synced` — Проверяет и синхронизирует тарифы при запуске.
+  Функции: `get_all_tariffs` — Получает все тарифы с опциональной фильтрацией по активности., `get_tariff_by_id` — Получает тариф по ID., `get_sale_tariff_by_id` — A stale purchase button must not sell an unconfigured managed product., `count_tariffs` — Подсчитывает количество тарифов., `get_trial_tariff` — Получает тариф, доступный для триала (is_trial_available=True)., `set_trial_tariff` — Устанавливает тариф как триальный (снимает флаг с других тарифов)., `clear_trial_tariff` — Снимает флаг триала со всех тарифов., `get_all_active_tariffs` — Get all active tariffs., `get_tariffs_for_user` — Получает тарифы, доступные для пользователя с учетом его промогруппы., `create_tariff` — Создает новый тариф., `update_tariff` — Обновляет существующий тариф., `delete_tariff` — Удаляет тариф., `get_tariff_subscriptions_count` — Подсчитывает количество подписок на тарифе., `get_active_subscriptions_count_by_tariff_id` — Подсчитывает количество активных (active/trial) подписок на тарифе., `set_tariff_promo_groups` — Устанавливает промогруппы для тарифа., `add_promo_group_to_tariff` — Добавляет промогруппу к тарифу., `remove_promo_group_from_tariff` — Удаляет промогруппу из тарифа., `get_tariffs_with_subscriptions_count` — Получает тарифы с количеством подписок., `reorder_tariffs` — Изменяет порядок отображения тарифов., `sync_default_tariff_from_config` — Синхронизирует дефолтный тариф из конфига (.env) в БД., `load_period_prices_from_db` — Загружает периоды/цены из тарифа в PERIOD_PRICES., `ensure_tariffs_synced` — Проверяет и синхронизирует тарифы при запуске.
 - `app/database/crud/ticket.py` — Python-модуль
   Классы: `TicketCRUD` (20 методов), `TicketMessageCRUD` (4 методов)
   Функции: нет
@@ -1181,6 +1181,9 @@
 - `app/handlers/subscription/links.py` — Python-модуль
   Классы: нет
   Функции: `handle_connect_subscription`, `handle_open_subscription_link`
+- `app/handlers/subscription/lte.py` — Python-модуль
+  Классы: нет
+  Функции: `format_lte_status`, `show_lte_packages`, `preview_lte_purchase`, `confirm_lte_purchase`, `register_lte_handlers`
 - `app/handlers/subscription/my_subscriptions.py` — Python-модуль
   Классы: нет
   Функции: `show_my_subscriptions` — Show list of all user subscriptions., `show_subscription_detail` — Show detail view for a single subscription (IDOR protected)., `handle_subscription_link` — Delegation: sl:{sub_id} → connect subscription link handler., `handle_subscription_extend` — Delegation: se:{sub_id} → extend/renew subscription handler., `handle_subscription_traffic` — Delegation: st:{sub_id} → traffic management handler., `handle_subscription_devices` — Delegation: sd:{sub_id} → devices menu with buy + manage options., `handle_change_devices_menu` — Delegation: change_devices_menu:{sub_id} → buy/change device limit., `handle_device_management_menu` — Delegation: device_management:{sub_id} → manage connected devices., `handle_subscription_delete_confirm` — Show delete confirmation for an expired/disabled subscription., `handle_subscription_delete_execute` — Actually delete an expired/disabled subscription.
@@ -1424,6 +1427,9 @@
 - `app/services/disposable_email_service.py` — Python-модуль
   Классы: `DisposableEmailService` (7 методов)
   Функции: `parse_extra_domains` — Список оператора из настройки: любые разделители, регистр и ведущие '@'/'.' не важны., `domain_and_parents` — 'deep.sub.mail.tm' → 'deep.sub.mail.tm', 'sub.mail.tm', 'mail.tm' (голый TLD не считается).
+- `app/services/donbaton_catalog.py` — Python-модуль
+  Классы: нет
+  Функции: `network_category`, `tariff_network_fields`, `tariff_traffic_label`, `available_categories`, `select_category`, `category_tariffs`, `validate_tariff_definition` — Validate draft data without requiring a configured or enabled panel., `validate_user_tariff_purchase` — Check current paid rights before a checkout commits a balance debit.
 - `app/services/donut_service.py` — Python-модуль
   Классы: `DonutAPIError` (1 методов), `DonutService` (18 методов)
   Функции: нет
@@ -1481,6 +1487,12 @@
 - `app/services/log_rotation_service.py` — Python-модуль
   Классы: `LogRotationStatus`, `LogRotationService` (16 методов)
   Функции: нет
+- `app/services/lte_quota_service.py` — Python-модуль
+  Классы: `LtePolicyError`
+  Функции: `is_managed`, `needs_managed_policy` — Classify a preloaded tariff without triggering asynchronous lazy I/O., `validate_tariff_for_sale`, `validate_subscription_transition` — Paid legacy balances need an explicit migration, never an implicit switch., `advance_period` — Skip missed periods without banking allowances or changing the anchor., `consume_bytes` — Consume valid buckets by expiry, including the recurring base bucket., `observe_counter` — Never forgive usage by lowering a baseline or accepting another identity., `initialize_quota`, `update_entitlement`, `credit_topup`, `get_quota_status`, `quota_status_from_subscription` — Only return a deliberately preloaded snapshot, never lazy database I/O., `apply_panel_policy` — Override every managed payload, including sync_squads=False callers., `reconcile_subscription` — Serialize sample, ledger mutation and panel projection against purchases., `run_quota_cycle` — One independent polling pass; no Telegram, payment or email effects.
+- `app/services/lte_topup_purchase_service.py` — Python-модуль
+  Классы: `LtePurchaseError` (1 методов)
+  Функции: `quote_lte_package`, `purchase_lte_topup` — Charge and grant once. Commit both; retry remote delivery separately.
 - `app/services/main_menu_button_service.py` — Python-модуль
   Классы: `MainMenuButtonService` (4 методов)
   Функции: нет
@@ -1495,7 +1507,7 @@
   Классы: нет
   Функции: нет
 - `app/services/monitoring_service.py` — Python-модуль
-  Классы: `AutopayFailState` (2 методов), `MonitoringService` (45 методов)
+  Классы: `AutopayFailState` (2 методов), `MonitoringService` (46 методов)
   Функции: `resolve_autopay_period_candidate` — Return ``candidate`` only if it is a valid renewal period for ``tariff``., `decide_autopay_fail_notification` — Decide whether/what to send on a failed-autopay tick., `apply_autopay_fail_notification` — Mutate state to record that a notification with `reason` was just sent.
 - `app/services/mulenpay_service.py` — Python-модуль
   Классы: `MulenPayService` (10 методов)
@@ -2365,9 +2377,11 @@
 
 ## docs
 
+- `docs/DONBATON.md` — файл
 - `docs/apple-iap-consumable-topups.md` — файл
 - `docs/apple-iap-ios-requirements.md` — файл
 - `docs/contests-api.md` — файл
+- `docs/donbaton-catalog.draft.json` — файл
 - `docs/grace-access.md` — файл
 - `docs/handoffs/`
 - `docs/menu_stats_api_usage.md` — файл
@@ -2753,6 +2767,9 @@
 - `migrations/alembic/versions/0118_tariff_is_highlighted.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0119_donbaton_lte_quotas.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 
 ## scripts
 
@@ -2779,6 +2796,7 @@
 - `tests/contracts/`
 - `tests/crud/`
 - `tests/database/`
+- `tests/donbaton/`
 - `tests/external/`
 - `tests/fixtures/`
 - `tests/handlers/`
@@ -3288,6 +3306,33 @@
 - `tests/database/crud/test_wipe_trial_panel_lookup.py` — Python-модуль
   Классы: нет
   Функции: `api`, `patched_service` — Подменяем SubscriptionService целиком: нужен только его API-клиент., `db`, `test_adopts_by_short_uuid_and_deletes_the_right_account` — Ключевой сценарий: id ещё не пробэкфилен, но панель знает shortUuid., `test_does_not_orphan_a_live_panel_account` — Пропустить панель и удалить строку — значит оставить ACTIVE-сироту., `test_panel_error_during_lookup_does_not_wipe_the_row` — Таймаут — не доказательство. Строку оставляем следующему запуску., `test_unknown_short_uuid_does_not_block_the_reset_forever` — Панель этот shortUuid забыла — удалять нечего, но и застревать нельзя., `test_row_that_never_had_a_panel_user_needs_no_lookup`, `test_existing_numeric_id_is_used_directly`, `test_disable_mode_deactivates_instead_of_deleting`, `test_disable_mode_keeps_single_tariff_user_identity` — Аккаунт остаётся (отключённым) — users.remnawave_id обязан остаться с ним:, `test_delete_mode_still_clears_single_tariff_user_identity` — Регресс-стража: в режиме delete аккаунта больше нет — ссылку на него стираем., `test_disable_mode_treats_gone_or_already_disabled_as_success`
+
+### tests/donbaton
+
+- `tests/donbaton/test_catalog.py` — Python-модуль
+  Классы: нет
+  Функции: `plan`, `test_mixed_catalog_isolates_lte_without_reclassifying_legacy_names`, `test_legacy_catalog_retains_original_list_and_traffic_label`, `test_invalid_managed_product_cannot_be_saved`, `test_wifi_cannot_silently_carry_lte_entitlement_or_packages`
+- `tests/donbaton/test_lte_lock_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `configure_accounting`, `test_parallel_duplicate_purchase_has_one_durable_bucket`, `test_parallel_samples_use_fresh_locked_counter_without_double_charge`, `test_rolled_back_payment_does_not_leave_paid_lte`
+- `tests/donbaton/test_lte_migration.py` — Python-модуль
+  Классы: нет
+  Функции: `migration`, `test_upgrade_preserves_legacy_rows_and_matches_new_table_metadata`, `test_backup_round_trips_lte_bytes_and_dates`
+- `tests/donbaton/test_lte_purchase.py` — Python-модуль
+  Классы: нет
+  Функции: `external_boundaries`, `load_purchase_objects`, `seed`, `persisted_state`, `buy`, `test_debit_bucket_and_receipt_roll_back_together_on_failure`, `test_duplicate_request_survives_new_session_without_second_debit`, `test_reused_request_with_another_package_is_409_without_another_charge`, `test_unavailable_subscription_does_not_charge`, `test_expected_price_mismatch_is_409_without_charge`, `test_panel_none_after_real_rollback_returns_durable_purchase_and_queues_retry`
+- `tests/donbaton/test_lte_quota.py` — Python-модуль
+  Классы: нет
+  Функции: `configured`, `tariff`, `seed`, `sample`, `test_exhaustion_preserves_wifi_across_reset_retry_and_topup`, `test_pending_paid_state_survives_locked_reread_with_autoflush_disabled`, `test_regression_and_changed_identity_fail_closed_for_lte_only`, `test_early_renewal_and_tariff_edits_do_not_refill`, `test_topup_validity_survives_period_rollover_and_expired_activation`, `test_expired_paid_activation_requires_fresh_baseline_and_preserves_topups`, `test_topup_and_sampling_never_reactivate_disabled_subscription`, `test_stale_telemetry_and_disabled_accounting_preserve_wifi`, `test_conflicting_operation_id_does_not_grant_more_bytes`, `test_legacy_payload_unchanged_even_when_feature_enabled`, `test_sales_require_separate_verified_squads`, `test_sales_require_operator_accounting_confirmation`, `test_paid_legacy_transition_requires_migration`, `test_period_is_fixed_days_across_february_and_downtime`, `test_earliest_expiry_counts_upload_download_sum_once`, `test_negative_or_noninteger_telemetry_cannot_refill`, `test_uninitialized_managed_tariff_cannot_fall_through_to_upstream`, `test_single_panel_user_renewal_projects_exhausted_lte`, `test_worker_commits_usage_and_only_removes_lte`
+- `tests/donbaton/test_lte_webhook_sync.py` — Python-модуль
+  Классы: нет
+  Функции: `test_global_panel_events_never_refill_or_reactivate_managed`, `test_panel_reverse_sync_preserves_purchased_squads_and_status`
+- `tests/donbaton/test_recurring_guards.py` — Python-модуль
+  Классы: нет
+  Функции: `recurrent_enabled`, `test_purchase_rejects_managed_before_pending_row_or_provider`, `test_enable_and_direct_mixin_reject_both_entitlement_sources`, `test_legacy_enable_keeps_existing_provider_contract`, `test_old_telegram_callback_gets_clear_rejection`, `test_raw_cabinet_purchase_rejects_disabled_managed_sales`
+- `tests/donbaton/test_recurring_ui.py` — Python-модуль
+  Классы: нет
+  Функции: `callbacks`, `recurring_enabled`, `test_managed_purchase_surfaces_exclude_external_authorization`, `test_managed_direct_balance_topup_remains_available_without_recurring`, `test_legacy_default_preserves_both_recurring_providers`, `test_all_checkout_and_cart_restore_calls_supply_explicit_category` — An omitted call-site argument silently falls back to legacy provider buttons., `handler_context`, `test_managed_autopay_menu_has_no_sbp_entry_without_existing_binding`, `test_existing_managed_binding_can_be_cancelled_even_if_feature_disabled`, `test_direct_managed_menu_does_not_offer_creation_but_keeps_existing_cancel`, `test_forged_managed_enable_callback_never_reaches_payment_service`, `test_enable_explains_business_rejection_and_keeps_provider_failure_generic`
 
 ### tests/external
 
@@ -3926,7 +3971,7 @@
   Функции: `anyio_backend`, `test_process_mulenpay_callback_success`, `test_process_cryptobot_webhook_success`, `test_process_heleket_webhook_success`, `test_process_yookassa_webhook_success`, `test_process_yookassa_webhook_uses_remote_status`, `test_process_yookassa_webhook_handles_cancellation`, `test_process_yookassa_webhook_restores_missing_payment`, `test_process_yookassa_webhook_missing_metadata`, `test_process_yookassa_webhook_missing_id`, `test_process_yookassa_webhook_skip_ip_rejects_unconfirmed` — Fail-closed: с YOOKASSA_SKIP_IP_CHECK и без подтверждения от API YooKassa, `test_process_yookassa_webhook_skip_ip_rejects_on_api_timeout` — Fail-closed при таймауте API в skip-режиме: нет подтверждения — нет начисления., `test_process_yookassa_webhook_skip_ip_credits_when_confirmed` — В skip-режиме подтверждённый API платёж начисляется как обычно;, `test_process_yookassa_webhook_default_mode_failopen_preserved` — Регрессия: при выключенном флаге (дефолт) отсутствие подтверждения от API, `test_process_pal24_callback_success`, `test_get_pal24_payment_status_auto_finalize`, `test_process_pal24_callback_payment_not_found`
 - `tests/services/test_payment_service_yookassa.py` — Python-модуль
   Классы: `DummySession` (3 методов), `DummyLocalPayment` (1 методов), `StubYooKassaService` (3 методов)
-  Функции: `anyio_backend` — Запускаем async-тесты на asyncio, чтобы избежать зависимостей trio., `test_create_yookassa_payment_success` — Успешное создание платежа формирует корректные метаданные и локальную запись., `test_create_yookassa_payment_returns_none_when_service_missing` — Если сервис не настроен, метод должен вернуть None., `test_create_yookassa_payment_handles_error_response` — Ответ с ключом error должен приводить к None без записи в БД., `test_create_yookassa_sbp_payment_success` — Проверяем SBP-сценарий, включая передачу confirmation_token., `test_create_yookassa_sbp_payment_returns_none_on_error` — Ошибочный ответ СБП не должен создавать запись.
+  Функции: `anyio_backend` — Запускаем async-тесты на asyncio, чтобы избежать зависимостей trio., `receipt_profile_lookup` — Подменяем чтение профиля, не требуя SQL от DummySession., `test_create_yookassa_payment_success` — Успешное создание платежа формирует корректные метаданные и локальную запись., `test_create_yookassa_payment_returns_none_when_service_missing` — Если сервис не настроен, метод должен вернуть None., `test_create_yookassa_payment_handles_error_response` — Ответ с ключом error должен приводить к None без записи в БД., `test_create_yookassa_sbp_payment_success` — Проверяем SBP-сценарий, включая передачу confirmation_token., `test_create_yookassa_sbp_payment_returns_none_on_error` — Ошибочный ответ СБП не должен создавать запись.
 - `tests/services/test_platega_callback_casing.py` — Python-модуль
   Классы: `TestIsSubscriptionCallback` (6 методов), `TestReadCallbackFields` (6 методов)
   Функции: нет

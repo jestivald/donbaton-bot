@@ -112,6 +112,15 @@ class YooKassaPaymentMixin:
 
             payment_metadata = metadata.copy() if metadata else {}
 
+            # Use the buyer's profile contact even when caller supplied Telegram metadata.
+            # Explicit checkout contact keeps priority. Contact collection is a separate UI change.
+            if not receipt_email and not receipt_phone and user_id is not None:
+                from app.database.crud.user import get_user_by_id
+
+                receipt_user = await get_user_by_id(db, user_id)
+                if receipt_user and receipt_user.email:
+                    receipt_email = receipt_user.email
+
             # Всегда добавляем telegram_id в метаданные для возможности возврата платежа
             if user_id is not None and 'user_telegram_id' not in payment_metadata:
                 try:
@@ -215,6 +224,15 @@ class YooKassaPaymentMixin:
             amount_rubles = amount_kopeks / 100
 
             payment_metadata = metadata.copy() if metadata else {}
+
+            # Use the buyer's profile contact even when caller supplied Telegram metadata.
+            # Explicit checkout contact keeps priority. Contact collection is a separate UI change.
+            if not receipt_email and not receipt_phone and user_id is not None:
+                from app.database.crud.user import get_user_by_id
+
+                receipt_user = await get_user_by_id(db, user_id)
+                if receipt_user and receipt_user.email:
+                    receipt_email = receipt_user.email
 
             # Всегда добавляем telegram_id в метаданные для возможности возврата платежа
             if user_id is not None and 'user_telegram_id' not in payment_metadata:

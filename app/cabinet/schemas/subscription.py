@@ -1,6 +1,7 @@
 """Subscription schemas for cabinet."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +25,24 @@ class TrafficPurchaseInfo(BaseModel):
     progress_percent: float
 
 
+class LteTopupData(BaseModel):
+    remaining_bytes: int
+    expires_at: datetime
+
+
+class LteQuotaData(BaseModel):
+    next_period_limit_bytes: int | None = None
+    limit_bytes: int
+    used_bytes: int
+    remaining_bytes: int
+    topup_bytes: int
+    period_ends_at: datetime
+    exhausted: bool
+    topups: list[LteTopupData] = Field(default_factory=list)
+    accounting_state: str | None = None
+    last_observed_at: datetime | None = None
+
+
 class SubscriptionData(BaseModel):
     """User subscription data."""
 
@@ -36,6 +55,8 @@ class SubscriptionData(BaseModel):
     hours_left: int = 0
     minutes_left: int = 0
     time_left_display: str = ''  # Human readable format like "2д 5ч" or "5ч 30м"
+    network_category: Literal['wifi', 'wifi_lte'] | None = None
+    lte_quota: LteQuotaData | None = None
     traffic_limit_gb: int
     traffic_used_gb: float
     traffic_used_percent: float
@@ -125,6 +146,8 @@ class TrafficPackageResponse(BaseModel):
 class TrafficPurchaseRequest(BaseModel):
     """Request to purchase additional traffic."""
 
+    expected_price_kopeks: int | None = Field(None, ge=0)
+    request_id: str | None = Field(None, min_length=8, max_length=64, pattern=r'^[A-Za-z0-9_-]+$')
     gb: int = Field(..., ge=0, le=100_000, description='GB to purchase (0 = unlimited)')
     # See PurchasePreviewRequest.yandex_cid (#558449).
     yandex_cid: str | None = Field(

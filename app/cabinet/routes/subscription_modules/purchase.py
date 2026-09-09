@@ -30,7 +30,7 @@ from app.database.crud.subscription import (
     get_subscription_by_user_id,
     should_carry_trial_remaining_days,
 )
-from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
+from app.database.crud.tariff import get_sale_tariff_by_id as get_tariff_by_id, get_tariffs_for_user
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import add_user_balance, get_user_by_id, subtract_user_balance
 from app.database.database import AsyncSessionLocal
@@ -253,12 +253,17 @@ async def _build_tariff_response(
         if device_discount_percent > 0:
             device_price = pricing_engine.apply_discount(device_price, device_discount_percent)
 
+    from app.services.donbaton_catalog import tariff_network_fields, tariff_traffic_label
+
+    traffic_label = tariff_traffic_label(tariff, traffic_label)
+
     # Показываем реальное количество устройств (с докупленными) для текущего тарифа
     actual_device_limit = tariff.device_limit
     if subscription and subscription.tariff_id == tariff.id:
         actual_device_limit = max(tariff.device_limit or 0, subscription.device_limit or 0)
 
     response: dict[str, Any] = {
+        **tariff_network_fields(tariff),
         'id': tariff.id,
         'name': tariff.name,
         'description': tariff.description,
@@ -591,7 +596,7 @@ async def submit_purchase(
         return {
             'success': True,
             'message': result['message'],
-            'subscription': _subscription_to_response(subscription, user=user),
+            'subscription': await _subscription_to_response(db, subscription, user=user),
             'was_trial_conversion': result.get('was_trial_conversion', False),
         }
 
@@ -887,6 +892,9 @@ async def purchase_tariff(
             description += f' (скидка {discount_percent}%)'
         if promo_offer_discount_value > 0:
             description += f' (промо -{promo_offer_discount_percent}%)'
+        from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+        await validate_user_tariff_purchase(db, user, tariff)
         success = await subtract_user_balance(
             db,
             user,
@@ -1184,7 +1192,7 @@ async def purchase_tariff(
         response: dict[str, Any] = {
             'success': True,
             'message': f"Тариф '{tariff.name}' успешно активирован",
-            'subscription': _subscription_to_response(subscription, user=user),
+            'subscription': await _subscription_to_response(db, subscription, user=user),
             'tariff_id': tariff.id,
             'tariff_name': tariff.name,
             'charged_amount': price_kopeks,
@@ -1313,7 +1321,7 @@ async def get_trial_info(
 
     # Get trial parameters from tariff if configured (same logic as activate_trial)
     try:
-        from app.database.crud.tariff import get_tariff_by_id, get_trial_tariff
+        from app.database.crud.tariff import get_sale_tariff_by_id as get_tariff_by_id, get_trial_tariff
 
         trial_tariff = await get_trial_tariff(db)
 
@@ -1473,7 +1481,7 @@ async def activate_trial(
     # Then fallback to TRIAL_TARIFF_ID from settings
     trial_tariff = None
     try:
-        from app.database.crud.tariff import get_tariff_by_id, get_trial_tariff
+        from app.database.crud.tariff import get_sale_tariff_by_id as get_tariff_by_id, get_trial_tariff
 
         trial_tariff = await get_trial_tariff(db)
 
@@ -1594,4 +1602,4 @@ async def activate_trial(
             error=str(yconv_err),
         )
 
-    return _subscription_to_response(subscription, user=user)
+    return await _subscription_to_response(db, subscription, user=user)

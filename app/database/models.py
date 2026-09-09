@@ -1986,6 +1986,11 @@ class Tariff(Base):
 
     __tablename__ = 'tariffs'
 
+    # NULL preserves the upstream product and accounting semantics.
+    network_category = Column(String(16), nullable=True)
+    lte_traffic_limit_gb = Column(Integer, nullable=True)
+    lte_period_days = Column(Integer, nullable=True)
+
     id = Column(Integer, primary_key=True, index=True)
 
     # Основная информация
@@ -2180,6 +2185,10 @@ class Tariff(Base):
 
     def can_topup_traffic(self) -> bool:
         """Проверяет, можно ли докупить трафик на этом тарифе."""
+        if self.network_category == 'wifi':
+            return False
+        if self.network_category == 'wifi_lte':
+            return self.traffic_topup_enabled and bool(self.traffic_topup_packages)
         return self.traffic_topup_enabled and bool(self.traffic_topup_packages) and not self.is_unlimited_traffic
 
     def get_daily_price_rubles(self) -> float:
@@ -2439,6 +2448,7 @@ class User(Base):
 
 class Subscription(Base):
     __tablename__ = 'subscriptions'
+    network_category = Column(String(16), nullable=True)
     __table_args__ = (
         Index('ix_subscriptions_status_trial', 'status', 'is_trial'),
         Index('ix_subscriptions_trial_created', 'is_trial', 'created_at'),
@@ -2805,6 +2815,49 @@ class GraceAccessSessionModel(Base):
     last_error = Column(Text, nullable=True)
 
     subscription = relationship('Subscription', back_populates='grace_access_sessions')
+
+
+class LteQuota(Base):
+    """Paid LTE entitlement. Panel resets never reset this ledger."""
+
+    __tablename__ = 'lte_quotas'
+    __table_args__ = (
+        CheckConstraint('limit_bytes >= 0 AND used_bytes >= 0 AND base_used_bytes >= 0', name='ck_lte_quota_bytes'),
+        CheckConstraint('period_days > 0', name='ck_lte_quota_period'),
+    )
+
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), primary_key=True)
+    limit_bytes = Column(BigInteger, nullable=False)
+    next_limit_bytes = Column(BigInteger, nullable=True)
+    used_bytes = Column(BigInteger, nullable=False, default=0, server_default='0')
+    base_used_bytes = Column(BigInteger, nullable=False, default=0, server_default='0')
+    period_days = Column(Integer, nullable=False)
+    period_starts_at = Column(AwareDateTime(), nullable=False)
+    period_ends_at = Column(AwareDateTime(), nullable=False)
+    counter_panel_id = Column(BigInteger, nullable=True)
+    counter_bytes = Column(BigInteger, nullable=True)
+    last_observed_at = Column(AwareDateTime(), nullable=True)
+    accounting_state = Column(String(24), nullable=False, default='pending', server_default='pending')
+
+
+class LteTopup(Base):
+    """A purchased bucket with independent expiry and a durable deduplication key."""
+
+    __tablename__ = 'lte_topups'
+    __table_args__ = (
+        CheckConstraint(
+            'amount_bytes > 0 AND used_bytes >= 0 AND used_bytes <= amount_bytes', name='ck_lte_topup_bytes'
+        ),
+        Index('ix_lte_topups_subscription_expiry', 'subscription_id', 'expires_at'),
+    )
+
+    id = Column(Integer, primary_key=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False)
+    operation_id = Column(String(128), nullable=False, unique=True)
+    amount_bytes = Column(BigInteger, nullable=False)
+    used_bytes = Column(BigInteger, nullable=False, default=0, server_default='0')
+    created_at = Column(AwareDateTime(), nullable=False)
+    expires_at = Column(AwareDateTime(), nullable=False)
 
 
 class TrafficPurchase(Base):

@@ -6,6 +6,8 @@ GET /subscriptions/{id} — get specific subscription details
 
 from __future__ import annotations
 
+from typing import Literal
+
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -17,8 +19,11 @@ from app.database.crud.subscription import (
     get_subscription_by_id_for_user,
 )
 from app.database.models import SubscriptionStatus, User
+from app.services.donbaton_catalog import network_category
+from app.services.lte_quota_service import get_quota_status
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
+from ...schemas.subscription import LteQuotaData
 
 
 logger = structlog.get_logger(__name__)
@@ -27,6 +32,8 @@ router = APIRouter(prefix='/subscriptions', tags=['Cabinet Multi-Tariff'], redir
 
 
 class SubscriptionListItem(BaseModel):
+    network_category: Literal['wifi', 'wifi_lte'] | None = None
+    lte_quota: LteQuotaData | None = None
     id: int
     status: str
     tariff_id: int | None = None
@@ -49,12 +56,14 @@ class SubscriptionsListResponse(BaseModel):
     multi_tariff_enabled: bool
 
 
-def _subscription_to_list_item(sub) -> SubscriptionListItem:
+async def _subscription_to_list_item(db, sub) -> SubscriptionListItem:
     tariff_name = None
     if sub.tariff:
         tariff_name = sub.tariff.name
 
     return SubscriptionListItem(
+        network_category=network_category(sub),
+        lte_quota=await get_quota_status(db, sub) if network_category(sub) else None,
         id=sub.id,
         status=sub.actual_status,
         tariff_id=sub.tariff_id,
@@ -80,7 +89,7 @@ async def list_subscriptions(
 ) -> SubscriptionsListResponse:
     """List all user subscriptions. Returns all subscriptions regardless of multi-tariff mode."""
     subscriptions = await get_all_subscriptions_by_user_id(db, user.id)
-    items = [_subscription_to_list_item(sub) for sub in subscriptions]
+    items = [await _subscription_to_list_item(db, sub) for sub in subscriptions]
     return SubscriptionsListResponse(
         subscriptions=items,
         multi_tariff_enabled=settings.is_multi_tariff_enabled(),
@@ -100,7 +109,7 @@ async def get_subscription_detail(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='Subscription not found',
         )
-    return _subscription_to_list_item(subscription)
+    return await _subscription_to_list_item(db, subscription)
 
 
 @router.delete('/{subscription_id}')

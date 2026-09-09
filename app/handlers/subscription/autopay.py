@@ -26,6 +26,7 @@ from app.keyboards.inline import (
     get_traffic_packages_keyboard,
 )
 from app.localization.texts import get_texts
+from app.services.donbaton_catalog import network_category
 from app.services.subscription_checkout_service import (
     clear_subscription_checkout_draft,
 )
@@ -52,6 +53,45 @@ async def _resolve_subscription(callback, db_user, db, state=None):
     return await resolve_subscription_from_context(callback, db_user, db, state)
 
 
+def _managed_subscription(subscription) -> bool:
+    return bool(network_category(subscription) or network_category(getattr(subscription, 'tariff', None)))
+
+
+def _managed_recurring_unavailable(texts) -> str:
+    return texts.t(
+        'DONBATON_RECURRING_UNAVAILABLE',
+        'Для тарифов Wi-Fi/LTE внешняя автооплата пока недоступна. Продлите подписку с баланса.',
+    )
+
+
+async def _sbp_autopay_rows(db, subscription, texts) -> list[list[types.InlineKeyboardButton]]:
+    if _managed_subscription(subscription):
+        from app.database.crud.platega_subscription import get_active_platega_subscription_by_subscription
+
+        record = await get_active_platega_subscription_by_subscription(db, subscription.id)
+        if record is None:
+            return []
+        # Existing authorizations remain cancellable even while new ones are disabled.
+        return [
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('SBP_RECURRING_CANCEL_BUTTON', '❌ Отменить автооплату'),
+                    callback_data='sbp_recurring_cancel',
+                )
+            ]
+        ]
+    if not settings.is_platega_recurrent_enabled():
+        return []
+    return [
+        [
+            types.InlineKeyboardButton(
+                text=texts.t('SBP_RECURRING_MENU_BUTTON', '⚡ Автопродление через СБП'),
+                callback_data='sbp_recurring_menu',
+            )
+        ]
+    ]
+
+
 async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None):
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
@@ -71,16 +111,7 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
         # Баланс-автоплатёж для суточных тарифов недоступен, но СБП-автопродление
         # Platega суточный интервал поддерживает (`day`) — вход в него должен
         # оставаться достижимым, поэтому кнопку добавляем в тот же экран.
-        daily_keyboard_rows: list[list[types.InlineKeyboardButton]] = []
-        if settings.is_platega_recurrent_enabled():
-            daily_keyboard_rows.append(
-                [
-                    types.InlineKeyboardButton(
-                        text=texts.t('SBP_RECURRING_MENU_BUTTON', '⚡ Автопродление через СБП'),
-                        callback_data='sbp_recurring_menu',
-                    )
-                ]
-            )
+        daily_keyboard_rows = await _sbp_autopay_rows(db, subscription, texts)
         back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
         daily_keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
 
@@ -119,18 +150,7 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
     ).format(status=status, days=days, period=period_text)
 
     keyboard = get_autopay_keyboard(db_user.language, sub_id=sub_id)
-    if settings.is_platega_recurrent_enabled():
-        # Вставляем перед последней строкой (Back), чтобы кнопка СБП была
-        # среди основных действий, а не под ней.
-        keyboard.inline_keyboard.insert(
-            -1,
-            [
-                types.InlineKeyboardButton(
-                    text=texts.t('SBP_RECURRING_MENU_BUTTON', '⚡ Автопродление через СБП'),
-                    callback_data='sbp_recurring_menu',
-                )
-            ],
-        )
+    keyboard.inline_keyboard[-1:-1] = await _sbp_autopay_rows(db, subscription, texts)
 
     await callback.message.edit_text(
         text,
@@ -386,6 +406,13 @@ async def handle_sbp_recurring_menu(
     from app.database.crud.platega_subscription import get_active_platega_subscription_by_subscription
 
     record = await get_active_platega_subscription_by_subscription(db, subscription.id)
+    try:
+        await db.refresh(subscription, ['tariff'])
+    except Exception:
+        pass
+    if record is None and _managed_subscription(subscription):
+        await callback.answer(_managed_recurring_unavailable(texts), show_alert=True)
+        return
     status_text = _platega_sbp_status_text(record, texts)
 
     text = texts.t(
@@ -472,6 +499,10 @@ async def handle_sbp_recurring_enable(
         )
         return
 
+    if _managed_subscription(subscription):
+        await callback.answer(_managed_recurring_unavailable(texts), show_alert=True)
+        return
+
     from app.services.payment.platega import enable_platega_sbp_recurring
 
     try:
@@ -483,7 +514,9 @@ async def handle_sbp_recurring_enable(
             subscription_id=subscription.id,
         )
         await callback.answer(
-            texts.t(
+            str(error)[:200]
+            if isinstance(error, ValueError) and str(error)
+            else texts.t(
                 'SBP_RECURRING_ENABLE_ERROR',
                 '❌ Не удалось подключить автопродление через СБП. Попробуйте позже.',
             ),
@@ -553,7 +586,9 @@ async def handle_sbp_recurring_cancel(
     await callback.answer(texts.t('SBP_RECURRING_CANCELLED', '✅ Автопродление через СБП отменено'))
     # Меню гейтится флагом — при выключенной фиче не дёргаем его, чтобы после
     # успешной отмены юзер не получил второй алерт «недоступно».
-    if settings.is_platega_recurrent_enabled():
+    if _managed_subscription(subscription):
+        await handle_autopay_menu(callback, db_user, db, state)
+    elif settings.is_platega_recurrent_enabled():
         await handle_sbp_recurring_menu(callback, db_user, db, state)
 
 

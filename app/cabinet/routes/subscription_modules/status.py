@@ -112,8 +112,8 @@ async def get_subscription(
             }
         )
 
-    subscription_data = _subscription_to_response(
-        subscription, servers, tariff_name, traffic_purchases_data, user=fresh_user
+    subscription_data = await _subscription_to_response(
+        db, subscription, servers, tariff_name, traffic_purchases_data, user=fresh_user
     )
     return SubscriptionStatusResponse(has_subscription=True, subscription=subscription_data)
 

@@ -322,6 +322,12 @@ class SQLAlchemyGraceBillingGateway:
         subscription = result.scalar_one_or_none()
         if subscription is None or subscription.user is None:
             return None
+        # Grace's global traffic overlay is not a separate LTE entitlement.
+        # Managed subscriptions keep expiry semantics without this overlay.
+        from app.services.lte_quota_service import is_managed
+
+        if is_managed(subscription):
+            return None
         return _subscription_to_billing(subscription)
 
 

@@ -105,6 +105,14 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
         )
         return
 
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription) == 'wifi_lte':
+        from .lte import show_lte_packages
+
+        await show_lte_packages(callback, db_user, db, subscription)
+        return
+
     if subscription.traffic_limit_gb == 0:
         await callback.answer(
             texts.t('TRAFFIC_ALREADY_UNLIMITED', '⚠ У вас уже безлимитный трафик'),
@@ -258,6 +266,11 @@ async def handle_reset_traffic(
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
         return
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        await callback.answer('Для LTE используйте покупку отдельного пакета', show_alert=True)
+        return
 
     if not subscription or subscription.is_trial:
         await callback.answer('⌛ Эта функция доступна только для платных подписок', show_alert=True)
@@ -329,6 +342,11 @@ async def confirm_reset_traffic(
     # Re-resolve after lock since db_user was refreshed
     subscription, _ = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
+        return
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        await callback.answer('Для LTE используйте покупку отдельного пакета', show_alert=True)
         return
 
     reset_price = _calculate_traffic_reset_price(subscription)
@@ -541,6 +559,11 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
+        return
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        await callback.answer('Для LTE используйте покупку отдельного пакета', show_alert=True)
         return
 
     # Получаем цену: из тарифа или из глобальных настроек
@@ -757,6 +780,11 @@ async def handle_switch_traffic(
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
         return
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        await callback.answer('Для LTE используйте покупку отдельного пакета', show_alert=True)
+        return
 
     if not subscription or subscription.is_trial:
         await callback.answer('⚠️ Эта функция доступна только для платных подписок', show_alert=True)
@@ -816,6 +844,11 @@ async def confirm_switch_traffic(
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
+        return
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        await callback.answer('Для LTE используйте покупку отдельного пакета', show_alert=True)
         return
 
     current_traffic = subscription.traffic_limit_gb
@@ -929,6 +962,11 @@ async def execute_switch_traffic(
     # Re-resolve after lock since db_user was refreshed
     subscription, _ = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
+        return
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        await callback.answer('Для LTE используйте покупку отдельного пакета', show_alert=True)
         return
     current_traffic = subscription.traffic_limit_gb
 

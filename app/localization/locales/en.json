@@ -1,4 +1,5 @@
 {
+  "DONBATON_RECURRING_UNAVAILABLE": "External automatic payments are not yet available for Wi-Fi/LTE plans. Renew your subscription using your balance.",
   "ACCESS_DENIED": "❌ Access denied",
   "ADDON_INSUFFICIENT_FUNDS_MESSAGE": "⚠️ <b>Insufficient funds</b>\n\nService price: {required}\nBalance: {balance}\nMissing: {missing}\n\nChoose a top-up method. The amount will be filled in automatically.",
   "ADD_COUNTRIES_BUTTON": "🌐 Add countries",

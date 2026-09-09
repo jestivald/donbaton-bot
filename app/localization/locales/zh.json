@@ -1,4 +1,5 @@
 {
+  "DONBATON_RECURRING_UNAVAILABLE": "Wi-Fi/LTE 套餐暂不支持通过外部支付服务自动付款。请使用账户余额续订。",
   "ACCESS_DENIED": "❌拒绝访问",
   "ADDON_INSUFFICIENT_FUNDS_MESSAGE": "⚠️<b>资金不足</b>\n\n服务费用：{required}\n当前余额：{balance}\n缺少：{missing}\n\n请选择充值方式。金额将自动填入。",
   "ADD_COUNTRIES_BUTTON": "🌐添加国家",

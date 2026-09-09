@@ -364,6 +364,7 @@ async def _revive_paid_subscription(
     Mirrors the classic extend branch — extend from the current end_date if still
     alive, otherwise start a fresh period from now and reset used traffic.
     """
+    await _prepare_donbaton_subscription(db, subscription)
     now = datetime.now(UTC)
     was_alive = subscription.end_date is not None and subscription.end_date > now
 
@@ -571,6 +572,26 @@ async def resolve_trial_conversion_candidate(
     return await _alive_trial_conversion_candidate(db, user_id, existing)
 
 
+async def _prepare_donbaton_subscription(db, subscription, tariff_id=None, *, new=False):
+    """Snapshot paid network terms before committing a creation or explicit switch."""
+    from app.services.donbaton_catalog import network_category
+    from app.services.lte_quota_service import initialize_quota, update_entitlement
+
+    target_id = tariff_id if tariff_id is not None else subscription.tariff_id
+    if not target_id:
+        return
+    tariff = await db.get(Tariff, target_id)
+    if not network_category(tariff) and not network_category(subscription):
+        return
+    expired = subscription.end_date is not None and subscription.end_date <= datetime.now(UTC)
+    if new:
+        await initialize_quota(db, subscription, tariff)
+    elif expired or (tariff_id is not None and tariff_id != subscription.tariff_id):
+        await update_entitlement(db, subscription, tariff)
+    else:
+        await initialize_quota(db, subscription, tariff)
+
+
 async def create_paid_subscription(
     db: AsyncSession,
     user_id: int,
@@ -663,6 +684,8 @@ async def create_paid_subscription(
     )
 
     db.add(subscription)
+    await db.flush()
+    await _prepare_donbaton_subscription(db, subscription, new=True)
     if commit:
         await db.commit()
         await db.refresh(subscription)
@@ -1095,6 +1118,7 @@ async def extend_subscription(
     # Повторный lock в той же транзакции — noop (SubscriptionRenewalService уже мог
     # взять lock через with_for_update).
     await _lock_subscription_row(db, subscription)
+    await _prepare_donbaton_subscription(db, subscription, tariff_id)
 
     logger.info('🔄 Продление подписки', subscription_id=subscription.id, days=days)
     logger.info(
@@ -1426,6 +1450,10 @@ async def extend_subscription(
 
 
 async def add_subscription_traffic(db: AsyncSession, subscription: Subscription, gb: int) -> Subscription:
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        raise ValueError('Для LTE используйте отдельную покупку пакета')
     # Lock subscription row — защита от lost-update гонки с housekeeping в extend_subscription
     # (см. _apply_base_limit_preserving_active_purchases / _housekeep_expired_purchases).
     # Без lock'а одновременный renewal + topup могут затереть друг друга.

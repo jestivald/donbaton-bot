@@ -85,6 +85,20 @@ async def get_tariff_by_id(
     return result.scalars().first()
 
 
+async def get_sale_tariff_by_id(db: AsyncSession, tariff_id: int, *, with_promo_groups: bool = True):
+    """A stale purchase button must not sell an unconfigured managed product."""
+    from app.services.donbaton_catalog import network_category
+    from app.services.lte_quota_service import LtePolicyError, validate_tariff_for_sale
+
+    tariff = await get_tariff_by_id(db, tariff_id, with_promo_groups=with_promo_groups)
+    if tariff is not None and network_category(tariff):
+        try:
+            validate_tariff_for_sale(tariff)
+        except LtePolicyError:
+            return None
+    return tariff
+
+
 async def count_tariffs(db: AsyncSession, *, include_inactive: bool = False) -> int:
     """Подсчитывает количество тарифов."""
     query = select(func.count(Tariff.id))
@@ -164,7 +178,15 @@ async def get_tariffs_for_user(
 
     # Фильтруем по промогруппе
     available_tariffs = []
+    from app.services.donbaton_catalog import network_category
+    from app.services.lte_quota_service import LtePolicyError, validate_tariff_for_sale
+
     for tariff in tariffs:
+        if network_category(tariff):
+            try:
+                validate_tariff_for_sale(tariff)
+            except LtePolicyError:
+                continue
         if not tariff.allowed_promo_groups:
             # Нет ограничений - доступен всем
             available_tariffs.append(tariff)
@@ -185,6 +207,9 @@ async def create_tariff(
     display_order: int = 0,
     is_active: bool = True,
     traffic_limit_gb: int = 100,
+    network_category: str | None = None,
+    lte_traffic_limit_gb: int | None = None,
+    lte_period_days: int | None = None,
     device_limit: int = 1,
     device_price_kopeks: int | None = None,
     max_device_limit: int | None = None,
@@ -230,6 +255,9 @@ async def create_tariff(
         display_order=max(0, display_order),
         is_active=is_active,
         traffic_limit_gb=max(0, traffic_limit_gb),
+        network_category=network_category,
+        lte_traffic_limit_gb=lte_traffic_limit_gb,
+        lte_period_days=lte_period_days,
         device_limit=max(1, device_limit),
         device_price_kopeks=device_price_kopeks,
         max_device_limit=max_device_limit,
@@ -265,6 +293,9 @@ async def create_tariff(
         external_squad_uuid=external_squad_uuid,
     )
 
+    from app.services.donbaton_catalog import validate_tariff_definition
+
+    validate_tariff_definition(tariff)
     db.add(tariff)
     await db.flush()
 
@@ -301,6 +332,9 @@ async def update_tariff(
     display_order: int | None = None,
     is_active: bool | None = None,
     traffic_limit_gb: int | None = None,
+    network_category: str | None = ...,
+    lte_traffic_limit_gb: int | None = ...,
+    lte_period_days: int | None = ...,
     device_limit: int | None = None,
     device_price_kopeks: int | None = ...,  # ... = не передан, None = сбросить
     max_device_limit: int | None = ...,  # ... = не передан, None = сбросить (без лимита)
@@ -338,6 +372,23 @@ async def update_tariff(
     external_squad_uuid: str | None = ...,  # ... = не передан, None = убрать внешний сквад
 ) -> Tariff:
     """Обновляет существующий тариф."""
+    from types import SimpleNamespace
+
+    from app.services.donbaton_catalog import validate_tariff_definition
+
+    policy_fields = ('network_category', 'lte_traffic_limit_gb', 'lte_period_days')
+    proposed = {column.name: getattr(tariff, column.name) for column in Tariff.__table__.columns}
+    for key, value in locals().copy().items():
+        if key in proposed and value is not ... and (value is not None or key in policy_fields):
+            proposed[key] = value
+    validate_tariff_definition(SimpleNamespace(**proposed))
+    if network_category is not ... and network_category != tariff.network_category:
+        if await get_tariff_subscriptions_count(db, tariff.id):
+            raise ValueError('Создайте новый тариф: категория тарифа с подписками меняется только миграцией')
+    for key in policy_fields:
+        value = locals()[key]
+        if value is not ...:
+            setattr(tariff, key, value)
     if name is not None:
         tariff.name = name.strip()
     if description is not None:

@@ -1,0 +1,123 @@
+{
+  "status": "draft_not_approved",
+  "currency": "RUB",
+  "traffic_unit": "GiB",
+  "tariffs": [
+    {
+      "name": "Личный",
+      "description": "Wi-Fi безлимит",
+      "network_category": "wifi",
+      "lte_traffic_limit_gb": null,
+      "lte_period_days": null,
+      "is_active": false,
+      "is_trial_available": false,
+      "show_in_gift": false,
+      "traffic_limit_gb": 0,
+      "device_limit": 3,
+      "period_prices": [
+        {
+          "days": 30,
+          "price_kopeks": 19900
+        }
+      ],
+      "allowed_squads": [],
+      "traffic_topup_enabled": false,
+      "traffic_topup_packages": {},
+      "max_topup_traffic_gb": 0,
+      "is_daily": false,
+      "custom_days_enabled": false,
+      "custom_traffic_enabled": false,
+      "traffic_reset_mode": "NO_RESET",
+      "external_squad_uuid": null
+    },
+    {
+      "name": "Семейный",
+      "description": "Wi-Fi безлимит",
+      "network_category": "wifi",
+      "lte_traffic_limit_gb": null,
+      "lte_period_days": null,
+      "is_active": false,
+      "is_trial_available": false,
+      "show_in_gift": false,
+      "traffic_limit_gb": 0,
+      "device_limit": 7,
+      "period_prices": [
+        {
+          "days": 30,
+          "price_kopeks": 29900
+        }
+      ],
+      "allowed_squads": [],
+      "traffic_topup_enabled": false,
+      "traffic_topup_packages": {},
+      "max_topup_traffic_gb": 0,
+      "is_daily": false,
+      "custom_days_enabled": false,
+      "custom_traffic_enabled": false,
+      "traffic_reset_mode": "NO_RESET",
+      "external_squad_uuid": null
+    },
+    {
+      "name": "Личный",
+      "description": "Wi-Fi безлимит + 60 ГиБ LTE каждые 30 дней",
+      "network_category": "wifi_lte",
+      "lte_traffic_limit_gb": 60,
+      "lte_period_days": 30,
+      "is_active": false,
+      "is_trial_available": false,
+      "show_in_gift": false,
+      "traffic_limit_gb": 0,
+      "device_limit": 3,
+      "period_prices": [
+        {
+          "days": 30,
+          "price_kopeks": 29900
+        }
+      ],
+      "allowed_squads": [],
+      "traffic_topup_enabled": true,
+      "traffic_topup_packages": {
+        "20": 7900,
+        "60": 19900,
+        "120": 34900
+      },
+      "max_topup_traffic_gb": 0,
+      "is_daily": false,
+      "custom_days_enabled": false,
+      "custom_traffic_enabled": false,
+      "traffic_reset_mode": "NO_RESET",
+      "external_squad_uuid": null
+    },
+    {
+      "name": "Семейный",
+      "description": "Wi-Fi безлимит + 120 ГиБ LTE каждые 30 дней",
+      "network_category": "wifi_lte",
+      "lte_traffic_limit_gb": 120,
+      "lte_period_days": 30,
+      "is_active": false,
+      "is_trial_available": false,
+      "show_in_gift": false,
+      "traffic_limit_gb": 0,
+      "device_limit": 7,
+      "period_prices": [
+        {
+          "days": 30,
+          "price_kopeks": 44900
+        }
+      ],
+      "allowed_squads": [],
+      "traffic_topup_enabled": true,
+      "traffic_topup_packages": {
+        "20": 7900,
+        "60": 19900,
+        "120": 34900
+      },
+      "max_topup_traffic_gb": 0,
+      "is_daily": false,
+      "custom_days_enabled": false,
+      "custom_traffic_enabled": false,
+      "traffic_reset_mode": "NO_RESET",
+      "external_squad_uuid": null
+    }
+  ]
+}

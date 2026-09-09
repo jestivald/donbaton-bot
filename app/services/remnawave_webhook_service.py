@@ -40,6 +40,7 @@ from app.localization.texts import get_texts
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.grace_access_runtime import get_open_grace_subscription_ids, grace_access_runtime
 from app.services.grace_access_service import GraceReason
+from app.services.lte_quota_service import is_managed
 from app.services.notification_delivery_service import NotificationType, notification_delivery_service
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button, build_subscription_extend_button
 
@@ -142,6 +143,10 @@ _ADMIN_TORRENT_BLOCKER_EVENTS: dict[str, str] = {
 }
 
 _ADMIN_NODE_CONNECTION_EVENTS = frozenset({'node.connection_lost', 'node.connection_restored'})
+# ДонБатон patch 03: эхо админ-действий с нодами; гасится REMNAWAVE_WEBHOOK_NOTIFY_NODE_LIFECYCLE=false.
+_ADMIN_NODE_LIFECYCLE_EVENTS = frozenset(
+    {'node.created', 'node.modified', 'node.disabled', 'node.enabled', 'node.deleted'}
+)
 
 
 class RemnaWaveWebhookService:
@@ -437,6 +442,13 @@ class RemnaWaveWebhookService:
 
         if event_name in _ADMIN_NODE_CONNECTION_EVENTS and not settings.REMNAWAVE_WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS:
             logger.debug('RemnaWave node connection notifications disabled, skipping event', event_name=event_name)
+            return True
+
+        # ДонБатон patch 03: getattr — чтобы образ без патченного config.py вёл себя как апстрим (True).
+        if event_name in _ADMIN_NODE_LIFECYCLE_EVENTS and not getattr(
+            settings, 'REMNAWAVE_WEBHOOK_NOTIFY_NODE_LIFECYCLE', True
+        ):
+            logger.info('RemnaWave node lifecycle notifications disabled, skipping event', event_name=event_name)
             return True
 
         if not self._admin_service.is_enabled:
@@ -1136,6 +1148,12 @@ class RemnaWaveWebhookService:
             logger.info('Webhook user.expired: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
             return
 
+        if is_managed(subscription) and subscription.end_date > datetime.now(UTC):
+            # A delayed global-expiry event must not cancel a paid renewal.
+            self._stamp_webhook_update(subscription)
+            await db.commit()
+            return
+
         # Суточные подписки управляются DailySubscriptionService.
         # Remnawave может прислать user.expired если sync не дошёл (старый end_date),
         # но локально подписка ещё жива — не экспайрим её.
@@ -1235,6 +1253,11 @@ class RemnaWaveWebhookService:
             logger.info('Webhook user.enabled: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
             return
 
+        if is_managed(subscription):
+            self._stamp_webhook_update(subscription)
+            await db.commit()
+            return  # billing activation remains explicit; panel echoes cannot resurrect it
+
         self._stamp_webhook_update(subscription)
         if subscription.status in (SubscriptionStatus.DISABLED.value, SubscriptionStatus.LIMITED.value):
             await reactivate_subscription(db, subscription)
@@ -1251,6 +1274,14 @@ class RemnaWaveWebhookService:
     ) -> None:
         if not subscription:
             logger.info('Webhook user.limited: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
+            return
+
+        if is_managed(subscription):
+            self._stamp_webhook_update(subscription)
+            await db.commit()
+            logger.warning(
+                'Unexpected global LIMITED for independent LTE subscription', subscription_id=subscription.id
+            )
             return
 
         candidate_at = datetime.now(UTC)
@@ -1285,6 +1316,11 @@ class RemnaWaveWebhookService:
             logger.info('Webhook user.traffic_reset: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
             return
 
+        if is_managed(subscription):
+            self._stamp_webhook_update(subscription)
+            await db.commit()
+            return  # current panel traffic resets do not change the lifetime-based ledger
+
         self._stamp_webhook_update(subscription)
         await update_subscription_usage(db, subscription, 0.0)
         # Re-enable if was disabled/limited due to traffic limit
@@ -1311,7 +1347,7 @@ class RemnaWaveWebhookService:
 
         # Sync traffic limit
         traffic_limit_bytes = data.get('trafficLimitBytes')
-        if traffic_limit_bytes is not None and not grace_open:
+        if traffic_limit_bytes is not None and not grace_open and not is_managed(subscription):
             try:
                 new_limit_gb = int(traffic_limit_bytes) // (1024**3)
                 if subscription.traffic_limit_gb != new_limit_gb:
@@ -1346,7 +1382,12 @@ class RemnaWaveWebhookService:
         # отдельно синхронизируется ниже: при panel ACTIVE + future end_date подписка
         # всё равно может корректно реактивироваться через обычное продление/активацию.
         expire_at = data.get('expireAt')
-        if expire_at and not grace_open and subscription.status != SubscriptionStatus.DISABLED.value:
+        if (
+            expire_at
+            and not grace_open
+            and not is_managed(subscription)
+            and subscription.status != SubscriptionStatus.DISABLED.value
+        ):
             try:
                 parsed_dt = datetime.fromisoformat(expire_at.replace('Z', '+00:00'))
                 new_end_date = parsed_dt.astimezone(UTC)
@@ -1369,7 +1410,7 @@ class RemnaWaveWebhookService:
         if panel_status and not grace_open:
             now = datetime.now(UTC)
             end_date = subscription.end_date
-            if panel_status == 'ACTIVE' and end_date and end_date > now:
+            if panel_status == 'ACTIVE' and end_date and end_date > now and not is_managed(subscription):
                 if subscription.status != SubscriptionStatus.ACTIVE.value:
                     subscription.status = SubscriptionStatus.ACTIVE.value
                     changed = True

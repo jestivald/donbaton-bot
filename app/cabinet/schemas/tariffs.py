@@ -1,6 +1,7 @@
 """Schemas for tariff management in cabinet."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -47,6 +48,10 @@ class TariffListItem(BaseModel):
     """Tariff item for list view."""
 
     id: int
+    network_category: Literal['wifi', 'wifi_lte'] | None = None
+    lte_traffic_limit_gb: int | None = Field(None, ge=0, le=100_000)
+    lte_period_days: int | None = Field(None, ge=30, le=30)
+
     name: str
     description: str | None = None
     is_active: bool
@@ -81,6 +86,10 @@ class TariffDetailResponse(BaseModel):
     """Detailed tariff response."""
 
     id: int
+    network_category: Literal['wifi', 'wifi_lte'] | None = None
+    lte_traffic_limit_gb: int | None = Field(None, ge=0, le=100_000)
+    lte_period_days: int | None = Field(None, ge=30, le=30)
+
     name: str
     description: str | None = None
     is_active: bool
@@ -145,6 +154,10 @@ UUID_PATTERN = r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0
 class TariffCreateRequest(BaseModel):
     """Request to create a tariff."""
 
+    network_category: Literal['wifi', 'wifi_lte'] | None = None
+    lte_traffic_limit_gb: int | None = Field(None, ge=0, le=100_000)
+    lte_period_days: int | None = Field(None, ge=30, le=30)
+
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     is_active: bool = True
@@ -190,6 +203,10 @@ class TariffCreateRequest(BaseModel):
 
 class TariffUpdateRequest(BaseModel):
     """Request to update a tariff."""
+
+    network_category: Literal['wifi', 'wifi_lte'] | None = None
+    lte_traffic_limit_gb: int | None = Field(None, ge=0, le=100_000)
+    lte_period_days: int | None = Field(None, ge=30, le=30)
 
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None

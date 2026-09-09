@@ -687,7 +687,14 @@ def get_main_menu_keyboard(
         # В режиме тарифов проверяем tariff_id (детальная проверка в хендлере)
         # В классическом режиме проверяем глобальные настройки
         show_traffic_topup = False
-        if subscription and not subscription.is_trial and (subscription.traffic_limit_gb or 0) > 0:
+        if (
+            subscription
+            and not subscription.is_trial
+            and (
+                (subscription.traffic_limit_gb or 0) > 0
+                or getattr(subscription, 'network_category', None) == 'wifi_lte'
+            )
+        ):
             if settings.is_tariffs_mode() and getattr(subscription, 'tariff_id', None):
                 # Режим тарифов - показываем кнопку, проверка настроек тарифа в хендлере
                 show_traffic_topup = settings.BUY_TRAFFIC_BUTTON_VISIBLE
@@ -698,7 +705,12 @@ def get_main_menu_keyboard(
         if show_traffic_topup:
             paired_buttons.append(
                 InlineKeyboardButton(
-                    text=texts.t('BUY_TRAFFIC_BUTTON', '📈 Докупить трафик'), callback_data='buy_traffic'
+                    text=(
+                        '📱 Докупить LTE'
+                        if getattr(subscription, 'network_category', None) == 'wifi_lte'
+                        else texts.t('BUY_TRAFFIC_BUTTON', '📈 Докупить трафик')
+                    ),
+                    callback_data='buy_traffic',
                 )
             )
 
@@ -1249,7 +1261,14 @@ def get_subscription_keyboard(
                     callback_data='subscription_settings',
                 )
             ]
-            if settings.is_tariffs_mode() and subscription:
+            if (
+                settings.is_tariffs_mode()
+                and subscription
+                and (
+                    getattr(subscription, 'network_category', None) not in ('wifi', 'wifi_lte')
+                    or getattr(subscription, 'actual_status', None) in ('expired', 'disabled')
+                )
+            ):
                 # На истёкшей/отключённой подписке смена тарифа недоступна (хендлер её
                 # блокирует) — раньше кнопка «Тариф» всё равно показывалась и вела в тупик.
                 # Теперь для таких подписок показываем «Купить тариф» (покупку с нуля).
@@ -1278,7 +1297,10 @@ def get_subscription_keyboard(
             # Кнопка докупки трафика для платных подписок
             # В режиме тарифов проверяем can_topup_traffic() у тарифа, в классическом - глобальные настройки
             show_traffic_topup = False
-            if subscription and (subscription.traffic_limit_gb or 0) > 0:
+            if subscription and (
+                (subscription.traffic_limit_gb or 0) > 0
+                or getattr(subscription, 'network_category', None) == 'wifi_lte'
+            ):
                 if settings.is_tariffs_mode() and tariff:
                     show_traffic_topup = tariff.can_topup_traffic()
                 elif settings.is_traffic_topup_enabled() and not settings.is_traffic_topup_blocked():
@@ -1288,7 +1310,12 @@ def get_subscription_keyboard(
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            text=texts.t('BUY_TRAFFIC_BUTTON', '📈 Докупить трафик'), callback_data='buy_traffic'
+                            text=(
+                                '📱 Докупить LTE'
+                                if getattr(subscription, 'network_category', None) == 'wifi_lte'
+                                else texts.t('BUY_TRAFFIC_BUTTON', '📈 Докупить трафик')
+                            ),
+                            callback_data='buy_traffic',
                         )
                     ]
                 )

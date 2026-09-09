@@ -61,6 +61,9 @@ from app.database.models import (
     KassaAiPayment,
     LandingPage,
     LavaPayment,
+    LegalConsent,
+    LteQuota,
+    LteTopup,
     MainMenuButton,
     MenuLayoutHistory,
     MonitoringLog,
@@ -221,6 +224,7 @@ class BackupService:
             PromoGroup,
             Tariff,  # Tariff должен быть ДО Subscription из-за FK
             User,
+            LegalConsent,  # FK users: export and restore after User.
             PromoCode,
             WelcomeText,
             UserMessage,
@@ -299,6 +303,8 @@ class BackupService:
             # --- User data (FK: users, promo_groups, subscriptions) ---
             UserPromoGroup,
             TrafficPurchase,
+            LteQuota,
+            LteTopup,
             SubscriptionEvent,
             SubscriptionTemporaryAccess,
             PromoOfferTemplate,
@@ -1682,6 +1688,8 @@ class BackupService:
             # --- User engagement ---
             'subscription_events',
             'traffic_purchases',
+            'lte_topups',
+            'lte_quotas',
             'user_promo_groups',
             'withdrawal_requests',
             # --- Support extras ---

@@ -46,6 +46,7 @@ from app.services.grace_access_runtime import (
     create_panel_user_grace_safe,
     update_panel_user_grace_safe,
 )
+from app.services.lte_quota_service import needs_managed_policy
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_service import UserService
@@ -3835,6 +3836,9 @@ async def toggle_user_server(callback: types.CallbackQuery, db_user: User, db: A
         if not server:
             await callback.answer('❌ Сервер не найден', show_alert=True)
             return
+        if needs_managed_policy(subscription):
+            await callback.answer('Серверы Wi-Fi/LTE задаются проверенной конфигурацией категории', show_alert=True)
+            return
         current_squads = list(subscription.connected_squads or [])
 
         if server.squad_uuid in current_squads:
@@ -5146,7 +5150,11 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
                     panel_user_id = getattr(subscription, 'remnawave_id', None)
                 else:
                     panel_user_id = getattr(target_user, 'remnawave_id', None)
-                if panel_user_id:
+                if needs_managed_policy(subscription):
+                    remnawave_user = await SubscriptionService().sync_remnawave_user(db, subscription)
+                    if remnawave_user is None:
+                        raise RuntimeError('Не удалось применить права Wi-Fi/LTE')
+                elif panel_user_id:
                     async with remnawave_service.get_api_client() as api:
                         update_kwargs = dict(
                             user_id=panel_user_id,

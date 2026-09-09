@@ -36,6 +36,7 @@ from app.external.remnawave_api import (
     coerce_panel_user_id,
     is_user_not_found_error,
 )
+from app.services.lte_quota_service import needs_managed_policy
 from app.services.panel_expiry import panel_expire_at
 from app.services.subscription_service import get_traffic_reset_strategy
 from app.utils.subscription_utils import (
@@ -1229,6 +1230,13 @@ class RemnaWaveService:
                 api = await exit_stack.enter_async_context(self.get_api_client())
 
             for subscription in subscriptions:
+                if needs_managed_policy(subscription):
+                    panel_failed += 1
+                    logger.warning(
+                        'Managed Wi-Fi/LTE squads require coordinated topology migration',
+                        subscription_id=subscription.id,
+                    )
+                    continue
                 current_squads = list(subscription.connected_squads or [])
                 if source_uuid not in current_squads:
                     continue
@@ -2209,6 +2217,10 @@ class RemnaWaveService:
                         stats['errors'] += 1
                     continue
 
+                if needs_managed_policy(subscription):
+                    stats['updated'] += 1
+                    continue  # purchased rights/status never come from a bulk panel snapshot
+
                 try:
                     # Update traffic
                     used_traffic_bytes = panel_user.get('usedTrafficBytes', 0) or 0
@@ -2421,6 +2433,9 @@ class RemnaWaveService:
                 await self._create_subscription_from_panel_data(db, user, panel_user)
                 return
 
+            if needs_managed_policy(subscription):
+                return  # own quota worker reads counters; panel squads are temporary projections
+
             if open_grace_ids is None:
                 from app.services.grace_access_runtime import get_open_grace_subscription_ids
 
@@ -2621,6 +2636,16 @@ class RemnaWaveService:
                     # Подготавливаем задачи для параллельного выполнения
                     async def process_subscription(sub):
                         db_sub = sub
+                        if needs_managed_policy(sub):
+                            from app.database.database import AsyncSessionLocal
+                            from app.services.subscription_service import SubscriptionService
+
+                            async with semaphore, AsyncSessionLocal() as quota_db:
+                                current = await quota_db.get(Subscription, sub.id)
+                                if current is None:
+                                    return ('error', db_sub, None)
+                                updated = await SubscriptionService().sync_remnawave_user(quota_db, current)
+                                return ('updated' if updated else 'error', db_sub, updated)
                         async with semaphore, AsyncExitStack() as stack:
                             lease = await stack.enter_async_context(grace_sensitive_panel_update(sub.id))
                             if not lease.allowed:

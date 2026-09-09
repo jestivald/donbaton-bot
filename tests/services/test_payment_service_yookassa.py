@@ -3,7 +3,9 @@
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -20,6 +22,14 @@ from app.services.payment_service import PaymentService
 def anyio_backend() -> str:
     """Запускаем async-тесты на asyncio, чтобы избежать зависимостей trio."""
     return 'asyncio'
+
+
+@pytest.fixture(autouse=True)
+def receipt_profile_lookup(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    """Подменяем чтение профиля, не требуя SQL от DummySession."""
+    lookup = AsyncMock(return_value=SimpleNamespace(email='profile@example.com', telegram_id=7001, username='buyer'))
+    monkeypatch.setattr('app.database.crud.user.get_user_by_id', lookup)
+    return lookup
 
 
 class DummySession:
@@ -73,7 +83,12 @@ def _make_service(yookassa_service: StubYooKassaService | None) -> PaymentServic
 
 
 @pytest.mark.anyio('asyncio')
-async def test_create_yookassa_payment_success(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('receipt_email', ['user@example.com', None], ids=['explicit-email', 'profile-email'])
+async def test_create_yookassa_payment_success(
+    monkeypatch: pytest.MonkeyPatch,
+    receipt_profile_lookup: AsyncMock,
+    receipt_email: str | None,
+) -> None:
     """Успешное создание платежа формирует корректные метаданные и локальную запись."""
 
     response = {
@@ -111,8 +126,8 @@ async def test_create_yookassa_payment_success(monkeypatch: pytest.MonkeyPatch) 
         user_id=42,
         amount_kopeks=14000,
         description='Пополнение',
-        receipt_email='user@example.com',
-        metadata={'custom': 'data'},
+        receipt_email=receipt_email,
+        metadata={'custom': 'data', 'user_telegram_id': '7001'},
     )
 
     assert result is not None
@@ -127,6 +142,11 @@ async def test_create_yookassa_payment_success(monkeypatch: pytest.MonkeyPatch) 
     assert captured_args['metadata_json']['user_id'] == '42'
     assert captured_args['metadata_json']['amount_kopeks'] == '14000'
     assert isinstance(captured_args['yookassa_created_at'], datetime)
+    assert service.yookassa_service.calls[0]['receipt_email'] == (receipt_email or 'profile@example.com')
+    if receipt_email:
+        receipt_profile_lookup.assert_not_awaited()
+    else:
+        receipt_profile_lookup.assert_awaited_once_with(db, 42)
 
 
 @pytest.mark.anyio('asyncio')
@@ -171,10 +191,21 @@ async def test_create_yookassa_payment_handles_error_response(monkeypatch: pytes
     )
     assert result is None
     assert called is False
+    assert len(service.yookassa_service.calls) == 1
 
 
 @pytest.mark.anyio('asyncio')
-async def test_create_yookassa_sbp_payment_success(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ('profile_email', 'profile_exists'),
+    [('profile@example.com', True), (None, True), (None, False)],
+    ids=['profile-email', 'profile-without-email', 'missing-profile'],
+)
+async def test_create_yookassa_sbp_payment_success(
+    monkeypatch: pytest.MonkeyPatch,
+    receipt_profile_lookup: AsyncMock,
+    profile_email: str | None,
+    profile_exists: bool,
+) -> None:
     """Проверяем SBP-сценарий, включая передачу confirmation_token."""
 
     response = {
@@ -186,6 +217,7 @@ async def test_create_yookassa_sbp_payment_success(monkeypatch: pytest.MonkeyPat
     }
     service = _make_service(StubYooKassaService(response))
     db = DummySession()
+    receipt_profile_lookup.return_value = SimpleNamespace(email=profile_email) if profile_exists else None
 
     captured_args: dict[str, Any] = {}
 
@@ -204,12 +236,15 @@ async def test_create_yookassa_sbp_payment_success(monkeypatch: pytest.MonkeyPat
         user_id=7,
         amount_kopeks=25000,
         description='СБП пополнение',
+        metadata={'user_telegram_id': '7001'},
     )
 
     assert result is not None
     assert result['confirmation_token'] == 'token123'
     assert captured_args['payment_method_type'] == 'sbp'
     assert captured_args['metadata_json']['type'] == 'balance_topup_sbp'
+    receipt_profile_lookup.assert_awaited_once_with(db, 7)
+    assert service.yookassa_service.calls[0]['receipt_email'] == profile_email
 
 
 @pytest.mark.anyio('asyncio')
@@ -240,3 +275,4 @@ async def test_create_yookassa_sbp_payment_returns_none_on_error(monkeypatch: py
     )
     assert result is None
     assert called is False
+    assert len(service.yookassa_service.calls) == 1

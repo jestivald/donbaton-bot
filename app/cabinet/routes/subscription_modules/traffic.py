@@ -23,6 +23,9 @@ from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import TransactionType, User
+from app.services.donbaton_catalog import network_category
+from app.services.lte_quota_service import LtePolicyError, get_quota_status
+from app.services.lte_topup_purchase_service import LtePurchaseError, purchase_lte_topup, quote_lte_package
 from app.services.pricing_engine import pricing_engine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
@@ -60,6 +63,26 @@ async def get_traffic_packages(
     subscription = await resolve_subscription(db, user, subscription_id)
     if not subscription:
         return []
+
+    category = network_category(subscription)
+    if category == 'wifi':
+        return []
+    if category == 'wifi_lte':
+        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+        if (
+            not tariff
+            or not tariff.traffic_topup_enabled
+            or subscription.is_trial
+            or subscription.actual_status != 'active'
+        ):
+            return []
+        try:
+            return [
+                TrafficPackageResponse(**quote_lte_package(user, tariff, gb))
+                for gb in sorted(tariff.get_traffic_topup_packages())
+            ]
+        except (LtePolicyError, LtePurchaseError):
+            return []
 
     # The displayed discount must match exactly what POST /subscription/traffic
     # charges, so the period hint mirrors POST: 30 days for tariff packages
@@ -170,6 +193,27 @@ async def purchase_traffic(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='No subscription found',
         )
+    if network_category(subscription):
+        try:
+            return await purchase_lte_topup(
+                db,
+                user,
+                subscription,
+                gb=request.gb,
+                request_id=request.request_id,
+                expected_price_kopeks=request.expected_price_kopeks,
+            )
+        except LtePurchaseError as error:
+            raise HTTPException(
+                status_code=error.status,
+                detail={
+                    'code': error.code,
+                    'message': str(error),
+                    'missing_amount': error.missing_amount,
+                },
+            ) from error
+        except LtePolicyError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
     tariff = None
     base_price_kopeks = 0
     is_tariff_mode = settings.is_tariffs_mode() and subscription.tariff_id
@@ -454,6 +498,8 @@ async def save_traffic_cart(
     """Save cart for traffic purchase (for insufficient balance flow)."""
 
     subscription = await resolve_subscription(db, user, subscription_id)
+    if network_category(subscription):
+        raise HTTPException(status_code=400, detail='Для LTE используйте покупку отдельного пакета')
 
     if not subscription:
         raise HTTPException(
@@ -565,6 +611,8 @@ async def switch_traffic_package(
     from app.utils.pricing_utils import calculate_prorated_price
 
     subscription = await resolve_subscription(db, user, subscription_id)
+    if network_category(subscription):
+        raise HTTPException(status_code=400, detail='Для LTE используйте покупку отдельного пакета')
 
     if not subscription:
         raise HTTPException(
@@ -739,6 +787,10 @@ async def refresh_traffic(
     Rate limited to 1 request per 60 seconds.
     """
     subscription = await resolve_subscription(db, user, subscription_id)
+    network_fields = {
+        'network_category': network_category(subscription),
+        'lte_quota': await get_quota_status(db, subscription) if network_category(subscription) else None,
+    }
     if not subscription:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -769,6 +821,7 @@ async def refresh_traffic(
                 'rate_limited': True,
                 'retry_after_seconds': TRAFFIC_REFRESH_RATE_WINDOW,
                 **cached_data,
+                **network_fields,
             }
 
         raise HTTPException(
@@ -814,6 +867,7 @@ async def refresh_traffic(
                 'cached': False,
                 'source': 'database',
                 **traffic_data,
+                **network_fields,
             }
 
         # Update subscription with fresh data
@@ -850,6 +904,7 @@ async def refresh_traffic(
             'cached': False,
             'source': 'remnawave',
             **traffic_data,
+            **network_fields,
         }
 
     except Exception as e:
