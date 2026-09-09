@@ -1,5 +1,5 @@
 {
-  "status": "draft_not_approved",
+  "status": "prices_approved_activation_pending",
   "currency": "RUB",
   "traffic_unit": "GiB",
   "tariffs": [
@@ -119,5 +119,6 @@
       "traffic_reset_mode": "NO_RESET",
       "external_squad_uuid": null
     }
-  ]
+  ],
+  "approved_on": "2026-09-09"
 }

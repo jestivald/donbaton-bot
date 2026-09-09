@@ -1,5 +1,5 @@
 > Форк ДонБатон: [категории Wi-Fi / LTE, проект тарифов и условия запуска](docs/DONBATON.md).
-> Используйте вместе с [кабинетом ДонБатон](https://github.com/sup-vpn/donbaton-cabinet/tree/codex/wifi-lte-tariffs).
+> Используйте вместе с [кабинетом ДонБатон](https://github.com/jestivald/donbaton-cabinet/tree/codex/wifi-lte-tariffs).
 > Изменения находятся в ветке `codex/wifi-lte-tariffs`; готовые upstream-образы их не содержат.
 
 <div align="center">
