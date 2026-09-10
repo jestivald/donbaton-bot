@@ -37,6 +37,35 @@ def valid_telemetry_heartbeat(payload, *, epoch, node_ids, now, max_age_seconds)
         return False
 
 
+def telemetry_within_grace(last_valid, *, epoch, node_ids, now, grace_seconds):
+    """Bounded tolerance for a producer outage, anchored on the last valid proof.
+
+    The producer drops its lease whenever any single route fails, so a flapping
+    route erases evidence that the accounting path itself is intact. The
+    remembered proof still has to describe the same epoch and the same two
+    verified nodes; only the consumer's own observation time is trusted for age,
+    because a stale `observed_at` is exactly what the grace window forgives.
+    """
+    if not isinstance(last_valid, dict) or type(grace_seconds) is not int or grace_seconds <= 0:
+        return False
+    payload = last_valid.get('payload')
+    if not isinstance(payload, dict) or type(payload.get('version')) is not int or payload['version'] != 1:
+        return False
+    if not isinstance(epoch, str) or not epoch or payload.get('epoch') != epoch:
+        return False
+    try:
+        expected = {str(UUID(node_id)) for node_id in node_ids}
+        remembered = payload['node_ids']
+        if not isinstance(remembered, list) or len(remembered) != 2 or len(expected) != 2:
+            return False
+        if {str(UUID(node_id)) for node_id in remembered} != expected:
+            return False
+        age = timestamp(now) - timestamp(last_valid['seen_at'])
+        return timedelta(0) <= age <= timedelta(seconds=grace_seconds)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return False
+
+
 def _integer(value: int, name: str, *, minimum: int = 0) -> int:
     if type(value) is not int or value < minimum:
         raise LegacyAccountingError(f'{name} must be an integer >= {minimum}')
