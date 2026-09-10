@@ -1,11 +1,13 @@
 """The published catalogue document must stay a valid, sellable DonBaton grid."""
 
 import json
+from itertools import pairwise
 from pathlib import Path
 from types import SimpleNamespace
 
 from app.services.donbaton_catalog import validate_tariff_definition
 from app.utils.pricing_utils import format_period_description
+
 
 CATALOG = Path(__file__).resolve().parents[2] / 'docs' / 'donbaton-catalog.json'
 EXPECTED_PERIODS = [30, 90, 180, 360]
@@ -37,14 +39,16 @@ def test_catalog_has_four_offers_with_the_standard_periods():
 def test_longer_periods_are_cheaper_per_day_but_dearer_in_total():
     for offer in _offers():
         prices = offer['period_prices']
-        for previous, current in zip(prices, prices[1:]):
+        for previous, current in pairwise(prices):
             assert current['price_kopeks'] > previous['price_kopeks']
             assert current['price_kopeks'] / current['days'] < previous['price_kopeks'] / previous['days']
 
 
 def test_every_offer_passes_the_catalog_policy_and_renders_month_labels():
     for offer in _offers():
-        definition = SimpleNamespace(**{**offer, 'period_prices': {str(p['days']): p['price_kopeks'] for p in offer['period_prices']}})
+        definition = SimpleNamespace(
+            **{**offer, 'period_prices': {str(p['days']): p['price_kopeks'] for p in offer['period_prices']}}
+        )
         validate_tariff_definition(definition)
         for period in offer['period_prices']:
             label = format_period_description(period['days'], 'ru')
