@@ -1,5 +1,5 @@
 {
-  "status": "prices_approved_activation_pending",
+  "status": "active",
   "currency": "RUB",
   "traffic_unit": "GiB",
   "tariffs": [
@@ -9,7 +9,7 @@
       "network_category": "wifi",
       "lte_traffic_limit_gb": null,
       "lte_period_days": null,
-      "is_active": false,
+      "is_active": true,
       "is_trial_available": false,
       "show_in_gift": false,
       "traffic_limit_gb": 0,
@@ -18,6 +18,18 @@
         {
           "days": 30,
           "price_kopeks": 19900
+        },
+        {
+          "days": 90,
+          "price_kopeks": 52900
+        },
+        {
+          "days": 180,
+          "price_kopeks": 84900
+        },
+        {
+          "days": 360,
+          "price_kopeks": 119900
         }
       ],
       "allowed_squads": [],
@@ -36,7 +48,7 @@
       "network_category": "wifi",
       "lte_traffic_limit_gb": null,
       "lte_period_days": null,
-      "is_active": false,
+      "is_active": true,
       "is_trial_available": false,
       "show_in_gift": false,
       "traffic_limit_gb": 0,
@@ -45,6 +57,18 @@
         {
           "days": 30,
           "price_kopeks": 29900
+        },
+        {
+          "days": 90,
+          "price_kopeks": 79900
+        },
+        {
+          "days": 180,
+          "price_kopeks": 129900
+        },
+        {
+          "days": 360,
+          "price_kopeks": 179900
         }
       ],
       "allowed_squads": [],
@@ -63,7 +87,7 @@
       "network_category": "wifi_lte",
       "lte_traffic_limit_gb": 60,
       "lte_period_days": 30,
-      "is_active": false,
+      "is_active": true,
       "is_trial_available": false,
       "show_in_gift": false,
       "traffic_limit_gb": 0,
@@ -72,6 +96,18 @@
         {
           "days": 30,
           "price_kopeks": 29900
+        },
+        {
+          "days": 90,
+          "price_kopeks": 79900
+        },
+        {
+          "days": 180,
+          "price_kopeks": 129900
+        },
+        {
+          "days": 360,
+          "price_kopeks": 179900
         }
       ],
       "allowed_squads": [],
@@ -94,7 +130,7 @@
       "network_category": "wifi_lte",
       "lte_traffic_limit_gb": 120,
       "lte_period_days": 30,
-      "is_active": false,
+      "is_active": true,
       "is_trial_available": false,
       "show_in_gift": false,
       "traffic_limit_gb": 0,
@@ -103,6 +139,18 @@
         {
           "days": 30,
           "price_kopeks": 44900
+        },
+        {
+          "days": 90,
+          "price_kopeks": 119900
+        },
+        {
+          "days": 180,
+          "price_kopeks": 189900
+        },
+        {
+          "days": 360,
+          "price_kopeks": 269900
         }
       ],
       "allowed_squads": [],
@@ -120,5 +168,7 @@
       "external_squad_uuid": null
     }
   ],
-  "approved_on": "2026-09-09"
+  "approved_on": "2026-09-09",
+  "periods_approved_on": "2026-09-10",
+  "note": "Активный каталог с 09.09.2026 (30 суток) и 10.09.2026 (90/180/360). Wi-Fi + LTE и Wi-Fi Семейный — историческая сетка ДонБатона (299/799/1299/1799, 449/1199/1899/2699); Wi-Fi Личный — те же ступени скидки от 199 ₽. allowed_squads в боевой базе = DonBaton WIFI (+ DonBaton LTE для wifi_lte); здесь пусто, привязка делается оператором."
 }
