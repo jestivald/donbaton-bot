@@ -9,6 +9,7 @@ customer-favouring sampling tolerance is deliberately not a last-byte guarantee.
 
 import asyncio
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -29,6 +30,7 @@ from app.services.lte_accounting_service import (
     legacy_is_unlimited,
     legacy_pool_boundary,
     physical_counter_delta,
+    telemetry_within_grace,
     timestamp,
     valid_telemetry_heartbeat,
 )
@@ -39,6 +41,22 @@ GIB = 1024**3
 # Здесь важно только членство, но порядок держим как в donbaton_catalog.
 NETWORK_CATEGORIES = ('wifi_lte', 'wifi')
 _UNSET_HEARTBEAT = object()
+_UNRESOLVED_MEMORY = object()
+_TELEMETRY_REDIS_TIMEOUT = 2
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryEvidence:
+    """One cycle's resolution of producer evidence, shared by every subscription.
+
+    `payload` is the live lease exactly as read, still re-checked for age per
+    subscription: a slow cycle must not extend a heartbeat. `last_valid` is the
+    remembered proof behind the grace window, resolved once so an outage cannot
+    turn one Redis read into one per user.
+    """
+
+    payload: object = None
+    last_valid: object = _UNRESOLVED_MEMORY
 
 
 class LtePolicyError(ValueError):
@@ -95,26 +113,118 @@ async def _read_telemetry_heartbeat(*, now=None):
     if not epoch:
         return None
     try:
-        async with asyncio.timeout(2):
+        async with asyncio.timeout(_TELEMETRY_REDIS_TIMEOUT):
             return await cache.get(f'donbaton:lte:telemetry:{epoch}')
     except TimeoutError:
         logger.warning('LTE telemetry Redis read timed out')
         return None
 
 
-async def _with_telemetry_status(status, *, now, heartbeat=_UNSET_HEARTBEAT):
-    if heartbeat is _UNSET_HEARTBEAT:
-        heartbeat = await _read_telemetry_heartbeat(now=now)
+def _telemetry_memory_key(epoch):
+    return f'donbaton:lte:telemetry:{epoch}:last-valid'
+
+
+async def _remember_valid_heartbeat(payload, *, now):
+    """Anchor the grace window in Redis so it survives a bot restart."""
+    from app.utils.cache import cache
+
+    # The memory must expire on its own: a forgotten key may not resurrect LTE
+    # after a long outage, so it dies once no grace decision could rest on it.
+    expire = settings.DONBATON_LTE_TELEMETRY_GRACE_SECONDS + settings.DONBATON_LTE_MAX_SAMPLE_AGE_SECONDS
+    lease = {'payload': payload, 'seen_at': now.isoformat()}
     try:
-        healthy = valid_telemetry_heartbeat(
-            heartbeat,
+        async with asyncio.timeout(_TELEMETRY_REDIS_TIMEOUT):
+            await cache.set(_telemetry_memory_key(settings.DONBATON_LTE_ACCOUNTING_EPOCH), lease, expire=expire)
+    except TimeoutError:
+        logger.warning('LTE telemetry grace memory write timed out')
+    return lease
+
+
+async def _read_remembered_heartbeat():
+    from app.utils.cache import cache
+
+    epoch = settings.DONBATON_LTE_ACCOUNTING_EPOCH
+    if not epoch:
+        return None
+    try:
+        async with asyncio.timeout(_TELEMETRY_REDIS_TIMEOUT):
+            return await cache.get(_telemetry_memory_key(epoch))
+    except TimeoutError:
+        logger.warning('LTE telemetry grace memory read timed out')
+        return None
+
+
+def _live_heartbeat_is_valid(payload, *, now):
+    try:
+        return valid_telemetry_heartbeat(
+            payload,
             epoch=settings.DONBATON_LTE_ACCOUNTING_EPOCH,
             node_ids=_telemetry_node_ids(),
             now=now,
             max_age_seconds=settings.DONBATON_LTE_MAX_SAMPLE_AGE_SECONDS,
         )
     except LtePolicyError:
-        healthy = False
+        return False
+
+
+def _memory_is_within_grace(last_valid, *, now):
+    try:
+        return telemetry_within_grace(
+            last_valid,
+            epoch=settings.DONBATON_LTE_ACCOUNTING_EPOCH,
+            node_ids=_telemetry_node_ids(),
+            now=now,
+            grace_seconds=settings.DONBATON_LTE_TELEMETRY_GRACE_SECONDS,
+        )
+    except LtePolicyError:
+        return False
+
+
+def _grace_remaining_seconds(last_valid, *, now):
+    try:
+        elapsed = (timestamp(now) - timestamp(last_valid['seen_at'])).total_seconds()
+        return max(0, int(settings.DONBATON_LTE_TELEMETRY_GRACE_SECONDS - elapsed))
+    except (LegacyAccountingError, KeyError, TypeError):
+        return None
+
+
+async def _resolve_telemetry_evidence(*, now=None):
+    """Read the live lease once per cycle and resolve the grace anchor with it.
+
+    The memory is refreshed here, where the lease is actually read, so a cycle
+    over hundreds of subscriptions still performs one Redis write, and the
+    single warning below reports one outage instead of one per user.
+    """
+    now = _now(now)
+    payload = await _read_telemetry_heartbeat(now=now)
+    if settings.DONBATON_LTE_TELEMETRY_GRACE_SECONDS <= 0 or not settings.DONBATON_LTE_ACCOUNTING_EPOCH:
+        return TelemetryEvidence(payload=payload, last_valid=None)
+    if _live_heartbeat_is_valid(payload, now=now):
+        return TelemetryEvidence(payload=payload, last_valid=await _remember_valid_heartbeat(payload, now=now))
+    last_valid = await _read_remembered_heartbeat()
+    if _memory_is_within_grace(last_valid, now=now):
+        logger.warning(
+            'LTE telemetry missing, within grace',
+            epoch=settings.DONBATON_LTE_ACCOUNTING_EPOCH,
+            grace_seconds=settings.DONBATON_LTE_TELEMETRY_GRACE_SECONDS,
+            remaining_seconds=_grace_remaining_seconds(last_valid, now=now),
+        )
+    return TelemetryEvidence(payload=payload, last_valid=last_valid)
+
+
+async def _with_telemetry_status(status, *, now, heartbeat=_UNSET_HEARTBEAT):
+    if heartbeat is _UNSET_HEARTBEAT:
+        evidence = await _resolve_telemetry_evidence(now=now)
+    elif isinstance(heartbeat, TelemetryEvidence):
+        evidence = heartbeat
+    else:
+        evidence = TelemetryEvidence(payload=heartbeat)
+    healthy = _live_heartbeat_is_valid(evidence.payload, now=now)
+    if not healthy and settings.DONBATON_LTE_TELEMETRY_GRACE_SECONDS > 0:
+        last_valid = evidence.last_valid
+        if last_valid is _UNRESOLVED_MEMORY:
+            last_valid = await _read_remembered_heartbeat()
+        healthy = _memory_is_within_grace(last_valid, now=now)
     if not healthy and status['accounting_state'] == 'ready':
         status['accounting_state'] = 'telemetry_unavailable'
     return status
@@ -1106,7 +1216,9 @@ async def run_quota_cycle(subscription_service):
         )
     async with subscription_service.get_api_client() as api:
         semaphore = asyncio.Semaphore(10)
-        heartbeat = await _read_telemetry_heartbeat()
+        # Resolve the producer evidence once: every subscription below shares
+        # this snapshot, and only its age is re-checked per user.
+        evidence = await _resolve_telemetry_evidence()
 
         async def reconcile_one(subscription_id):
             async with semaphore, AsyncSessionLocal() as db:
@@ -1115,7 +1227,7 @@ async def run_quota_cycle(subscription_service):
                     if sub is None:
                         return
                     user = await db.get(User, sub.user_id)
-                    await reconcile_subscription(db, sub, api, user=user, heartbeat=heartbeat)
+                    await reconcile_subscription(db, sub, api, user=user, heartbeat=evidence)
                 except Exception as error:
                     await db.rollback()
                     logger.error('LTE quota reconciliation failed', subscription_id=subscription_id, error=str(error))
@@ -1125,7 +1237,7 @@ async def run_quota_cycle(subscription_service):
                 try:
                     quota = await db.get(LteOrphanQuota, panel_id)
                     if quota is not None:
-                        await reconcile_orphan_quota(db, quota, api, heartbeat=heartbeat)
+                        await reconcile_orphan_quota(db, quota, api, heartbeat=evidence)
                 except Exception as error:
                     await db.rollback()
                     logger.error('Orphan LTE reconciliation failed', panel_id=panel_id, error=str(error))

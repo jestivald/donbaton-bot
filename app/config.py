@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     DONBATON_LTE_SQUAD_UUIDS: str = ''
     DONBATON_LTE_POLL_SECONDS: int = Field(30, ge=10, le=300)
     DONBATON_LTE_MAX_SAMPLE_AGE_SECONDS: int = Field(180, ge=30, le=1800)
+    # The canary drops its lease whenever ANY single route fails, so a flapping
+    # route revokes LTE fleet-wide although accounting itself never broke.
+    # 0 keeps the strict behaviour; a positive window trusts the last valid
+    # proof for that long, at the price of unconfirmed accounting meanwhile.
+    DONBATON_LTE_TELEMETRY_GRACE_SECONDS: int = Field(0, ge=0, le=3600)
 
     BOT_TOKEN: str
     BOT_USERNAME: str | None = None

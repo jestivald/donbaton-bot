@@ -78,6 +78,7 @@ DONBATON_WIFI_SQUAD_UUIDS=
 DONBATON_LTE_SQUAD_UUIDS=
 DONBATON_LTE_POLL_SECONDS=30
 DONBATON_LTE_MAX_SAMPLE_AGE_SECONDS=180
+DONBATON_LTE_TELEMETRY_GRACE_SECONDS=0
 ```
 
 Оба списка — UUID через запятую. Нужны непересекающиеся сквады **и inbound**.
@@ -93,6 +94,16 @@ WIFI + LTE. Внешние сквады для этой политики зап�
 пишет ограниченный по возрасту Redis heartbeat. Без свежего доказательства
 LTE закрыт даже при успешном GET пользователя. Подготовка описана в
 [`scripts/donbaton/README.lte-telemetry.md`](../scripts/donbaton/README.lte-telemetry.md).
+
+`TELEMETRY_GRACE_SECONDS` смягчает главный побочный эффект этой строгости:
+canary снимает lease при отказе ЛЮБОГО из двух маршрутов, поэтому флап одного
+плеча закрывал LTE всему флоту на минуты, хотя учёт не ломался. При
+положительном значении консьюмер помнит последнее валидное доказательство в
+Redis (`donbaton:lte:telemetry:<epoch>:last-valid`, TTL = grace +
+`MAX_SAMPLE_AGE_SECONDS`) и столько секунд считает учёт подтверждённым, записывая
+warning `LTE telemetry missing, within grace`. Плата прямая: при настоящей
+поломке учёта LTE остаётся открытым до N секунд без подтверждения списаний.
+`0` — прежнее строгое поведение; недоступный Redis тоже даёт строгое.
 
 ## Сохранение прежних оплаченных прав
 
