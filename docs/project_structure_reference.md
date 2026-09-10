@@ -1827,6 +1827,9 @@
 - `app/services/panel_sync/liveness.py` — Python-модуль
   Классы: нет
   Функции: `is_subscription_live` — Включать ли пользователя в панели ради этой подписки.
+- `app/services/panel_sync/managed.py` — Python-модуль
+  Классы: нет
+  Функции: `apply_managed_policy` — Наложить политику Wi-Fi/LTE на набор полей. Для прочих подписок — no-op., `reproject_after_create` — Досэмплировать счётчик только что заведённого аккаунта и досыпать LTE.
 - `app/services/panel_sync/payload.py` — Python-модуль
   Классы: `PanelPayload` (3 методов)
   Функции: `build_panel_payload` — Собрать поля запроса из пользователя, подписки и её тарифа.
@@ -1838,7 +1841,7 @@
   Функции: `push_all_subscriptions` — Отправить в панель все подписки бота.
 - `app/services/panel_sync/writer.py` — Python-модуль
   Классы: `PanelWriteResult`
-  Функции: `push_subscription` — Отправить состояние подписки в панель., `patch_panel_account` — Обновить карточку аккаунта в панели, не трогая состояние подписки., `patch_panel_squads` — Переназначить аккаунту сквады тарифа.
+  Функции: `push_subscription` — Отправить состояние подписки в панель., `patch_panel_account` — Обновить карточку аккаунта в панели, не трогая состояние подписки., `patch_panel_squads` — Переназначить аккаунту сквады тарифа., `patch_panel_policy` — Записать в панель то, что посчитала политика Wi-Fi/LTE.
 
 #### app/services/payment
 
@@ -3424,6 +3427,9 @@
 - `tests/donbaton/test_paid_trial_cutover.py` — Python-модуль
   Классы: нет
   Функции: `accounting_config`, `test_paid_extend_same_imported_trial_tariff_grants_paid_lte_and_devices`, `test_paid_extend_same_new_trial_tariff_clears_single_trial_allowance`, `test_unpaid_same_tariff_extension_does_not_convert_imported_trial`
+- `tests/donbaton/test_panel_sync_managed.py` — Python-модуль
+  Классы: нет
+  Функции: `configured`, `tariff`, `seed`, `sample`, `payload_for`, `test_managed_payload_carries_quota_squads_and_never_a_real_limit` — Три состояния квоты дают ровно те же поля, что и до 4.8.0., `test_revoked_access_reaches_the_panel_as_a_literal_empty_list` — Пустой список сквадов — это отзыв доступа, и он обязан уехать в PATCH., `test_narrow_patch_cannot_drop_the_policy_fields` — ``sync_squads=False`` и узкие наборы полей политику не отменяют., `test_second_pass_does_not_resample_an_already_projected_payload` — Готовый набор полей повторно через леджер не гоняется., `test_new_account_gets_its_lte_right_after_the_first_sample` — У нового аккаунта проба берётся из ответа на create — и досылается LTE., `test_plain_subscription_passes_through_untouched` — Обычная подписка проходит шов насквозь — тем же объектом, без базы., `test_managed_tariff_without_a_quota_still_refuses_to_reach_the_panel` — Тариф категории Wi-Fi/LTE без инициализированной квоты — не продаём., `managed_subscription`, `test_panel_cannot_rewrite_the_entitlement_of_a_managed_subscription` — Обратное направление: панель для Wi-Fi/LTE — исполнитель, не источник прав., `test_panel_disable_still_reaches_a_managed_subscription` — Админ погасил аккаунт руками в панели — это донести обязаны., `test_plain_subscription_still_takes_squads_from_the_panel` — Сторож сужает политику только для Wi-Fi/LTE — остальные не задеты., `test_policy_writer_refuses_anything_beyond_the_policy` — Узкий вход в писателя не должен стать лазейкой для произвольных полей., `test_ledger_reconciliation_writes_through_the_panel_writer` — Цикл квот пишет в панель тем же писателем, что и все остальные., `test_projection_matches_the_ledger_contract_field_for_field` — Перевод набора полей в словарь леджера и обратно ничего не теряет.
 - `tests/donbaton/test_payment_cutover_guards.py` — Python-модуль
   Классы: нет
   Функции: `service`, `seed`, `external_boundaries`, `assert_only_credit`, `test_already_charged_legacy_stars_credits_actual_amount_once`, `test_stars_credit_and_receipt_roll_back_together_then_retry_delivers`, `test_yookassa_retired_invoice_credits_exact_record_amount_and_links_receipt_once`, `test_yookassa_failed_cutover_credit_rolls_back_receipt_link_and_balance`, `test_successful_trial_handler_routes_retired_invoice_by_real_charge_id`, `test_stars_precheckout_checks_pending_subscription_category_before_charge`, `test_flags_off_keeps_old_invoice_and_cart_policy_without_extra_queries`, `test_stale_or_repriced_saved_cart_drops_intent_before_debit`, `test_current_managed_30_day_cart_is_not_rejected_as_legacy`, `test_any_priced_period_of_managed_tariff_keeps_saved_cart`, `test_invalid_pending_ids_are_retired_without_database_overflow`, `test_custom_paid_terms_block_direct_autopurchase_before_price_or_debit`, `test_generic_minicart_and_direct_service_cannot_restore_old_global_quota`
