@@ -311,6 +311,7 @@ async def test_flags_off_keeps_old_invoice_and_cart_policy_without_extra_queries
         {'cart_mode': 'extend', 'tariff_id': 1, 'subscription_id': 1, 'period_days': 30},
         {'cart_mode': 'tariff_purchase', 'tariff_id': 1, 'period_days': 365},
         {'cart_mode': 'tariff_purchase', 'tariff_id': 9, 'period_days': 365},
+        {'cart_mode': 'tariff_purchase', 'tariff_id': 9, 'period_days': 45},
     ],
 )
 async def test_stale_or_repriced_saved_cart_drops_intent_before_debit(monkeypatch, external_boundaries, cart):
@@ -330,6 +331,18 @@ async def test_current_managed_30_day_cart_is_not_rejected_as_legacy(monkeypatch
     async with memory_session(monkeypatch, TABLES) as db:
         await seed(db)
         assert await guard.saved_tariff_cart_retired(db, {'tariff_id': 9, 'period_days': 30}) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('days', [90, 180, 360])
+async def test_any_priced_period_of_managed_tariff_keeps_saved_cart(monkeypatch, days):
+    async with memory_session(monkeypatch, TABLES) as db:
+        await seed(db)
+        tariff = await db.scalar(select(Tariff).where(Tariff.id == 9))
+        tariff.period_prices = {'30': 29900, '90': 79900, '180': 129900, '360': 179900}
+        await db.commit()
+        assert await guard.saved_tariff_cart_retired(db, {'tariff_id': 9, 'period_days': days}) is False
+        assert await guard.saved_tariff_cart_retired(db, {'tariff_id': 9, 'period_days': 45}) is True
 
 
 @pytest.mark.asyncio

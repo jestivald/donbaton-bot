@@ -60,10 +60,11 @@ async def saved_tariff_cart_retired(db, cart: dict) -> bool:
     if identifier is None or days is None:
         return True
     tariff = await db.scalar(select(Tariff).where(Tariff.id == identifier))
+    # Any period currently priced on the managed tariff is sellable (30/90/180/360
+    # since 10.09.2026); a period that is not in period_prices is stale.
     return (
         tariff is None
         or network_category(tariff) is None
         or not tariff.is_active
-        or days != 30
         or str(days) not in (tariff.period_prices or {})
     )
