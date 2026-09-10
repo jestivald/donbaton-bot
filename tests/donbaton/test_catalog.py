@@ -37,7 +37,7 @@ def test_mixed_catalog_isolates_lte_without_reclassifying_legacy_names():
     wifi, combo, legacy = plan('wifi'), plan('wifi_lte', id=2), plan(name='Wi-Fi + LTE', id=3)
     tariffs = [legacy, combo, wifi]
     assert network_category(legacy) is None
-    assert available_categories(tariffs) == ['wifi', 'wifi_lte', 'legacy']
+    assert available_categories(tariffs) == ['wifi_lte', 'wifi', 'legacy']
     assert select_category(tariffs) == 'wifi_lte'
     assert category_tariffs(tariffs, 'wifi') == [wifi]
     assert category_tariffs(tariffs, 'wifi_lte') == [combo]
@@ -47,6 +47,19 @@ def test_mixed_catalog_isolates_lte_without_reclassifying_legacy_names():
     assert 'tariff_select:1' in callbacks
     assert 'tariff_select:2' not in callbacks
     assert 'tariff_category:legacy' in callbacks
+
+
+def test_wifi_lte_tab_leads_the_row_and_is_preselected():
+    wifi, combo = plan('wifi'), plan('wifi_lte', id=2)
+    tariffs = [wifi, combo]
+    assert available_categories(tariffs) == ['wifi_lte', 'wifi']
+    assert select_category(tariffs) == 'wifi_lte'
+    assert select_category(tariffs, 'wifi') == 'wifi'
+    category_row = get_tariffs_keyboard(
+        [combo], 'ru', categories=available_categories(tariffs), selected_category='wifi_lte'
+    ).inline_keyboard[0]
+    assert [button.callback_data for button in category_row] == ['tariff_category:wifi_lte', 'tariff_category:wifi']
+    assert category_row[0].text == '✓ Wi-Fi + LTE'
 
 
 def test_legacy_catalog_retains_original_list_and_traffic_label():

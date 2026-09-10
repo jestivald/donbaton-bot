@@ -36,7 +36,8 @@ from app.services.lte_accounting_service import (
 
 logger = structlog.get_logger(__name__)
 GIB = 1024**3
-NETWORK_CATEGORIES = ('wifi', 'wifi_lte')
+# Здесь важно только членство, но порядок держим как в donbaton_catalog.
+NETWORK_CATEGORIES = ('wifi_lte', 'wifi')
 _UNSET_HEARTBEAT = object()
 
 

@@ -3,8 +3,11 @@
 from typing import Any
 
 
-NETWORK_CATEGORIES = ('wifi', 'wifi_lte')
-CATEGORY_LABELS = {'wifi': 'Только Wi-Fi', 'wifi_lte': 'Wi-Fi + LTE', 'legacy': 'Другие тарифы'}
+# Порядок кортежа задаёт порядок вкладок в витрине: с 10.09.2026 по решению владельца
+# «Wi-Fi + LTE» идёт первой и подставляется по умолчанию (см. select_category): со второй
+# позиции её пролистывали и покупали тарифы без LTE.
+NETWORK_CATEGORIES = ('wifi_lte', 'wifi')
+CATEGORY_LABELS = {'wifi_lte': 'Wi-Fi + LTE', 'wifi': 'Только Wi-Fi', 'legacy': 'Другие тарифы'}
 NETWORK_EXPLANATION = (
     'Wi-Fi — обычные серверы без лимита трафика. LTE — отдельный пакет обходных серверов. '
     'Пакет расходуется при выборе обходного сервера, независимо от сети телефона.'

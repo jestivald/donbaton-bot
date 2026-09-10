@@ -3335,7 +3335,7 @@
   Функции: `configured`, `boundaries`, `test_legacy_grant_refusal_is_http_400_before_debit`, `test_active_custom_terms_refuse_renewal_without_charging_old_extra_devices`, `test_expired_custom_same_tariff_quotes_and_purchases_only_target_device_limit`, `test_policy_race_after_debit_refunds_once_and_returns_http_400`
 - `tests/donbaton/test_catalog.py` — Python-модуль
   Классы: нет
-  Функции: `plan`, `test_mixed_catalog_isolates_lte_without_reclassifying_legacy_names`, `test_legacy_catalog_retains_original_list_and_traffic_label`, `test_invalid_managed_product_cannot_be_saved`, `test_wifi_cannot_silently_carry_lte_entitlement_or_packages`
+  Функции: `plan`, `test_mixed_catalog_isolates_lte_without_reclassifying_legacy_names`, `test_wifi_lte_tab_leads_the_row_and_is_preselected`, `test_legacy_catalog_retains_original_list_and_traffic_label`, `test_invalid_managed_product_cannot_be_saved`, `test_wifi_cannot_silently_carry_lte_entitlement_or_packages`
 - `tests/donbaton/test_cutover_purchase_guards.py` — Python-модуль
   Классы: нет
   Функции: `launch_tariff`, `test_unlisted_or_malformed_period_has_no_price`, `test_approved_thirty_days_keeps_approved_price`, `test_bad_stored_price_cannot_issue_a_free_period`, `test_migrated_subscription_without_loaded_tariff_cannot_use_classic_pricing`, `test_generic_housekeeping_preserves_imported_purchase_archive`, `test_legacy_no_reset_text_does_not_promise_an_unpaid_refill`
