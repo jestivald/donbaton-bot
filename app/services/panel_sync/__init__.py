@@ -12,7 +12,8 @@
 from app.services.panel_sync.expiry import panel_expire_at, stale_panel_expire_at
 from app.services.panel_sync.identity import PanelIdentity, resolve_panel_identity
 from app.services.panel_sync.liveness import is_subscription_live
-from app.services.panel_sync.payload import PanelPayload, build_panel_payload
+from app.services.panel_sync.managed import apply_managed_policy, reproject_after_create
+from app.services.panel_sync.payload import POLICY_FIELDS, PanelPayload, build_panel_payload
 from app.services.panel_sync.projection import (
     ADMIN_PULL,
     BULK_SNAPSHOT,
@@ -28,6 +29,7 @@ from app.services.panel_sync.runner import SyncStats, push_all_subscriptions
 from app.services.panel_sync.writer import (
     PanelWriteResult,
     patch_panel_account,
+    patch_panel_policy,
     patch_panel_squads,
     push_subscription,
 )
@@ -36,6 +38,7 @@ from app.services.panel_sync.writer import (
 __all__ = [
     'ADMIN_PULL',
     'BULK_SNAPSHOT',
+    'POLICY_FIELDS',
     'ROUTINE',
     'WEBHOOK',
     'PanelIdentity',
@@ -44,16 +47,19 @@ __all__ = [
     'PanelWriteResult',
     'ProjectionPolicy',
     'SyncStats',
+    'apply_managed_policy',
     'build_panel_payload',
     'is_subscription_live',
     'panel_expire_at',
     'panel_status_for_new_subscription',
     'patch_panel_account',
+    'patch_panel_policy',
     'patch_panel_squads',
     'project_onto_subscription',
     'push_all_subscriptions',
     'push_subscription',
     'read_panel_user',
+    'reproject_after_create',
     'resolve_panel_identity',
     'stale_panel_expire_at',
 ]

@@ -18,9 +18,10 @@ from app.external.remnawave_api import (
     TrafficLimitStrategy,
     is_user_not_found_error,
 )
-from app.services.lte_quota_service import apply_panel_policy, initialize_quota, is_managed, needs_managed_policy
+from app.services.lte_quota_service import initialize_quota, is_managed, needs_managed_policy
 from app.services.panel_sync import (
     PanelIdentity,
+    apply_managed_policy,
     build_panel_payload,
     is_subscription_live,
     patch_panel_account,
@@ -709,16 +710,22 @@ class SubscriptionService:
                     hwid_device_limit=hwid_limit,
                     external_squad_uuid=ext_squad_uuid,
                 )
+                if is_managed(subscription):
+                    await initialize_quota(db, subscription)
+                panel_sample = await api.get_user_by_id(remnawave_id) if is_managed(subscription) else None
+                # Политику Wi-Fi/LTE накладываем на НАБОР ПОЛЕЙ, а не на готовые
+                # kwargs: ниже он расходится на два пути — грейс и обычную
+                # запись, — и разъехаться в том, что уедет в панель, они не имеют
+                # права. `push_subscription` увидит `managed=True` и второй раз
+                # политику считать не станет.
+                panel_payload = await apply_managed_policy(
+                    db, subscription, panel_payload, panel_user=panel_sample, now=current_time
+                )
                 # Грейс принимает готовый набор полей: у него своя блокировка и
                 # своя фазовая запись, но собирает запрос всё равно сервис.
                 update_kwargs = panel_payload.update_kwargs(
                     user_id=remnawave_id, only_fields=only_fields, now=current_time
                 )
-
-                if is_managed(subscription):
-                    await initialize_quota(db, subscription)
-                panel_sample = await api.get_user_by_id(remnawave_id) if is_managed(subscription) else None
-                update_kwargs = await apply_panel_policy(db, subscription, update_kwargs, panel_user=panel_sample)
 
                 completed_grace = False
                 updated_user = None

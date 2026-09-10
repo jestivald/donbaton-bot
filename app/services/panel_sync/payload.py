@@ -23,6 +23,19 @@ from app.utils.subscription_utils import resolve_hwid_device_limit_for_payload
 
 _BYTES_IN_GB = 1024**3
 
+#: Поля, которые для подписки Wi-Fi/LTE считает не тариф, а леджер квоты
+#: (`app/services/panel_sync/managed.py`). Живут здесь, потому что их обязан
+#: знать сам набор полей: узкая правка не имеет права их отфильтровать.
+POLICY_FIELDS = frozenset(
+    {
+        'status',
+        'traffic_limit_bytes',
+        'traffic_limit_strategy',
+        'active_internal_squads',
+        'hwid_device_limit',
+    }
+)
+
 
 @dataclass(frozen=True)
 class PanelPayload:
@@ -41,6 +54,11 @@ class PanelPayload:
     tag: str | None
     end_date: datetime
     is_live: bool
+    #: Набор полей посчитан политикой Wi-Fi/LTE (`panel_sync.managed`), а не
+    #: тарифом. Тогда список сквадов авторитетен даже пустым: пустота здесь —
+    #: это решение «отобрать доступ», а не «мы ещё не знаем». Флаг же служит
+    #: признаком «политика уже применена» — повторно её накладывать не нужно.
+    managed: bool = False
 
     def _common(self) -> dict:
         kwargs: dict = {
@@ -88,7 +106,11 @@ class PanelPayload:
         # Пустой список в PATCH значит «снять все инбаунды». В базе пустота —
         # это дефолт колонки и результат сброса подписки, а не решение админа;
         # намеренный отзыв делается литеральным [] в других местах.
-        if self.active_internal_squads:
+        # Исключение — политика Wi-Fi/LTE: она считает набор сквадов сама, и её
+        # пустой список и есть намеренный отзыв (квота исчерпана, подписка
+        # истекла, сквады не настроены). Уронить его здесь значит оставить
+        # доступ включённым.
+        if self.active_internal_squads or self.managed:
             kwargs['active_internal_squads'] = list(self.active_internal_squads)
         expire_at = panel_expire_at(
             self.end_date,
@@ -100,7 +122,14 @@ class PanelPayload:
         if expire_at is not None:
             kwargs['expire_at'] = expire_at
         if only_fields is not None:
-            kwargs = {key: value for key, value in kwargs.items() if key in only_fields}
+            # Поля политики Wi-Fi/LTE узкая правка не отфильтровывает. Иначе
+            # вызывающий с `sync_squads=False` (или мониторинг со своим узким
+            # набором) отправил бы в панель описание, не тронув сквады, —
+            # и исчерпавший квоту абонент сохранил бы LTE до следующего цикла.
+            # Пересчитываются они из леджера при каждой сборке, так что лишними
+            # в запросе не бывают.
+            kept = (set(only_fields) | POLICY_FIELDS) if self.managed else set(only_fields)
+            kwargs = {key: value for key, value in kwargs.items() if key in kept}
         kwargs['user_id'] = user_id
         return kwargs
 

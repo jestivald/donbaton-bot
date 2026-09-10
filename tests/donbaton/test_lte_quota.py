@@ -354,8 +354,12 @@ async def test_single_panel_user_renewal_projects_exhausted_lte(monkeypatch):
         await db.commit()
         sub.tariff = plan
         user = await db.get(User, sub.user_id)
+        # `create_user` в этом сценарии не зовётся, но panel_sync.push_subscription
+        # разрешает писателя заранее — дублю нужен сам атрибут.
         api = SimpleNamespace(
-            get_user_by_id=AsyncMock(return_value=sample(100)), update_user=AsyncMock(return_value=sample(100))
+            get_user_by_id=AsyncMock(return_value=sample(100)),
+            update_user=AsyncMock(return_value=sample(100)),
+            create_user=AsyncMock(return_value=sample(100)),
         )
         await SubscriptionService()._create_or_update_remnawave_user_single(
             api,

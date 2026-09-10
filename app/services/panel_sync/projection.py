@@ -86,6 +86,9 @@ class ProjectionPolicy:
     takes_device_limit: bool = False
     #: Не переносить дату, пока подписка намеренно отключена в боте.
     respects_local_disable: bool = False
+    #: Брать из панели набор сквадов. Снимается для подписок Wi-Fi/LTE: там
+    #: сквады в панели — проекция остатка квоты, а не купленные права.
+    takes_squads: bool = True
 
 
 #: Фоновая синхронизация: панель — подсказка.
@@ -162,6 +165,13 @@ def _squads(value) -> tuple[str, ...]:
         elif isinstance(squad, str) and squad:
             uuids.append(squad)
     return tuple(uuids)
+
+
+def _is_managed(subscription) -> bool:
+    """Поздний импорт: леджер квоты сам пишет в панель через этот пакет."""
+    from app.services.lte_quota_service import is_managed
+
+    return is_managed(subscription)
 
 
 def read_panel_user(panel_user) -> PanelSnapshot:
@@ -250,6 +260,19 @@ def _next_status_from_stale_snapshot(subscription, snapshot: PanelSnapshot, *, n
     return subscription.status
 
 
+def _next_status_when_managed(subscription, snapshot: PanelSnapshot, *, now: datetime) -> str:
+    """Статус подписки Wi-Fi/LTE.
+
+    Панель для такой подписки — исполнитель, а не источник прав: и статус, и
+    сквады там выставил сам бот по остатку квоты. Поэтому ACTIVE из панели
+    ничего не доказывает (его только что поставила политика), а вот DISABLED —
+    доказывает: так админ гасит аккаунт руками в панели, и это надо донести.
+    """
+    if snapshot.status == 'DISABLED':
+        return SubscriptionStatus.DISABLED.value
+    return subscription.status
+
+
 def _next_status(subscription, snapshot: PanelSnapshot, *, now: datetime) -> str:
     end_date = panel_datetime_to_utc(subscription.end_date) if subscription.end_date else None
 
@@ -297,6 +320,26 @@ def project_onto_subscription(
     """
     moment = now or datetime.now(UTC)
     changed: set[str] = set()
+
+    if _is_managed(subscription):
+        # Подписка Wi-Fi/LTE: биллинговое состояние в панели — это то, что бот
+        # сам туда записал по остатку квоты (лимит всегда 0/NO_RESET, сквады —
+        # WIFI [+ LTE]). Прочитать его обратно значит подменить купленные права
+        # проекцией расхода: у исчерпавшего LTE абонента «пропал» бы сервер, а
+        # лимит трафика тарифа обнулился бы навсегда.
+        #
+        # Сторож стоит здесь, а не в политиках, намеренно: это свойство самой
+        # подписки, а не степень доверия к панели. Держать его флагом значило бы
+        # требовать от каждого из пяти вызывающих не забыть выбрать нужную
+        # политику — ровно та ошибка, ради которой этот пакет и собирали.
+        policy = replace(
+            policy,
+            takes_date=False,
+            takes_traffic_limit=False,
+            takes_device_limit=False,
+            takes_squads=False,
+            status_mode='managed',
+        )
 
     if snapshot_taken_at is not None:
         touched_at = max(
@@ -353,6 +396,7 @@ def project_onto_subscription(
             changed.add('end_date')
 
     status_rules = {
+        'managed': _next_status_when_managed,
         'panel_wins': _next_status_when_panel_wins,
         'stale': _next_status_from_stale_snapshot,
         'webhook': _next_status_from_webhook,
@@ -387,7 +431,7 @@ def project_onto_subscription(
         changed.add('device_limit')
 
     # Пустой список сквадов значит «панель ещё не знает», а не «отобрать все».
-    if snapshot.squads and set(snapshot.squads) != set(subscription.connected_squads or []):
+    if policy.takes_squads and snapshot.squads and set(snapshot.squads) != set(subscription.connected_squads or []):
         subscription.connected_squads = list(snapshot.squads)
         changed.add('connected_squads')
 

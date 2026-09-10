@@ -21,7 +21,8 @@ from app.config import settings
 from app.external.remnawave_api import RemnaWaveAPIError, RemnaWaveUser, is_user_not_found_error
 from app.services.panel_sync.expiry import stale_panel_expire_at
 from app.services.panel_sync.identity import PanelIdentity, resolve_panel_identity
-from app.services.panel_sync.payload import PanelPayload, build_panel_payload
+from app.services.panel_sync.managed import apply_managed_policy, reproject_after_create
+from app.services.panel_sync.payload import POLICY_FIELDS, PanelPayload, build_panel_payload
 
 
 logger = structlog.get_logger(__name__)
@@ -104,6 +105,11 @@ async def push_subscription(
     update = update_call or api.update_user
     create = create_call or api.create_user
 
+    # Единственная точка, где на подписку Wi-Fi/LTE накладывается её политика:
+    # лимит панели 0/NO_RESET и сквады, посчитанные по квоте. До 4.8.0 это
+    # делали семь вызовов в двух копиях create/update-пути; теперь копия одна.
+    payload = await apply_managed_policy(db, subscription, payload, api=api, identity=identity, now=moment)
+
     panel_user_id = identity.user_id
     if panel_user_id is not None:
         if reset_devices and not await api.reset_user_devices(panel_user_id):
@@ -133,8 +139,10 @@ async def push_subscription(
             # в панели больше нет. Оставить его — значит на каждом следующем
             # проходе снова не находить аккаунт и заводить ещё один дубль.
             await _record_identity(db, user, subscription, panel_user, multi_tariff=multi_tariff, replace_stale=True)
+            created_id = getattr(panel_user, 'id', None)
+            panel_user = await reproject_after_create(db, subscription, payload, panel_user, update=update, now=moment)
             return PanelWriteResult(
-                panel_user=panel_user, action='created', panel_user_id=getattr(panel_user, 'id', None)
+                panel_user=panel_user, action='created', panel_user_id=getattr(panel_user, 'id', None) or created_id
             )
 
         extinguished = await _extinguish_stale_date(
@@ -157,7 +165,11 @@ async def push_subscription(
 
     panel_user = await create(**payload.create_kwargs(now=moment))
     await _record_identity(db, user, subscription, panel_user, multi_tariff=multi_tariff)
-    return PanelWriteResult(panel_user=panel_user, action='created', panel_user_id=getattr(panel_user, 'id', None))
+    created_id = getattr(panel_user, 'id', None)
+    panel_user = await reproject_after_create(db, subscription, payload, panel_user, update=update, now=moment)
+    return PanelWriteResult(
+        panel_user=panel_user, action='created', panel_user_id=getattr(panel_user, 'id', None) or created_id
+    )
 
 
 async def _extinguish_stale_date(
@@ -304,3 +316,38 @@ async def patch_panel_squads(
         active_internal_squads=squads,
         external_squad_uuid=external_squad_uuid,
     )
+
+
+async def patch_panel_policy(
+    api,
+    *,
+    user_id: int,
+    fields: dict,
+    update_call=None,
+) -> RemnaWaveUser:
+    """Записать в панель то, что посчитала политика Wi-Fi/LTE.
+
+    Отдельный вход, потому что источник здесь третий: не подписка и не тариф, а
+    леджер квоты (``app/services/lte_quota_service.py``). Он ходит по всему
+    управляемому флоту в своём цикле и знает про аккаунт две вещи, которых нет у
+    ``push_subscription``:
+
+    * писать ли вообще. Совпадающий набор сквадов переписывать нельзя — панель
+      на каждый PATCH ставит ноды в очередь на перезапуск, и на тысячах подписок
+      холостой проход кладёт флот. Решение принимает вызывающий, сверив ответ
+      панели со своим набором полей;
+    * кому писать. У «сироты» — аккаунта панели с квотой, но без подписки в боте
+      — строки подписки нет вовсе, и собирать её состояние не из чего.
+
+    Поэтому здесь нет ни даты, ни описания, ни поиска аккаунта: адрес и поля
+    вызывающий уже посчитал. Набор полей проверяется — этот вход не должен стать
+    лазейкой, через которую в панель уедет что-нибудь помимо политики.
+    """
+    unexpected = set(fields) - set(POLICY_FIELDS)
+    if unexpected:
+        raise ValueError(
+            f'patch_panel_policy пишет только поля политики Wi-Fi/LTE, лишние: {sorted(unexpected)}. '
+            f'Подписка целиком — push_subscription, карточка аккаунта — patch_panel_account.'
+        )
+    update = update_call or api.update_user
+    return await update(user_id=user_id, **fields)

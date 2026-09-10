@@ -961,12 +961,28 @@ async def reconcile_subscription(db, subscription, api, *, user=None, heartbeat=
         kwargs['status'] = UserStatus.ACTIVE
     # Sampling must remain durable when access already matches. Rewriting an
     # unchanged squad set can otherwise enqueue thousands of needless node jobs.
-    updated = panel_user if _panel_policy_matches(panel_user, kwargs) else await api.update_user(**kwargs)
+    updated = panel_user if _panel_policy_matches(panel_user, kwargs) else await _write_policy(api, kwargs)
     quota = await _quota(db, subscription)
     if quota:
         quota.panel_access_cleared_at = datetime.now(UTC) if not kwargs.get('active_internal_squads') else None
     await db.commit()
     return updated
+
+
+async def _write_policy(api, payload):
+    """Отправить посчитанную политику через единственного писателя панели.
+
+    Писать сюда напрямую нельзя: с 4.8.0 все обращения к ``update_user`` живут в
+    ``app/services/panel_sync/writer.py``, и сторож ``tests/services/panel_sync/
+    test_no_bypass.py`` следит за этим. Решение «писать ли вообще» остаётся
+    здесь — его принимает ``_panel_policy_matches`` выше по стеку, и оно важное:
+    панель на каждый PATCH ставит ноды в очередь на перезапуск, а этот цикл
+    ходит по всему управляемому флоту.
+    """
+    from app.services.panel_sync.writer import patch_panel_policy
+
+    fields = dict(payload)
+    return await patch_panel_policy(api, user_id=fields.pop('user_id'), fields=fields)
 
 
 def _panel_policy_matches(panel_user, payload):
@@ -1041,7 +1057,7 @@ async def reconcile_orphan_quota(db, quota, api, *, now=None, heartbeat=_UNSET_H
             payload['active_internal_squads'] += list(lte)
         if _value(getattr(panel_user, 'status', None)) == 'LIMITED':
             payload['status'] = UserStatus.ACTIVE
-    updated = panel_user if _panel_policy_matches(panel_user, payload) else await api.update_user(**payload)
+    updated = panel_user if _panel_policy_matches(panel_user, payload) else await _write_policy(api, payload)
     quota.panel_access_cleared_at = now if not payload['active_internal_squads'] else None
     await db.commit()
     return updated
