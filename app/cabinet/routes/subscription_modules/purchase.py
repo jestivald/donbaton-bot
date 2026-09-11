@@ -36,7 +36,7 @@ from app.database.crud.user import add_user_balance, get_user_by_id, subtract_us
 from app.database.database import AsyncSessionLocal
 from app.database.models import PaymentMethod, Subscription, Tariff, Transaction, TransactionType, User
 from app.services.donbaton_catalog import network_category
-from app.services.lte_quota_service import LtePolicyError
+from app.services.lte_quota_service import LtePolicyError, is_paid_tariff_switch
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
@@ -48,6 +48,7 @@ from app.services.subscription_purchase_service import (
     PurchaseValidationError,
 )
 from app.services.subscription_service import SubscriptionService
+from app.services.tariff_switch_policy import should_reset_devices_on_switch
 from app.services.user_cart_service import user_cart_service
 from app.utils.pricing_utils import calculate_price_per_month, format_period_description
 
@@ -654,6 +655,28 @@ async def submit_purchase(
 # ============ Tariff Purchase (for tariffs mode) ============
 
 
+async def _reset_switch_devices(user: User, subscription) -> None:
+    """Снять все HWID в панели после смены тарифа. Сбой сброса не откатывает покупку."""
+    panel_id = (
+        subscription.remnawave_id
+        if settings.is_multi_tariff_enabled() and getattr(subscription, 'remnawave_id', None)
+        else getattr(user, 'remnawave_id', None)
+    )
+    if not panel_id:
+        return
+    try:
+        from app.services.remnawave_service import RemnaWaveService
+
+        service = RemnaWaveService()
+        async with service.get_api_client() as api:
+            # 3.0.0: сброс отдаёт False вместо исключения — без проверки
+            # результата лог утверждал бы, что старые HWID сняты.
+            if not await api.reset_user_devices(panel_id):
+                logger.error('Failed to reset devices on tariff switch', user_id=user.id)
+    except Exception as error:
+        logger.error('Failed to reset devices on tariff switch', error=error)
+
+
 @router.post('/purchase-tariff')
 async def purchase_tariff(
     request: TariffPurchaseRequest,
@@ -891,6 +914,15 @@ async def purchase_tariff(
             )
 
         subscription = existing_subscription
+
+        # Покупка ДРУГОГО сетевого тарифа поверх живой подписки — это смена
+        # тарифа: остаток дней сохраняется, а устройства сбрасываются только при
+        # уменьшении лимита. Исходный тариф нужен ДО extend_subscription — она
+        # переназначает subscription.tariff_id.
+        network_switch = bool(
+            subscription and not settings.is_multi_tariff_enabled() and is_paid_tariff_switch(subscription, tariff)
+        )
+        switch_from_tariff = await get_tariff_by_id(db, subscription.tariff_id) if network_switch else None
 
         # Get server squads from tariff
         squads = tariff.allowed_squads or []
@@ -1179,6 +1211,11 @@ async def purchase_tariff(
                 user_id=user.id,
                 action='create' if _should_create else 'update',
             )
+
+        if network_switch and should_reset_devices_on_switch(switch_from_tariff, tariff):
+            # Без сброса панель оставила бы за клиентом уже подключённые
+            # устройства сверх нового, меньшего лимита.
+            await _reset_switch_devices(user, subscription)
 
         # Save cart for auto-renewal (not for daily tariffs - they have their own charging)
         if not is_daily_tariff:

@@ -22,7 +22,11 @@ from app.database.models import PaymentMethod, Subscription, TransactionType, Us
 from app.services.pricing_engine import pricing_engine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
-from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_used_traffic
+from app.services.tariff_switch_policy import (
+    remaining_days_for_switch,
+    should_reset_devices_on_switch,
+    should_reset_used_traffic,
+)
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import TariffPurchaseRequest
@@ -32,6 +36,42 @@ from .helpers import _subscription_to_response, resolve_subscription
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
+
+
+def _reject_network_switch(subscription, new_tariff) -> None:
+    """Сетевой тариф меняется покупкой, а не переключением с доплатой.
+
+    Пропорциональная доплата для Wi-Fi / Wi-Fi + LTE не продаётся: по решению
+    владельца клиент покупает новый тариф на полный срок, а остаток текущего
+    сохраняется. Контракт ответа — как у ``subscription_expired``, чтобы фронт
+    уводил в обычный флоу покупки, а не показывал голую ошибку.
+    """
+    from app.services.donbaton_catalog import network_category
+    from app.services.lte_quota_service import TARIFF_SWITCH_AS_PURCHASE
+
+    if network_category(subscription) and network_category(new_tariff):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'network_purchase_only',
+                'message': TARIFF_SWITCH_AS_PURCHASE,
+                'use_purchase_flow': True,
+            },
+        )
+
+
+def _switch_cost(current_tariff, new_tariff, remaining_days, *, user):
+    """Котировка переключения с понятным отказом вместо 500.
+
+    ``LtePolicyError`` — это ValueError: незакрытый, он выходил из ручки как
+    500, и кабинет показывал «что-то пошло не так» вместо причины отказа.
+    """
+    from app.services.lte_quota_service import LtePolicyError
+
+    try:
+        return pricing_engine.calculate_tariff_switch_cost(current_tariff, new_tariff, remaining_days, user=user)
+    except LtePolicyError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
 
 @router.post('/tariff/switch/preview')
@@ -133,15 +173,12 @@ async def preview_tariff_switch(
             detail='Tariff not available for your promo group',
         )
 
+    _reject_network_switch(subscription, new_tariff)
+
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Calculate switch cost (PricingEngine handles all cases: periodic<->periodic, daily->periodic, periodic->daily)
-    switch_result = pricing_engine.calculate_tariff_switch_cost(
-        current_tariff,
-        new_tariff,
-        remaining_days,
-        user=user,
-    )
+    switch_result = _switch_cost(current_tariff, new_tariff, remaining_days, user=user)
     upgrade_cost = switch_result.upgrade_cost
     is_upgrade = switch_result.is_upgrade
 
@@ -314,15 +351,12 @@ async def switch_tariff(
 
     user = await lock_user_for_pricing(db, user.id)
 
+    _reject_network_switch(subscription, new_tariff)
+
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Calculate cost (PricingEngine handles all cases: periodic<->periodic, daily->periodic, periodic->daily)
-    switch_result = pricing_engine.calculate_tariff_switch_cost(
-        current_tariff,
-        new_tariff,
-        remaining_days,
-        user=user,
-    )
+    switch_result = _switch_cost(current_tariff, new_tariff, remaining_days, user=user)
     upgrade_cost = switch_result.upgrade_cost
     is_upgrade = switch_result.is_upgrade
     base_upgrade_cost = switch_result.raw_cost
@@ -553,7 +587,7 @@ async def switch_tariff(
         if settings.is_multi_tariff_enabled() and subscription.remnawave_id
         else user.remnawave_id
     )
-    if _switch_panel_user_id:
+    if _switch_panel_user_id and should_reset_devices_on_switch(current_tariff, new_tariff):
         try:
             service = RemnaWaveService()
             async with service.get_api_client() as api:

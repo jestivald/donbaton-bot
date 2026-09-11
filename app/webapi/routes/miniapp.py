@@ -6843,6 +6843,27 @@ async def purchase_tariff_endpoint(
     )
 
 
+def _reject_network_switch(subscription, new_tariff) -> None:
+    """Сетевой тариф меняется покупкой, а не переключением с доплатой.
+
+    Легаси-путь мини-аппа вдобавок слеп к LTE-леджеру (``update_entitlement``
+    он не зовёт), поэтому Wi-Fi / Wi-Fi + LTE здесь закрыт даже с включённым
+    правилом смены: покупка идёт своим эндпоинтом, который проходит через леджер.
+    """
+    from app.services.donbaton_catalog import network_category
+    from app.services.lte_quota_service import TARIFF_SWITCH_AS_PURCHASE
+
+    if network_category(subscription) and network_category(new_tariff):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'network_purchase_only',
+                'message': TARIFF_SWITCH_AS_PURCHASE,
+                'use_purchase_flow': True,
+            },
+        )
+
+
 def _calculate_tariff_switch(
     current_tariff,
     new_tariff,
@@ -6854,17 +6875,24 @@ def _calculate_tariff_switch(
     Делегирует расчёт в PricingEngine.calculate_tariff_switch_cost().
     PricingEngine автоматически определяет тип переключения
     (periodic↔periodic, daily→periodic, periodic→daily).
+
+    ``LtePolicyError`` — это ValueError: незакрытым он выходил бы из ручки как
+    500 вместо причины отказа.
     Returns:
         TariffSwitchResult
     """
+    from app.services.lte_quota_service import LtePolicyError
     from app.services.pricing_engine import pricing_engine
 
-    return pricing_engine.calculate_tariff_switch_cost(
-        current_tariff,
-        new_tariff,
-        remaining_days,
-        user=user,
-    )
+    try:
+        return pricing_engine.calculate_tariff_switch_cost(
+            current_tariff,
+            new_tariff,
+            remaining_days,
+            user=user,
+        )
+    except LtePolicyError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
 
 @router.post('/subscription/tariff/switch/preview')
@@ -6953,6 +6981,8 @@ async def preview_tariff_switch_endpoint(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={'code': 'tariff_not_available', 'message': 'Tariff not available for your promo group'},
         )
+
+    _reject_network_switch(subscription, new_tariff)
 
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
@@ -7083,6 +7113,8 @@ async def switch_tariff_endpoint(
     from app.database.crud.user import lock_user_for_pricing
 
     user = await lock_user_for_pricing(db, user.id)
+
+    _reject_network_switch(subscription, new_tariff)
 
     remaining_days = remaining_days_for_switch(subscription.end_date)
 

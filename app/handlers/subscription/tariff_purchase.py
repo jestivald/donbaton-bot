@@ -35,9 +35,14 @@ from app.services.donbaton_catalog import (
     tariff_traffic_label,
 )
 from app.services.subscription_service import SubscriptionService
-from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_used_traffic
+from app.services.tariff_switch_policy import (
+    remaining_days_for_switch,
+    should_reset_devices_on_switch,
+    should_reset_used_traffic,
+)
 from app.services.user_cart_service import user_cart_service
 from app.utils.decorators import error_handler
+from app.utils.formatters import format_date
 from app.utils.formatting import format_period, format_price_kopeks, format_traffic
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 
@@ -161,6 +166,142 @@ def _get_user_period_discount(db_user: User, period_days: int) -> tuple[int, int
     display_combined = 100 - remaining // 100
 
     return group_discount, personal_discount, display_combined
+
+
+async def _network_switch_stub(callback, texts) -> None:
+    """Экран старых кнопок «переключить тариф» для сетевой подписки.
+
+    Мгновенное переключение с доплатой для Wi-Fi / Wi-Fi + LTE не продаётся. Со
+    включённым правилом смены объясняем, что смена — это обычная покупка, и
+    ведём в витрину; без него остаётся прежний отказ.
+    """
+    from app.services.lte_quota_service import TARIFF_SWITCH_AS_PURCHASE
+
+    if settings.DONBATON_TARIFF_SWITCH_ENABLED:
+        text = texts.t('TARIFF_SWITCH_NETWORK_PURCHASE_ONLY', TARIFF_SWITCH_AS_PURCHASE)
+        button = InlineKeyboardButton(
+            text=texts.t('TARIFF_SWITCH_PICK_TARIFF_BUTTON', '📦 Выбрать тариф'), callback_data='tariff_list'
+        )
+    else:
+        text = texts.t(
+            'TARIFF_SWITCH_NETWORK_BLOCKED',
+            'До окончания подписки можно продлить текущий тариф или докупить LTE. '
+            'Другой тариф можно выбрать после окончания подписки.',
+        )
+        button = InlineKeyboardButton(
+            text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'), callback_data='menu_subscription'
+        )
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[button]]))
+    await callback.answer()
+
+
+async def _reset_panel_devices(db_user: User, subscription, *, reason: str) -> None:
+    """Снять все HWID в панели. Провал сброса не отменяет уже оплаченную покупку."""
+    panel_id = (
+        subscription.remnawave_id
+        if settings.is_multi_tariff_enabled() and getattr(subscription, 'remnawave_id', None)
+        else db_user.remnawave_id
+    )
+    if not panel_id:
+        return
+    try:
+        from app.services.remnawave_service import RemnaWaveService
+
+        service = RemnaWaveService()
+        async with service.get_api_client() as api:
+            # reset_user_devices ловит отказ панели внутри и отдаёт False: без
+            # проверки результата лог утверждал бы, что сброс прошёл.
+            if await api.reset_user_devices(panel_id):
+                logger.info('🔧 Сброшены устройства', reason=reason, db_user_id=db_user.id)
+            else:
+                logger.error('Не удалось сбросить устройства', reason=reason, db_user_id=db_user.id)
+    except Exception as error:
+        logger.error('Ошибка сброса устройств', reason=reason, error=error)
+
+
+async def _tariff_switch_note(
+    db: AsyncSession,
+    subscription,
+    tariff: Tariff,
+    texts,
+    *,
+    period_days: int | None = None,
+) -> str:
+    """Блок «что изменится» для покупки ДРУГОГО сетевого тарифа.
+
+    Клиент платит полную цену нового тарифа, поэтому обязан заранее видеть три
+    вещи, которых нет на обычном экране покупки: остаток дней не сгорает, новые
+    условия включаются сразу (а в окне старых оплаченных условий — объём LTE
+    только после него), и разницу при удешевлении никто не вернёт.
+    """
+    from app.services.lte_quota_service import describe_tariff_switch, is_paid_tariff_switch
+
+    if not subscription or not is_paid_tariff_switch(subscription, tariff):
+        return ''
+    current = await get_tariff_by_id(db, subscription.tariff_id)
+    switch = await describe_tariff_switch(db, subscription, tariff)
+    remaining = switch['remaining_days']
+    lines = [texts.t('TARIFF_SWITCH_NOTE_HEADER', '\n🔄 <b>Смена тарифа</b>\n')]
+    lines.append(
+        texts.t('TARIFF_SWITCH_NOTE_CURRENT', 'Текущий тариф: <b>{name}</b> — осталось {days} дн.\n').format(
+            name=html.escape(current.name if current else '—'), days=remaining
+        )
+    )
+    if period_days:
+        lines.append(
+            texts.t(
+                'TARIFF_SWITCH_NOTE_CARRY_PERIOD', 'Остаток сохранится: новый срок — {days} + {period} дн.\n'
+            ).format(days=remaining, period=period_days)
+        )
+    else:
+        lines.append(texts.t('TARIFF_SWITCH_NOTE_CARRY', 'Остаток сохранится и добавится к новому сроку.\n'))
+    old_devices = getattr(current, 'device_limit', None) or 0
+    if switch['device_limit_now'] != old_devices:
+        lines.append(
+            texts.t('TARIFF_SWITCH_NOTE_DEVICES', '📱 Устройств: {old} → {new} (сразу)\n').format(
+                old=old_devices, new=switch['device_limit_now']
+            )
+        )
+    lines.append(_tariff_switch_lte_line(switch, current, texts))
+    if switch['devices_reset']:
+        lines.append(
+            texts.t(
+                'TARIFF_SWITCH_NOTE_DEVICES_RESET',
+                '♻️ Подключённые устройства будут сброшены — подключите их заново.\n',
+            )
+        )
+    lines.append(
+        texts.t(
+            'TARIFF_SWITCH_NOTE_NO_REFUND',
+            'ℹ️ Оплачивается полная цена нового тарифа, разница не возвращается.\n',
+        )
+    )
+    return ''.join(line for line in lines if line)
+
+
+def _tariff_switch_lte_line(switch: dict, current_tariff: Tariff | None, texts) -> str:
+    """Одна строка про LTE-пакет: сразу или после прежних оплаченных условий."""
+    new_gb = switch['lte_limit_gb_next']
+    legacy_until = switch['legacy_until']
+    if legacy_until:
+        date = format_date(legacy_until)
+        if new_gb:
+            return texts.t(
+                'TARIFF_SWITCH_NOTE_LTE_AFTER_LEGACY',
+                '📶 Прежний LTE-пакет действует до {date}, затем {new} ГиБ каждые 30 дн.\n',
+            ).format(date=date, new=new_gb)
+        return texts.t(
+            'TARIFF_SWITCH_NOTE_LTE_OFF_AFTER_LEGACY',
+            '📶 Прежний LTE-пакет действует до {date}, затем LTE отключится.\n',
+        ).format(date=date)
+    if not new_gb:
+        return texts.t('TARIFF_SWITCH_NOTE_LTE_OFF', '📶 В новом тарифе LTE-пакета нет: он отключится сразу.\n')
+    old_gb = getattr(current_tariff, 'lte_traffic_limit_gb', None) or 0
+    if old_gb == new_gb:
+        return ''
+    return texts.t(
+        'TARIFF_SWITCH_NOTE_LTE_NOW', '📶 LTE-пакет: {old} → {new} ГиБ сразу (остаток текущего цикла учтён)\n'
+    ).format(old=old_gb, new=new_gb)
 
 
 def format_tariffs_list_text(
@@ -1120,8 +1261,15 @@ async def _proceed_with_selected_tariff(
             )
         else:
             # Для обычного тарифа показываем выбор периода
+            # Подписку читаем только когда правило смены включено: на выключенном
+            # флаге экран выбора периода не должен платить лишним запросом.
+            switch_note = ''
+            if settings.DONBATON_TARIFF_SWITCH_ENABLED and not settings.is_multi_tariff_enabled():
+                switch_note = await _tariff_switch_note(
+                    db, await get_subscription_by_user_id(db, db_user.id), tariff, texts
+                )
             await callback.message.edit_text(
-                format_tariff_info_for_user(tariff, db_user.language),
+                format_tariff_info_for_user(tariff, db_user.language) + switch_note,
                 reply_markup=get_tariff_periods_keyboard(
                     tariff, db_user.language, db_user=db_user, back_callback=back_callback
                 ),
@@ -1707,6 +1855,7 @@ async def select_tariff_period(
     user_balance = db_user.balance_kopeks or 0
 
     traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
+    switch_note = await _tariff_switch_note(db, _existing_sub, tariff, texts, period_days=period)
 
     if user_balance >= final_price:
         # Показываем подтверждение
@@ -1737,7 +1886,8 @@ async def select_tariff_period(
                 total=format_price_kopeks(final_price),
                 balance=format_price_kopeks(user_balance),
                 after=format_price_kopeks(user_balance - final_price),
-            ),
+            )
+            + switch_note,
             reply_markup=get_tariff_confirm_keyboard(
                 tariff_id, period, db_user.language, category=getattr(tariff, 'network_category', None)
             ),
@@ -1785,7 +1935,8 @@ async def select_tariff_period(
             + texts.t(
                 'TARIFF_PURCHASE_CART_SAVED_HINT',
                 '\n\n🛒 <i>Корзина сохранена! После пополнения баланса подписка будет оформлена автоматически.</i>',
-            ),
+            )
+            + switch_note,
             reply_markup=get_tariff_insufficient_balance_keyboard(
                 tariff_id,
                 period,
@@ -1958,6 +2109,18 @@ async def confirm_tariff_purchase(
 
     # Reuse existing_sub fetched above for device pricing
     existing_subscription = existing_sub
+
+    # Покупка ДРУГОГО сетевого тарифа поверх живой подписки — это смена тарифа:
+    # остаток дней сохраняется, а устройства сбрасываются только при уменьшении
+    # лимита. Старый тариф нужен ДО extend_subscription — она его переназначает.
+    from app.services.lte_quota_service import is_paid_tariff_switch
+
+    network_switch = bool(
+        existing_subscription
+        and not settings.is_multi_tariff_enabled()
+        and is_paid_tariff_switch(existing_subscription, tariff)
+    )
+    switch_from_tariff = await get_tariff_by_id(db, existing_subscription.tariff_id) if network_switch else None
 
     try:
         if settings.is_multi_tariff_enabled():
@@ -2188,6 +2351,11 @@ async def confirm_tariff_purchase(
             action='create' if _should_create else 'update',
         )
 
+    if network_switch and should_reset_devices_on_switch(switch_from_tariff, tariff):
+        # Без сброса панель оставила бы за клиентом уже подключённые устройства
+        # сверх нового, меньшего лимита — понижение тарифа ничего бы не меняло.
+        await _reset_panel_devices(db_user, subscription, reason='смена тарифа')
+
     # Создаем транзакцию
     try:
         await create_transaction(
@@ -2249,6 +2417,14 @@ async def confirm_tariff_purchase(
             devices=tariff.device_limit,
             period=format_period(period),
             price=format_price_kopeks(final_price),
+        )
+        + (
+            texts.t(
+                'TARIFF_PURCHASE_SWITCH_SUCCESS',
+                '\n🔄 Остаток прежнего тарифа сохранён: подписка действует до {date}.',
+            ).format(date=format_date(subscription.end_date))
+            if network_switch
+            else ''
         ),
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
@@ -3423,18 +3599,7 @@ async def show_tariff_switch_list(
     from app.services.donbaton_catalog import network_category
 
     if network_category(subscription):
-        await callback.message.edit_text(
-            'До окончания подписки можно продлить текущий тариф или докупить LTE. '
-            'Другой тариф можно выбрать после окончания подписки.',
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(text='Моя подписка', callback_data='menu_subscription'),
-                    ]
-                ]
-            ),
-        )
-        await callback.answer()
+        await _network_switch_stub(callback, texts)
         return
 
     # Истёкшая подписка: смены тарифа нет, предлагаем купить новый тариф с нуля
@@ -3859,9 +4024,14 @@ async def confirm_tariff_switch(
         await callback.answer(texts.t('NO_SUBSCRIPTION_ERROR', '❌ У вас нет активной подписки'), show_alert=True)
         return
 
+    # Исходный тариф нужен ДО продления: extend_subscription переназначает
+    # subscription.tariff_id, и правило сброса устройств сравнивало бы новый
+    # тариф сам с собой.
+    switch_from_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
+
     # Проверяем разрешение на смену в данном направлении
     if subscription.tariff_id and subscription.tariff_id != tariff_id:
-        cur_tariff_obj = await get_tariff_by_id(db, subscription.tariff_id)
+        cur_tariff_obj = switch_from_tariff
         if cur_tariff_obj:
             rem_days = remaining_days_for_switch(subscription.end_date)
             _, is_up = _calculate_instant_switch_cost(cur_tariff_obj, tariff, rem_days, db_user)
@@ -4000,7 +4170,7 @@ async def confirm_tariff_switch(
                 'Multi-tariff: subscription missing remnawave_id, using user fallback',
                 subscription_id=getattr(subscription, 'id', None),
             )
-        if _reset_panel_id:
+        if _reset_panel_id and should_reset_devices_on_switch(switch_from_tariff, tariff):
             try:
                 from app.services.remnawave_service import RemnaWaveService
 
@@ -4164,9 +4334,13 @@ async def confirm_daily_tariff_switch(
         await callback.answer(texts.t('NO_SUBSCRIPTION_ERROR', '❌ У вас нет активной подписки'), show_alert=True)
         return
 
+    # Исходный тариф нужен ДО продления: extend_subscription переназначает
+    # subscription.tariff_id.
+    switch_from_tariff_daily = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
+
     # Проверяем разрешение на смену в данном направлении
     if subscription.tariff_id and subscription.tariff_id != tariff_id:
-        cur_tariff_daily = await get_tariff_by_id(db, subscription.tariff_id)
+        cur_tariff_daily = switch_from_tariff_daily
         if cur_tariff_daily:
             rem_days = remaining_days_for_switch(subscription.end_date)
             _, is_up = _calculate_instant_switch_cost(cur_tariff_daily, tariff, rem_days, db_user)
@@ -4303,7 +4477,7 @@ async def confirm_daily_tariff_switch(
                 'Multi-tariff: subscription missing remnawave_id, using user fallback',
                 subscription_id=getattr(subscription, 'id', None),
             )
-        if _reset_panel_id_daily:
+        if _reset_panel_id_daily and should_reset_devices_on_switch(switch_from_tariff_daily, tariff):
             try:
                 from app.services.remnawave_service import RemnaWaveService
 
@@ -4609,18 +4783,7 @@ async def show_instant_switch_list(
     from app.services.donbaton_catalog import network_category
 
     if network_category(subscription):
-        await callback.message.edit_text(
-            'До окончания подписки можно продлить текущий тариф или докупить LTE. '
-            'Другой тариф можно выбрать после окончания подписки.',
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(text='Моя подписка', callback_data='menu_subscription'),
-                    ]
-                ]
-            ),
-        )
-        await callback.answer()
+        await _network_switch_stub(callback, texts)
         return
 
     if not subscription.tariff_id:
@@ -5284,7 +5447,7 @@ async def confirm_instant_switch(
                 'Multi-tariff: subscription missing remnawave_id, using user fallback',
                 subscription_id=getattr(subscription, 'id', None),
             )
-        if _reset_panel_id_instant:
+        if _reset_panel_id_instant and should_reset_devices_on_switch(current_tariff, new_tariff):
             try:
                 from app.services.remnawave_service import RemnaWaveService
 

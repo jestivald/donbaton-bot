@@ -1261,21 +1261,32 @@ def get_subscription_keyboard(
                     callback_data='subscription_settings',
                 )
             ]
+            _network_subscription = getattr(subscription, 'network_category', None) in ('wifi', 'wifi_lte')
+            _dead_subscription = getattr(subscription, 'actual_status', None) in ('expired', 'disabled')
+            # Живая сетевая подписка меняет тариф через витрину: смена — это
+            # обычная покупка нового тарифа на полный срок, а не переключение с
+            # доплатой (оно для этих категорий закрыто).
+            _network_switch = (
+                _network_subscription and not _dead_subscription and settings.DONBATON_TARIFF_SWITCH_ENABLED
+            )
             if (
                 settings.is_tariffs_mode()
                 and subscription
-                and (
-                    getattr(subscription, 'network_category', None) not in ('wifi', 'wifi_lte')
-                    or getattr(subscription, 'actual_status', None) in ('expired', 'disabled')
-                )
+                and (not _network_subscription or _dead_subscription or _network_switch)
             ):
                 # На истёкшей/отключённой подписке смена тарифа недоступна (хендлер её
                 # блокирует) — раньше кнопка «Тариф» всё равно показывалась и вела в тупик.
                 # Теперь для таких подписок показываем «Купить тариф» (покупку с нуля).
-                if getattr(subscription, 'actual_status', None) in ('expired', 'disabled'):
+                if _dead_subscription:
                     settings_row.append(
                         InlineKeyboardButton(
                             text=texts.t('BUY_TARIFF_BUTTON', '📦 Купить тариф'), callback_data='menu_buy'
+                        )
+                    )
+                elif _network_switch:
+                    settings_row.append(
+                        InlineKeyboardButton(
+                            text=texts.t('CHANGE_TARIFF_BUTTON', '📦 Тариф'), callback_data='tariff_list'
                         )
                     )
                 else:
