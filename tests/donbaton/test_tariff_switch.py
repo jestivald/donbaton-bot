@@ -17,10 +17,12 @@ from fastapi import HTTPException
 
 from app.cabinet.routes.subscription_modules import purchase as cabinet_purchase, tariff_switch as cabinet_switch
 from app.cabinet.schemas.subscription import TariffPurchaseRequest
-from app.config import settings
+from app.config import Settings, settings
 from app.database.crud import subscription as subscription_crud, user as user_crud
 from app.database.crud.subscription import extend_subscription
 from app.database.models import LavaSubscription, SentNotification, Subscription, Tariff, User
+from app.keyboards import inline as keyboards
+from app.services.donbaton_catalog import validate_user_tariff_purchase
 from app.services.lte_quota_service import (
     GIB,
     LtePolicyError,
@@ -30,6 +32,7 @@ from app.services.lte_quota_service import (
     is_paid_tariff_switch,
     update_entitlement,
 )
+from app.services.pricing_engine import PricingEngine
 from app.services.tariff_switch_policy import should_reset_devices_on_switch
 from app.webapi.routes import miniapp
 from app.webapi.schemas.miniapp import MiniAppTariffSwitchRequest
@@ -338,6 +341,63 @@ async def test_only_a_live_paid_subscription_switches(status, monkeypatch):
         sub.status = status
         sub.is_trial = status == 'trial'
         assert is_paid_tariff_switch(sub, plans[10]) is False
+
+
+# --------------------------------------------------------------------------- #
+# Путь покупки в боте
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('enabled', [True, False])
+async def test_bot_checkout_quotes_the_full_period_price_for_another_plan(enabled, monkeypatch):
+    """Все замки на пути `tariff_select:` → период → `tariff_confirm:` сняты разом.
+
+    Котировка и предоплатный гвард — разные точки входа в одну политику; если бы
+    открылась только одна, клиент увидел бы цену и получил отказ после списания.
+    """
+    monkeypatch.setattr(settings, 'DONBATON_TARIFF_SWITCH_ENABLED', enabled)
+    monkeypatch.setattr(PricingEngine, 'resolve_promo_group', staticmethod(lambda user: None))
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, plans = await seed(db)
+        user = await db.get(User, sub.user_id)
+        if not enabled:
+            with pytest.raises(LtePolicyError, match='после окончания подписки'):
+                await PricingEngine().calculate_tariff_purchase_price(plans[10], 30, user=user, db=db, subscription=sub)
+            with pytest.raises(LtePolicyError, match='после окончания подписки'):
+                await validate_user_tariff_purchase(db, user, plans[10])
+            return
+        quote = await PricingEngine().calculate_tariff_purchase_price(plans[10], 30, user=user, db=db, subscription=sub)
+        # Полная цена периода — ни пропорции за остаток, ни скидки за смену.
+        assert quote.final_total == 29900
+        await validate_user_tariff_purchase(db, user, plans[10])
+
+
+def test_live_network_subscription_gets_the_catalogue_button(monkeypatch):
+    monkeypatch.setattr(Settings, 'is_tariffs_mode', lambda self: True)
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(keyboards, 'get_display_subscription_link', lambda sub: None)
+    live = SimpleNamespace(
+        id=1,
+        actual_status='active',
+        status='active',
+        network_category='wifi_lte',
+        tariff=None,
+        traffic_limit_gb=0,
+        end_date=None,
+        is_daily_paused=False,
+    )
+
+    markup = keyboards.get_subscription_keyboard('ru', has_subscription=True, is_trial=False, subscription=live)
+    callbacks = [button.callback_data for row in markup.inline_keyboard for button in row if button.callback_data]
+    # Витрина, а не мгновенное переключение: у сетевых тарифов его нет.
+    assert 'tariff_list' in callbacks
+    assert 'instant_switch' not in callbacks and 'tariff_switch' not in callbacks
+
+    monkeypatch.setattr(settings, 'DONBATON_TARIFF_SWITCH_ENABLED', False)
+    off = keyboards.get_subscription_keyboard('ru', has_subscription=True, is_trial=False, subscription=live)
+    off_callbacks = [button.callback_data for row in off.inline_keyboard for button in row if button.callback_data]
+    assert 'tariff_list' not in off_callbacks
 
 
 # --------------------------------------------------------------------------- #
