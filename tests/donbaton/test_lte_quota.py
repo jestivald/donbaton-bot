@@ -207,6 +207,10 @@ async def test_topup_validity_survives_period_rollover_and_expired_activation(mo
             traffic_topup_enabled=False,
             traffic_topup_packages={},
         )
+        # Правило смены сетевых тарифов выключено — прежний запрет в силе. Его
+        # включённое поведение живёт в tests/donbaton/test_tariff_switch.py;
+        # флаг закреплён здесь, чтобы смена прод-дефолта не переписала смысл теста.
+        monkeypatch.setattr(settings, 'DONBATON_TARIFF_SWITCH_ENABLED', False)
         with pytest.raises(LtePolicyError, match='после окончания'):
             await update_entitlement(db, sub, wifi, now=NOW + timedelta(days=31))
         sub.end_date = NOW - timedelta(seconds=1)

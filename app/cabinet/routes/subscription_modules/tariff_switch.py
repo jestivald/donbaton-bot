@@ -146,6 +146,8 @@ async def preview_tariff_switch(
             detail='Already on this tariff',
         )
 
+    _reject_network_switch(subscription, new_tariff)
+
     if settings.TARIFF_SWITCH_RESET_FREE_DAYS and current_tariff is not None and current_tariff.is_free:
         # A free (0₽) tariff has no paid value to prorate from — the prorated switch
         # would quote the full new-tariff rate for the whole (often huge) free
@@ -172,8 +174,6 @@ async def preview_tariff_switch(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='Tariff not available for your promo group',
         )
-
-    _reject_network_switch(subscription, new_tariff)
 
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
@@ -321,6 +321,8 @@ async def switch_tariff(
             detail='Already on this tariff',
         )
 
+    _reject_network_switch(subscription, new_tariff)
+
     if settings.TARIFF_SWITCH_RESET_FREE_DAYS and current_tariff is not None and current_tariff.is_free:
         # Same guard as in preview: free (0₽) source tariffs must go through the
         # purchase flow — prorated switching would charge for and carry the whole
@@ -350,8 +352,6 @@ async def switch_tariff(
     from app.database.crud.user import lock_user_for_pricing
 
     user = await lock_user_for_pricing(db, user.id)
-
-    _reject_network_switch(subscription, new_tariff)
 
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
