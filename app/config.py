@@ -96,6 +96,13 @@ class Settings(BaseSettings):
     # 0 keeps the strict behaviour; a positive window trusts the last valid
     # proof for that long, at the price of unconfirmed accounting meanwhile.
     DONBATON_LTE_TELEMETRY_GRACE_SECONDS: int = Field(0, ge=0, le=3600)
+    # Смена сетевого тарифа при живой подписке = покупка нового тарифа на полный
+    # срок по обычной цене: остаток дней текущего тарифа сохраняется и
+    # добавляется к новому сроку, условия нового тарифа действуют сразу.
+    # Никакой доплаты и пропорции — мгновенное переключение с доплатой для этих
+    # категорий остаётся закрытым. Выключено — прежний запрет «другой тариф
+    # можно выбрать после окончания подписки».
+    DONBATON_TARIFF_SWITCH_ENABLED: bool = False
 
     BOT_TOKEN: str
     BOT_USERNAME: str | None = None

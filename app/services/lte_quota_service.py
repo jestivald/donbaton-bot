@@ -266,6 +266,33 @@ def validate_tariff_for_sale(tariff) -> None:
         raise LtePolicyError('В тарифе Wi-Fi не должно быть включённого LTE-пакета')
 
 
+#: Текст правила владельца: смена сетевого тарифа — это обычная покупка.
+TARIFF_SWITCH_AS_PURCHASE = (
+    'Смена тарифа Wi-Fi / Wi-Fi + LTE — это покупка нового тарифа на полный срок: '
+    'оставшиеся дни текущего тарифа сохраняются и добавляются к новому сроку.'
+)
+
+
+def is_paid_tariff_switch(subscription, tariff) -> bool:
+    """Покупка ДРУГОГО сетевого тарифа поверх живой сетевой подписки.
+
+    Модель владельца: доплаты и пропорции нет — клиент покупает новый тариф на
+    полный период по обычной цене, остаток текущего срока сохраняется и
+    добавляется к новому (``extend_subscription``, ветка ``is_tariff_change``).
+    Разрешено только для пары «управляемый → управляемый»: legacy↔managed
+    по-прежнему требует явной миграции, а пробная подписка платного остатка не
+    имеет.
+    """
+    return bool(
+        settings.DONBATON_TARIFF_SWITCH_ENABLED
+        and is_managed(subscription)
+        and getattr(tariff, 'network_category', None) in NETWORK_CATEGORIES
+        and not getattr(subscription, 'is_trial', False)
+        and getattr(subscription, 'status', None) == 'active'
+        and getattr(subscription, 'tariff_id', None) != getattr(tariff, 'id', None)
+    )
+
+
 def validate_subscription_transition(subscription, tariff) -> None:
     """Paid legacy balances need an explicit migration, never an implicit switch."""
     target_managed = getattr(tariff, 'network_category', None) in NETWORK_CATEGORIES
@@ -276,6 +303,7 @@ def validate_subscription_transition(subscription, tariff) -> None:
         and getattr(subscription, 'status', None) in ('active', 'trial', 'limited')
         and getattr(subscription, 'end_date', None)
         and _now(subscription.end_date) > datetime.now(UTC)
+        and not is_paid_tariff_switch(subscription, tariff)
     ):
         raise LtePolicyError(
             'До окончания подписки можно продлить текущий тариф или докупить LTE. '
@@ -890,9 +918,10 @@ async def update_entitlement(db, subscription, tariff, *, now=None):
         return None
     quota = await initialize_quota(db, subscription, tariff, now=now)
     validate_subscription_transition(subscription, tariff)
-    # Active paid tariff changes are rejected above. Trial conversion and
-    # same-tariff updates preserve the current period; a paid activation
-    # after expiry establishes a new period below.
+    switching = is_paid_tariff_switch(subscription, tariff)
+    # A paid switch of a live subscription is handled separately below. Trial
+    # conversion and same-tariff updates preserve the current period; a paid
+    # activation after expiry establishes a new period.
     subscription.network_category = tariff.network_category
     subscription.traffic_limit_gb = 0
     now = _now(now)
@@ -922,8 +951,73 @@ async def update_entitlement(db, subscription, tariff, *, now=None):
         if quota.accounting_state not in ('identity_changed', 'epoch_mismatch', 'regressed'):
             quota.accounting_state = 'pending'
         return quota
+    if switching:
+        return _switch_entitlement(quota, subscription, tariff)
     quota.next_limit_bytes = (tariff.lte_traffic_limit_gb or 0) * GIB
     return quota
+
+
+def _switch_entitlement(quota, subscription, tariff):
+    """New plan terms start now; the paid remainder of the cycle is not reset.
+
+    The owner's rule is a purchase, not a proration: the customer pays the full
+    price of the new plan, so its LTE allowance applies to the running cycle at
+    once — an upgrade tops the cycle up by the difference, a downgrade cuts it.
+    ``pending_period`` deliberately stays unused here: it zeroes usage, and a
+    9 → 10 → 9 loop would mint free bytes every hop.
+    """
+    limit_bytes = (tariff.lte_traffic_limit_gb or 0) * GIB
+    subscription.device_limit = tariff.device_limit
+    state = quota.legacy_state
+    if state and not state['runtime']['base_ended']:
+        # Old terms are paid until original_paid_until: the new allowance takes
+        # over at that boundary (advance_period reads target_limit_bytes), while
+        # devices change at once through apply_panel_policy's max() below.
+        # legacy_state is plain JSON without MutableDict — mutate a copy.
+        updated = deepcopy(state)
+        updated['target_limit_bytes'] = limit_bytes
+        updated['target_tariff_id'] = tariff.id
+        updated['target_device_limit'] = tariff.device_limit or 0
+        quota.legacy_state = updated
+        return quota
+    quota.limit_bytes = limit_bytes
+    quota.next_limit_bytes = limit_bytes
+    return quota
+
+
+async def describe_tariff_switch(db, subscription, tariff, *, now=None) -> dict:
+    """What the customer actually gets when buying another managed plan.
+
+    One description for every surface: the bot confirmation screens, the
+    cabinet and the Mini App must not each invent their own answer to "when
+    does the new LTE allowance start" — in the legacy compatibility window it
+    starts at the old paid end, everywhere else immediately.
+    """
+    from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_devices_on_switch
+
+    now = _now(now)
+    current = await db.get(Tariff, subscription.tariff_id) if getattr(subscription, 'tariff_id', None) else None
+    quota = await _quota(db, subscription)
+    state = getattr(quota, 'legacy_state', None)
+    legacy_until = legacy_compatibility_end(state) if state and not state['runtime']['base_ended'] else None
+    if legacy_until is not None and legacy_until <= now:
+        legacy_until = None
+    limit_gb = int(getattr(tariff, 'lte_traffic_limit_gb', None) or 0)
+    device_limit = int(getattr(tariff, 'device_limit', None) or 0)
+    if legacy_until is not None:
+        device_limit = max(device_limit, legacy_device_limit(state))
+    return {
+        'mode': 'after_legacy' if legacy_until is not None else 'immediate',
+        'current_category': getattr(subscription, 'network_category', None),
+        'new_category': getattr(tariff, 'network_category', None),
+        'device_limit_now': device_limit,
+        'devices_reset': should_reset_devices_on_switch(current, tariff),
+        'lte_limit_gb_now': None if legacy_until is not None else limit_gb,
+        'lte_limit_gb_next': limit_gb,
+        'lte_effective_at': legacy_until.isoformat() if legacy_until is not None else None,
+        'legacy_until': legacy_until.isoformat() if legacy_until is not None else None,
+        'remaining_days': remaining_days_for_switch(getattr(subscription, 'end_date', None), now),
+    }
 
 
 async def credit_topup(db, subscription, *, bytes_amount, operation_id, now=None, valid_days=30):
@@ -1030,7 +1124,11 @@ async def apply_panel_policy(db, subscription, payload, *, panel_user=None, now=
             paid_until=subscription.end_date,
         )
     if quota.legacy_state and now < legacy_compatibility_end(quota.legacy_state):
-        subscription.device_limit = legacy_device_limit(quota.legacy_state)
+        # Inside the compatibility window the panel keeps the rights actually
+        # paid for. A plan bought during that window raises devices at once and
+        # never takes away what the old terms already granted.
+        target_devices = quota.legacy_state.get('target_device_limit') or 0
+        subscription.device_limit = max(legacy_device_limit(quota.legacy_state), target_devices)
         result['hwid_device_limit'] = subscription.device_limit
     status = await _with_telemetry_status(_status(quota, topups, now), now=now, heartbeat=heartbeat)
     subscription._lte_quota_status = status

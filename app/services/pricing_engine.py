@@ -255,15 +255,16 @@ class PricingEngine:
         Для всех типов переключений скидки (group + offer) применяются stacked.
         """
         from app.services.donbaton_catalog import network_category
-        from app.services.lte_quota_service import LtePolicyError, validate_tariff_for_sale
+        from app.services.lte_quota_service import TARIFF_SWITCH_AS_PURCHASE, LtePolicyError, validate_tariff_for_sale
 
         if network_category(new_tariff):
             validate_tariff_for_sale(new_tariff)
         if network_category(current_tariff) or network_category(new_tariff):
-            raise LtePolicyError(
-                'До окончания подписки можно продлить текущий тариф или докупить LTE. '
-                'Другой тариф можно выбрать после окончания подписки.'
-            )
+            # Мгновенное переключение с пропорциональной доплатой для сетевых
+            # категорий не продаётся: по решению владельца смена — это покупка
+            # нового тарифа на полный срок, и её считает
+            # calculate_tariff_purchase_price. Отказ ведёт клиента в витрину.
+            raise LtePolicyError(TARIFF_SWITCH_AS_PURCHASE)
         current_is_daily = getattr(current_tariff, 'is_daily', False) if current_tariff else False
         new_is_daily = getattr(new_tariff, 'is_daily', False)
 

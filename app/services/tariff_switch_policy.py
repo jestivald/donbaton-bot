@@ -60,3 +60,23 @@ def should_reset_used_traffic(upgrade_cost_kopeks: int) -> bool:
     if not settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
         return False
     return upgrade_cost_kopeks > 0
+
+
+def should_reset_devices_on_switch(old_tariff, new_tariff) -> bool:
+    """Сбрасывать ли подключённые устройства при смене тарифа.
+
+    Апстрим сбрасывает всегда: раньше смена тарифа была единственным способом
+    поменять лимит устройств, и сброс гарантировал, что старые HWID не переживут
+    понижение. Для сетевых тарифов (Wi-Fi / Wi-Fi + LTE) смена стала обычной
+    покупкой, и сброс при ПОВЫШЕНИИ лимита — чистый вред: клиент заплатил больше
+    и в благодарность переподключает все устройства заново.
+
+    Поэтому для пары «сетевой → сетевой» сбрасываем только при уменьшении
+    лимита — иначе панель оставила бы за клиентом больше устройств, чем он
+    оплатил. Все остальные пары ведут себя как в апстриме.
+    """
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(old_tariff) and network_category(new_tariff):
+        return (getattr(new_tariff, 'device_limit', None) or 0) < (getattr(old_tariff, 'device_limit', None) or 0)
+    return True
