@@ -130,6 +130,9 @@ class SubscriptionService:
     def __init__(self):
         self._config_error: str | None = None
         self.api: RemnaWaveAPI | None = None
+        # Параметры клиента панели: get_api_client() собирает по ним СВОЙ экземпляр
+        # на каждый вызов. Общий self.api для этого не годится — см. get_api_client().
+        self._api_kwargs: dict | None = None
         self._last_config_signature: tuple[str, ...] | None = None
 
         self._refresh_configuration()
@@ -160,20 +163,26 @@ class SubscriptionService:
         if not base_url:
             self._config_error = 'REMNAWAVE_API_URL не настроен'
             self.api = None
+            self._api_kwargs = None
         elif not api_key:
             self._config_error = 'REMNAWAVE_API_KEY не настроен'
             self.api = None
+            self._api_kwargs = None
         else:
             self._config_error = None
-            self.api = RemnaWaveAPI(
-                base_url=base_url,
-                api_key=api_key,
-                secret_key=secret_key,
-                username=username,
-                password=password,
-                caddy_token=caddy_token,
-                auth_type=auth_type,
-            )
+            self._api_kwargs = {
+                'base_url': base_url,
+                'api_key': api_key,
+                'secret_key': secret_key,
+                'username': username,
+                'password': password,
+                'caddy_token': caddy_token,
+                'auth_type': auth_type,
+            }
+            # Остаётся как признак «панель настроена» для _ensure_configured и
+            # внешних читателей. Работать через него НЕЛЬЗЯ: сессию открывает и
+            # закрывает только экземпляр, созданный в get_api_client().
+            self.api = RemnaWaveAPI(**self._api_kwargs)
 
         if self._config_error:
             logger.warning(
@@ -205,9 +214,28 @@ class SubscriptionService:
 
     @asynccontextmanager
     async def get_api_client(self):
+        """Свой экземпляр клиента панели на каждый вызов.
+
+        Общий ``self.api`` здесь был боевым багом: ``RemnaWaveAPI.__aenter__``
+        ПЕРЕЗАПИСЫВАЕТ ``self.session``, а ``__aexit__`` её закрывает — счётчика
+        входов у клиента нет. ``MonitoringService`` держит ОДИН экземпляр этого
+        сервиса и отдаёт его сразу двум своим задачам: ``_lte_loop`` передаёт его
+        в ``run_quota_cycle``, который держит клиента открытым на весь
+        ``asyncio.gather`` по сотням подписок, а ``_monitoring_cycle`` из
+        соседней корутины идёт тем же сервисом в панель. 12.09.2026 в 12:18 UTC
+        автопродление подписки (``_process_autopayments`` →
+        ``update_remnawave_user``) вышло из своего ``async with`` и закрыло сессию
+        под живым циклом квот: 744 ``RuntimeError: Session is closed`` за три
+        минуты. До 09:06 того же дня цикл был слишком коротким, чтобы попасть под
+        раздачу; смерть origin-бокса раздула выборку до 620 подписок — и окно
+        пересечения открылось.
+
+        ``RemnaWaveService.get_api_client`` починили так же и по той же причине.
+        """
         self._ensure_configured()
-        assert self.api is not None
-        async with self.api as api:
+        assert self._api_kwargs is not None
+        api = RemnaWaveAPI(**self._api_kwargs)
+        async with api:
             yield api
 
     async def sync_remnawave_user(

@@ -3812,6 +3812,9 @@
 - `tests/services/test_admin_notification_username_links.py` — Python-модуль
   Классы: нет
   Функции: `test_referrer_info_links_the_referrer_username` — Реферер в уведомлении о пополнении — та же ссылка, что и у плательщика., `test_referrer_info_keeps_non_telegram_login_as_text` — OAuth-логин из кабинета не является Telegram-логином — ссылки быть не должно., `test_referrer_info_without_username_falls_back_to_id` — Без логина остаётся прежний вид — идентификатор, без пустой ссылки., `test_new_ticket_notification_links_username` — Текст уведомления о новом тикете содержит ссылку, а не голый @логин., `test_new_ticket_notification_without_username_has_no_stray_at` — Без логина строка остаётся текстом-заглушкой, без осиротевшей собаки.
+- `tests/services/test_api_client_session_isolation.py` — Python-модуль
+  Классы: нет
+  Функции: `configured` — Минимально настроенная панель: сеть не нужна, нужен только валидный конфиг., `test_inner_client_exit_does_not_close_outer_session` — Вложенный клиент закрылся — внешний всё ещё делает запросы., `test_quota_cycle_survives_parallel_monitoring_pass` — Боевая расстановка: долгий цикл квот и короткий проход мониторинга рядом., `test_each_call_yields_its_own_client` — Каждый вызов — свой экземпляр и своя сессия, и обе закрываются за собой.
 - `tests/services/test_apple_iap_reconciliation_service.py` — Python-модуль
   Классы: нет
   Функции: `anyio_backend`, `test_lookup_delegates_to_support_query`, `test_reconcile_recent_transactions_flags_drift_and_counts_backlog`
