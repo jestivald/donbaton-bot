@@ -99,6 +99,20 @@ async def test_unknown_account_is_created():
 
 
 @pytest.mark.asyncio
+async def test_create_is_refused_when_the_caller_forbade_it():
+    """Узкая правка админа и fallback на пользовательский аккаунт чинят существующий
+    аккаунт, а не заводят соседний: флаг объявлялся с 4.8.0, но до 13.09.2026 не читался."""
+    api = _api()
+
+    result = await push_subscription(api, _user(), _sub(), multi_tariff=True, create_if_missing=False, now=NOW)
+
+    assert result.action == 'no_changes'
+    assert result.panel_user is None
+    api.create_user.assert_not_awaited()
+    api.update_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_panel_says_user_is_gone_so_it_is_recreated():
     """Протухший id в базе не должен ронять синхронизацию."""
     api = _api(get_user_by_id=_panel_user())

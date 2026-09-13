@@ -451,9 +451,9 @@ async def test_selected_sync_uses_only_selected_panel_id_when_legacy_mode_is_ena
     assert user.remnawave_id == LEGACY_USER_PANEL_ID
 
 
-async def test_selected_sync_with_no_panel_link_does_not_substitute_legacy_identity(monkeypatch):
-    """A null selected link must cause no panel access, even in legacy mode."""
-    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
+async def test_selected_sync_stays_fail_closed_in_multi_tariff(monkeypatch):
+    """В мультитарифе пользовательский аккаунт — чужая подписка: без id панель не трогаем."""
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
     user = SimpleNamespace(id=OWNER_ID, remnawave_id=LEGACY_USER_PANEL_ID)
     subscription = SimpleNamespace(id=OWNED_ID, remnawave_id=None)
     db = AsyncMock()
@@ -462,6 +462,150 @@ async def test_selected_sync_with_no_panel_link_does_not_substitute_legacy_ident
 
     assert result == {'skipped': True, 'reason': 'Selected subscription has no panel user id'}
     db.commit.assert_not_awaited()
+
+
+async def test_selected_sync_stays_fail_closed_when_a_sibling_owns_the_panel_account(monkeypatch):
+    """Соседняя строка подписок уже держит аккаунт пользователя — переписать её нельзя."""
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr('app.services.subscription_service.panel_id_is_free_for', AsyncMock(return_value=False))
+    user = SimpleNamespace(id=OWNER_ID, remnawave_id=LEGACY_USER_PANEL_ID)
+    subscription = SimpleNamespace(id=OWNED_ID, remnawave_id=None)
+    db = AsyncMock()
+
+    result = await admin_users._sync_subscription_to_panel(db, user, subscription, pinned_subscription_identity=True)
+
+    assert result == {'skipped': True, 'reason': 'Selected subscription has no panel user id'}
+    db.commit.assert_not_awaited()
+
+
+def _legacy_panel_doubles(monkeypatch, *, found: bool):
+    """Двойники панели для fallback-ветки: аккаунт пользователя либо есть, либо исчез."""
+    looked_up: list[int] = []
+    updated: list[int] = []
+
+    class Api:
+        async def get_user_by_id(self, panel_user_id):
+            looked_up.append(panel_user_id)
+            return SimpleNamespace(id=panel_user_id) if found else None
+
+        async def get_user_by_short_uuid(self, _short_uuid):
+            return None
+
+        async def find_users_by_telegram_id(self, _telegram_id):
+            return []
+
+        async def find_users_by_email(self, _email):
+            return []
+
+    class Service:
+        is_configured = True
+
+        def get_api_client(self):
+            context = MagicMock()
+            context.__aenter__ = AsyncMock(return_value=Api())
+            context.__aexit__ = AsyncMock(return_value=None)
+            return context
+
+    async def update_panel_user(_api, _subscription_id, **kwargs):
+        updated.append(kwargs['user_id'])
+        return SimpleNamespace(
+            subscription_url='https://legacy.example/sub',
+            happ_crypto_link='crypto',
+            short_uuid='short',
+        )
+
+    created = AsyncMock()
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr('app.services.subscription_service.panel_id_is_free_for', AsyncMock(return_value=True))
+    monkeypatch.setattr('app.services.remnawave_service.RemnaWaveService', Service)
+    monkeypatch.setattr('app.services.grace_access_runtime.update_panel_user_grace_safe', update_panel_user)
+    monkeypatch.setattr('app.services.grace_access_runtime.create_panel_user_grace_safe', created)
+    monkeypatch.setattr('app.services.subscription_service.get_traffic_reset_strategy', lambda _tariff: 'NO_RESET')
+    monkeypatch.setattr('app.utils.subscription_utils.resolve_hwid_device_limit_for_payload', lambda _sub: None)
+    user = SimpleNamespace(
+        id=OWNER_ID,
+        full_name='Owner',
+        username=None,
+        telegram_id=1000,
+        email=None,
+        remnawave_id=LEGACY_USER_PANEL_ID,
+        last_remnawave_sync=None,
+    )
+    subscription = SimpleNamespace(
+        id=OWNED_ID,
+        status='active',
+        end_date=datetime.now(UTC) + timedelta(days=30),
+        remnawave_id=None,
+        remnawave_short_id=None,
+        traffic_limit_gb=10,
+        tariff=None,
+        connected_squads=[],
+        device_limit=1,
+        subscription_url=None,
+        subscription_crypto_link=None,
+        remnawave_short_uuid=None,
+    )
+    return user, subscription, looked_up, updated, created
+
+
+async def test_selected_sync_adopts_the_single_tariff_user_account(monkeypatch):
+    """Одиночный режим, соседей нет: пустой id подписки — норма, адресуем аккаунт пользователя.
+
+    Регресс 13.09.2026: «продлить на 30 дней» из админки кабинета молча не доезжало до
+    панели у строк, переехавших миграцией (subscriptions.remnawave_id пуст у 95 % базы).
+    """
+    user, subscription, looked_up, updated, created = _legacy_panel_doubles(monkeypatch, found=True)
+    db = AsyncMock()
+
+    changes = await admin_users._sync_subscription_to_panel(db, user, subscription, pinned_subscription_identity=True)
+
+    assert changes.get('action') == 'updated'
+    assert looked_up == [LEGACY_USER_PANEL_ID]
+    assert updated == [LEGACY_USER_PANEL_ID]
+    created.assert_not_awaited()
+    # Связь записана — второй раз fallback уже не понадобится.
+    assert subscription.remnawave_id == LEGACY_USER_PANEL_ID
+    assert user.remnawave_id == LEGACY_USER_PANEL_ID
+    db.commit.assert_awaited_once()
+
+
+async def test_fallback_never_creates_a_panel_account(monkeypatch):
+    """Аккаунт пользователя в панели исчез: «продлить» не заводит второй аккаунт рядом с живым."""
+    user, subscription, looked_up, updated, created = _legacy_panel_doubles(monkeypatch, found=False)
+    db = AsyncMock()
+
+    changes = await admin_users._sync_subscription_to_panel(db, user, subscription, pinned_subscription_identity=True)
+
+    assert changes.get('action') == 'no_changes'
+    assert looked_up == [LEGACY_USER_PANEL_ID]
+    assert updated == []
+    created.assert_not_awaited()
+    assert subscription.remnawave_id is None
+    assert admin_users._panel_sync_note(changes) == ' (panel NOT updated: panel account not found)'
+
+
+async def test_extend_reports_a_skipped_panel_sync_to_the_admin(monkeypatch, ownership_boundary, owned_subscription):
+    """Пропуск синка больше не маскируется под «Subscription extended»."""
+    monkeypatch.setattr(admin_users, 'extend_subscription', AsyncMock())
+    monkeypatch.setattr(
+        admin_users,
+        '_sync_subscription_to_panel',
+        AsyncMock(return_value={'skipped': True, 'reason': 'Selected subscription has no panel user id'}),
+    )
+    monkeypatch.setattr(admin_users, '_build_subscription_info_async', AsyncMock(return_value=None))
+
+    result = await admin_users.update_user_subscription(
+        OWNER_ID,
+        UpdateSubscriptionRequest(action='extend', subscription_id=OWNED_ID, days=30),
+        admin=SimpleNamespace(id=1),
+        db=AsyncMock(),
+    )
+
+    assert result.success is True
+    assert (
+        result.message
+        == 'Subscription extended by 30 days (panel NOT updated: Selected subscription has no panel user id)'
+    )
 
 
 async def test_selected_devices_return_selected_subscription_device_limit(monkeypatch, panel_service):
@@ -509,9 +653,12 @@ async def test_selected_reset_returns_unsuccessful_when_panel_deactivation_fails
     reset_subscription.assert_not_awaited()
 
 
-async def test_selected_reset_without_link_does_not_substitute_legacy_identity(
+async def test_selected_reset_without_link_adopts_the_single_tariff_user_account(
     monkeypatch, ownership_boundary, owned_subscription
 ):
+    """Одиночный режим и свободный аккаунт пользователя — сброс выключает именно его."""
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr('app.services.subscription_service.panel_id_is_free_for', AsyncMock(return_value=True))
     ownership_boundary.remnawave_id = LEGACY_USER_PANEL_ID
     owned_subscription.remnawave_id = None
     panel_disable = AsyncMock(return_value=True)
@@ -530,8 +677,35 @@ async def test_selected_reset_without_link_does_not_substitute_legacy_identity(
     )
 
     assert result.success is True
-    panel_disable.assert_not_awaited()
+    panel_disable.assert_awaited_once_with(LEGACY_USER_PANEL_ID)
     reset_subscription.assert_awaited_once()
+
+
+async def test_selected_reset_without_any_panel_address_does_not_report_success(
+    monkeypatch, ownership_boundary, owned_subscription
+):
+    """Нет адреса панели — нет сброса: раньше панель не трогали и отвечали успехом."""
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
+    ownership_boundary.remnawave_id = LEGACY_USER_PANEL_ID
+    owned_subscription.remnawave_id = None
+    panel_disable = AsyncMock(return_value=True)
+    reset_subscription = AsyncMock()
+    monkeypatch.setattr('app.services.subscription_service.SubscriptionService.disable_remnawave_user', panel_disable)
+    monkeypatch.setattr('app.database.crud.subscription.reset_subscription', reset_subscription)
+    monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock())
+    monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock())
+    monkeypatch.setattr(admin_users, '_build_subscription_info_async', AsyncMock(return_value=None))
+
+    result = await admin_users.update_user_subscription(
+        OWNER_ID,
+        UpdateSubscriptionRequest(action='reset', subscription_id=OWNED_ID),
+        admin=SimpleNamespace(id=1),
+        db=AsyncMock(),
+    )
+
+    assert result.success is False
+    panel_disable.assert_not_awaited()
+    reset_subscription.assert_not_awaited()
 
 
 async def test_selected_reset_cancels_both_recurring_bindings(monkeypatch, ownership_boundary, owned_subscription):

@@ -340,6 +340,47 @@ async def _build_subscription_info_async(db: AsyncSession, subscription: Subscri
     return info
 
 
+def _panel_sync_note(sync_result) -> str:
+    """Хвост к ответу админу: «продлил» ещё не значит «в панели изменилось».
+
+    ``_sync_subscription_to_panel`` не бросает исключений — пропуск и ошибка приходят
+    словарём, а ветки действий раньше его не смотрели и отвечали ``success=True``.
+    """
+    if not isinstance(sync_result, dict):
+        return ''
+    if sync_result.get('skipped') or sync_result.get('error'):
+        reason = sync_result.get('reason') or sync_result.get('error') or 'unknown'
+        return f' (panel NOT updated: {reason})'
+    if sync_result.get('action') == 'no_changes':
+        return ' (panel NOT updated: panel account not found)'
+    return ''
+
+
+async def _adoptable_user_panel_id(db: AsyncSession, user: User, subscription: Subscription) -> int | None:
+    """Панельный аккаунт пользователя, которым можно адресовать выбранную подписку без id.
+
+    В одиночном режиме тарифов пустой ``subscriptions.remnawave_id`` — норма, а не
+    отсутствие связи: адрес панели живёт на ``users.remnawave_id``, подписочную колонку
+    заполняет ``link_subscription_panel_identity`` уже ПОСЛЕ первой удачной записи
+    (см. ``subscription_service``). У строк, переехавших миграцией, и у пересозданных
+    строк она пуста — и админское «продлить» молча не доезжало до панели.
+
+    Подставлять пользовательский аккаунт можно ровно тогда, когда режим одиночный и
+    этот аккаунт не держит СОСЕДНЯЯ строка подписок: иначе мы переписали бы её срок
+    и сквады (в мультитарифе — вообще чужую подписку).
+    """
+    if settings.is_multi_tariff_enabled():
+        return None
+    panel_id = getattr(user, 'remnawave_id', None)
+    if not panel_id:
+        return None
+    from app.services.subscription_service import panel_id_is_free_for
+
+    if not await panel_id_is_free_for(db, subscription, panel_id):
+        return None
+    return int(panel_id)
+
+
 async def _sync_subscription_to_panel(
     db: AsyncSession,
     user: User,
@@ -355,20 +396,35 @@ async def _sync_subscription_to_panel(
     кабинета: грейс-безопасные обёртки записи, сброс трафика по требованию
     админа и словарь изменений для ответа ручки.
     """
+    effective_pinned = pinned_subscription_identity
+    adopted_user_identity = False
     if pinned_subscription_identity and not subscription.remnawave_id:
         # Fail-closed по задумке: подменять личность выбранной подписки пользовательским
-        # идентификатором нельзя. Но вызывающие результат не смотрят и отвечают админу
-        # success=True, поэтому без лога «продлил, а в панели не изменилось»
-        # диагностировать нечем.
-        logger.warning(
-            'Skipped panel sync: selected subscription has no panel user id',
-            user_id=getattr(user, 'id', None),
-            subscription_id=getattr(subscription, 'id', None),
-        )
-        return {'skipped': True, 'reason': 'Selected subscription has no panel user id'}
+        # идентификатором нельзя — в мультитарифе это чужая подписка, а в одиночном
+        # режиме может быть соседняя строка того же человека. Единственное исключение —
+        # одиночный режим и свободный аккаунт пользователя (см. _adoptable_user_panel_id):
+        # 13.09.2026 именно на этом «продлить на 30 дней» из админки не доехало до панели.
+        adoptable_panel_id = await _adoptable_user_panel_id(db, user, subscription)
+        if adoptable_panel_id:
+            effective_pinned = False
+            adopted_user_identity = True
+            logger.info(
+                'Selected subscription has no panel id; addressing the single-tariff user account',
+                user_id=getattr(user, 'id', None),
+                subscription_id=getattr(subscription, 'id', None),
+                panel_user_id=adoptable_panel_id,
+            )
+        else:
+            # Вызывающие результат не смотрят и отвечают админу success=True, поэтому
+            # без лога «продлил, а в панели не изменилось» диагностировать нечем.
+            logger.warning(
+                'Skipped panel sync: selected subscription has no panel user id',
+                user_id=getattr(user, 'id', None),
+                subscription_id=getattr(subscription, 'id', None),
+            )
+            return {'skipped': True, 'reason': 'Selected subscription has no panel user id'}
 
     try:
-        from app.config import settings
         from app.services.grace_access_runtime import (
             create_panel_user_grace_safe,
             update_panel_user_grace_safe,
@@ -395,8 +451,12 @@ async def _sync_subscription_to_panel(
                 user,
                 subscription,
                 db=db,
-                multi_tariff=pinned_subscription_identity or settings.is_multi_tariff_enabled(),
-                pinned=pinned_subscription_identity,
+                multi_tariff=effective_pinned or settings.is_multi_tariff_enabled(),
+                pinned=effective_pinned,
+                # На fallback-ветке аккаунт уже известен по users.remnawave_id. Если панель
+                # его потеряла, честное 'no_changes' лучше второго аккаунта рядом с живым:
+                # заводить аккаунт — работа покупки, а не кнопки «продлить».
+                create_if_missing=not adopted_user_identity,
                 update_call=lambda **kwargs: update_panel_user_grace_safe(api, subscription.id, **kwargs),
                 create_call=lambda **kwargs: create_panel_user_grace_safe(
                     api,
@@ -1272,7 +1332,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(
+        sync_result = await _sync_subscription_to_panel(
             db, user, subscription, pinned_subscription_identity=request.subscription_id is not None
         )
 
@@ -1282,7 +1342,7 @@ async def update_user_subscription(
 
         return UpdateSubscriptionResponse(
             success=True,
-            message=f'Subscription extended by {request.days} days',
+            message=f'Subscription extended by {request.days} days' + _panel_sync_note(sync_result),
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
@@ -1309,7 +1369,7 @@ async def update_user_subscription(
             await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(
+        sync_result = await _sync_subscription_to_panel(
             db, user, subscription, pinned_subscription_identity=request.subscription_id is not None
         )
 
@@ -1319,7 +1379,7 @@ async def update_user_subscription(
 
         return UpdateSubscriptionResponse(
             success=True,
-            message=f'Subscription shortened by {request.days} days',
+            message=f'Subscription shortened by {request.days} days' + _panel_sync_note(sync_result),
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
@@ -1341,7 +1401,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(
+        sync_result = await _sync_subscription_to_panel(
             db, user, subscription, pinned_subscription_identity=request.subscription_id is not None
         )
 
@@ -1349,7 +1409,7 @@ async def update_user_subscription(
 
         return UpdateSubscriptionResponse(
             success=True,
-            message=f'Subscription end date set to {request.end_date.isoformat()}',
+            message=f'Subscription end date set to {request.end_date.isoformat()}' + _panel_sync_note(sync_result),
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
@@ -1470,7 +1530,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(
+        sync_result = await _sync_subscription_to_panel(
             db, user, subscription, pinned_subscription_identity=request.subscription_id is not None
         )
 
@@ -1478,7 +1538,7 @@ async def update_user_subscription(
 
         return UpdateSubscriptionResponse(
             success=True,
-            message='Traffic settings updated',
+            message='Traffic settings updated' + _panel_sync_note(sync_result),
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
@@ -1531,7 +1591,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(
+        sync_result = await _sync_subscription_to_panel(
             db, user, subscription, pinned_subscription_identity=request.subscription_id is not None
         )
 
@@ -1539,7 +1599,7 @@ async def update_user_subscription(
 
         return UpdateSubscriptionResponse(
             success=True,
-            message='Subscription cancelled',
+            message='Subscription cancelled' + _panel_sync_note(sync_result),
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
@@ -1561,23 +1621,35 @@ async def update_user_subscription(
             # спишет деньги и воскресит только что сброшенную подписку.
             await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
             await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
-            panel_user_id = subscription.remnawave_id
+            panel_user_id = subscription.remnawave_id or await _adoptable_user_panel_id(db, user, subscription)
+            if not panel_user_id:
+                # Раньше при пустом id панель не трогали вовсе и отвечали успехом —
+                # «сброшенная» подписка продолжала работать. Нет адреса — нет сброса.
+                logger.warning(
+                    'Skipped panel reset: selected subscription has no panel user id',
+                    user_id=user.id,
+                    subscription_id=subscription.id,
+                )
+                return UpdateSubscriptionResponse(
+                    success=False,
+                    message='Subscription reset failed: selected subscription has no panel user id',
+                    subscription=await _build_subscription_info_async(db, subscription),
+                )
             panel_disabled = False
-            if panel_user_id:
-                try:
-                    panel_disabled = await SubscriptionService().disable_remnawave_user(panel_user_id)
-                except Exception as error:
-                    logger.warning(
-                        'Failed to disable selected Remnawave subscription during reset',
-                        subscription_id=subscription.id,
-                        error=error,
-                    )
-                if not panel_disabled:
-                    return UpdateSubscriptionResponse(
-                        success=False,
-                        message='Subscription reset failed: panel deactivation was not completed',
-                        subscription=await _build_subscription_info_async(db, subscription),
-                    )
+            try:
+                panel_disabled = await SubscriptionService().disable_remnawave_user(panel_user_id)
+            except Exception as error:
+                logger.warning(
+                    'Failed to disable selected Remnawave subscription during reset',
+                    subscription_id=subscription.id,
+                    error=error,
+                )
+            if not panel_disabled:
+                return UpdateSubscriptionResponse(
+                    success=False,
+                    message='Subscription reset failed: panel deactivation was not completed',
+                    subscription=await _build_subscription_info_async(db, subscription),
+                )
 
             await reset_subscription(db, subscription)
             result = {'panel_disabled': panel_disabled}
@@ -1621,7 +1693,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(
+        sync_result = await _sync_subscription_to_panel(
             db, user, subscription, pinned_subscription_identity=request.subscription_id is not None
         )
 
@@ -1629,7 +1701,7 @@ async def update_user_subscription(
 
         return UpdateSubscriptionResponse(
             success=True,
-            message='Subscription activated',
+            message='Subscription activated' + _panel_sync_note(sync_result),
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
@@ -1747,7 +1819,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(
+        sync_result = await _sync_subscription_to_panel(
             db, user, subscription, pinned_subscription_identity=request.subscription_id is not None
         )
 
@@ -1757,7 +1829,7 @@ async def update_user_subscription(
 
         return UpdateSubscriptionResponse(
             success=True,
-            message=f'Device limit set to {request.device_limit}',
+            message=f'Device limit set to {request.device_limit}' + _panel_sync_note(sync_result),
             subscription=await _build_subscription_info_async(db, subscription),
         )
 

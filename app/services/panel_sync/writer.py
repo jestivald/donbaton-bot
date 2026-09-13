@@ -163,6 +163,16 @@ async def push_subscription(
             panel_user_id=getattr(panel_user, 'id', None) or panel_user_id,
         )
 
+    if not create_if_missing:
+        # Аккаунта в панели нет, а заводить новый вызывающий запретил: узкая правка
+        # админа и fallback на пользовательский аккаунт чинят существующий аккаунт,
+        # а не плодят соседний. До 13.09.2026 флаг объявлялся, но не читался.
+        logger.warning(
+            'Аккаунт панели не найден, создание запрещено вызывающим',
+            subscription_id=getattr(subscription, 'id', None),
+        )
+        return PanelWriteResult(panel_user=None, action='no_changes')
+
     panel_user = await create(**payload.create_kwargs(now=moment))
     await _record_identity(db, user, subscription, panel_user, multi_tariff=multi_tariff)
     created_id = getattr(panel_user, 'id', None)
