@@ -24,6 +24,7 @@ from app.config import settings
 from app.database.models import Base, LteQuota, Subscription, SubscriptionStatus, Tariff, User
 from app.services.lte_quota_service import (
     GIB,
+    LtePolicyError,
     advance_period,
     credit_topup,
     get_quota_status,
@@ -490,12 +491,53 @@ async def test_explicit_new_purchase_unblocks_autopay(monkeypatch, plan):
 
 
 @pytest.mark.asyncio
-async def test_admin_extension_does_not_count_as_a_customer_choice(monkeypatch):
-    """Продление end_date мимо update_entitlement — не покупка нового тарифа."""
+async def test_days_only_extension_of_an_expired_legacy_subscription_marks_the_purchase(monkeypatch):
+    """Бонусные дни истёкшей legacy-подписке идут через update_entitlement.
+
+    Пока окно совместимости не закрылось, extend_subscription вообще не
+    пропускает управляемую подписку (validate_legacy_renewal в
+    _prepare_donbaton_subscription). А когда оно закрылось, срок уже истёк, и
+    ветка `expired` уводит в update_entitlement — отметка ставится.
+    """
+    from app.database.crud.subscription import extend_subscription
+
     async with memory_session(monkeypatch, TABLES) as db:
         sub, _, quota = await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(days=1))
-        sub.end_date += timedelta(days=30)
+        with pytest.raises(LtePolicyError, match='индивидуальные условия'):
+            await extend_subscription(db, sub, 30)
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, quota = await _seed_legacy(db, custom=True, paid_until=NOW - timedelta(minutes=30))
+        assert legacy_autopay_blocked(quota) is True
+        await extend_subscription(db, sub, 30)
+        assert legacy_autopay_blocked(await db.get(LteQuota, 1)) is False
+
+
+@pytest.mark.asyncio
+async def test_direct_end_date_write_leaves_the_block_on_the_markers(monkeypatch):
+    """Админ выставил дату напрямую — запрет держат именно маркеры покупки.
+
+    admin_users.py:1393 пишет subscription.end_date мимо extend_subscription, так
+    что ни guard, ни update_entitlement не срабатывают. Подписка становится живой
+    уже за original_paid_until: первая ветка предиката молчит, и всё держится на
+    отсутствии отметки. Последующее ОПЛАЧЕННОЕ продление того же тарифа идёт в
+    initialize_quota и отметки тоже не ставит — задокументированная граница
+    (docs/DONBATON.md), снимает запрет только явный выбор тарифа.
+    """
+    from app.database.crud.subscription import extend_subscription
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, quota = await _seed_legacy(db, custom=True, paid_until=NOW - timedelta(minutes=30))
+        sub.end_date = NOW + timedelta(days=30)
         await db.commit()
 
-        assert legacy_autopay_blocked(await db.get(LteQuota, quota.subscription_id)) is True
-        assert (await db.get(LteQuota, quota.subscription_id)).legacy_state is not None
+        assert legacy_renewal_requires_expiry(await db.get(LteQuota, 1)) is False
+        assert legacy_autopay_blocked(await db.get(LteQuota, 1)) is True
+
+        await extend_subscription(db, sub, 30)
+        assert legacy_autopay_blocked(await db.get(LteQuota, 1)) is True
+        assert (await db.get(LteQuota, 1)).legacy_state is not None
+
+        await update_entitlement(db, sub, await db.get(Tariff, sub.tariff_id), now=datetime.now(UTC))
+        await db.commit()
+        assert legacy_autopay_blocked(await db.get(LteQuota, 1)) is False
