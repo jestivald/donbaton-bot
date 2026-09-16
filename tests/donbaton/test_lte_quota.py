@@ -7,7 +7,17 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.config import settings
-from app.database.models import LteQuota, LteTopup, PromoGroup, Subscription, Tariff, User, tariff_promo_groups
+from app.database.models import (
+    GraceAccessSessionModel,
+    LteQuota,
+    LteTopup,
+    PromoGroup,
+    ServerSquad,
+    Subscription,
+    Tariff,
+    User,
+    tariff_promo_groups,
+)
 from app.external.remnawave_api import TrafficLimitStrategy, UserStatus
 from app.services.lte_quota_service import (
     LtePolicyError,
@@ -37,6 +47,12 @@ TABLES = [
     Subscription.__table__,
     LteQuota.__table__,
     LteTopup.__table__,
+    # С 4.12.0 общее продление первым делом откатывает оверлей грейса
+    # (`grace_access_echo.undo_grace_overlay_echo`), а он читает историю
+    # грейс-сессий и справочник продаваемых сквадов. Без таблиц любой путь
+    # продления падает на «no such table» ещё до логики ДонБатона.
+    GraceAccessSessionModel.__table__,
+    ServerSquad.__table__,
 ]
 
 

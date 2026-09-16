@@ -522,6 +522,10 @@ def _legacy_panel_doubles(monkeypatch, *, found: bool):
     # настоящий SELECT на ней вернул бы «id занят».
     monkeypatch.setattr('app.services.subscription_service.panel_id_is_free_for', AsyncMock(return_value=True))
     monkeypatch.setattr('app.services.panel_sync.identity.panel_id_is_free_for', AsyncMock(return_value=True))
+    # С 4.12.0 запись сверяет готовый адрес панели с хозяином по базе бота
+    # (#3245). Здесь адрес уже признан свободным выше, а сессия — AsyncMock:
+    # настоящий SELECT на ней не отвечает.
+    monkeypatch.setattr('app.services.panel_sync.identity.find_foreign_panel_owner', AsyncMock(return_value=None))
     monkeypatch.setattr('app.services.remnawave_service.RemnaWaveService', Service)
     monkeypatch.setattr('app.services.grace_access_runtime.update_panel_user_grace_safe', update_panel_user)
     monkeypatch.setattr('app.services.grace_access_runtime.create_panel_user_grace_safe', created)
@@ -669,6 +673,10 @@ async def test_selected_reset_without_link_adopts_the_single_tariff_user_account
     # настоящий SELECT на ней вернул бы «id занят».
     monkeypatch.setattr('app.services.subscription_service.panel_id_is_free_for', AsyncMock(return_value=True))
     monkeypatch.setattr('app.services.panel_sync.identity.panel_id_is_free_for', AsyncMock(return_value=True))
+    # С 4.12.0 запись сверяет готовый адрес панели с хозяином по базе бота
+    # (#3245). Здесь адрес уже признан свободным выше, а сессия — AsyncMock:
+    # настоящий SELECT на ней не отвечает.
+    monkeypatch.setattr('app.services.panel_sync.identity.find_foreign_panel_owner', AsyncMock(return_value=None))
     ownership_boundary.remnawave_id = LEGACY_USER_PANEL_ID
     owned_subscription.remnawave_id = None
     panel_disable = AsyncMock(return_value=True)
