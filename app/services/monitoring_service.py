@@ -696,7 +696,23 @@ class MonitoringService:
         признак, прочитанный после снимка, видит любой грейс, который снимок мог
         показать. Без этого на стенде (волна истечения, 2026-09-15) оверлей
         переносился в подписку у 5% людей, а только что продлённая подписка гасилась.
+
+        Исключение — подписка Wi-Fi/LTE. Там панель не истина, а исполнитель: срок
+        ведёт бот, и ``project_onto_subscription`` для управляемой подписки дату из
+        панели не берёт (``takes_date=False``). Без этого выхода правка срока руками
+        в панели (или просто не догашенная панелью дата) держала бы подписку живой
+        вечно: дату отсюда не перенести, а гасить мы уже отказались. Продление,
+        случившееся пока шёл проход, ловит ``expire_subscription_if_still_due``.
         """
+        from app.services.lte_quota_service import is_managed
+
+        if is_managed(subscription):
+            logger.debug(
+                'Подписка Wi-Fi/LTE: срок ведёт бот, панель её живой не удерживает',
+                subscription_id=subscription.id,
+            )
+            return False
+
         snapshot = await self._read_panel_before_expiry(db, subscription)
         # Всё, на чём стоит решение гасить: свой срок и признаки грейса.
         await db.refresh(subscription, ['status', 'end_date', *GRACE_MARKER_FIELDS])

@@ -225,3 +225,57 @@ async def test_grace_tail_left_in_the_panel_is_not_a_renewal_either(monkeypatch)
 
     expire.assert_awaited_once_with(db, subscription)
     assert subscription.end_date == NOW - timedelta(minutes=5)
+
+
+# ==================== Wi-Fi/LTE: панель — исполнитель, а не истина по сроку ====================
+#
+# У управляемой подписки срок ведёт бот: `project_onto_subscription` для неё берёт
+# политику с `takes_date=False` и дату из панели не переносит. Значит, «панель
+# держит живой» для неё — тупик: не погасили и дату не обновили, подписка висит
+# активной с прошедшей датой до бесконечности. Достаточно один раз поправить срок
+# руками в панели (или чтобы панель не догасила аккаунт вовремя).
+
+
+@pytest.mark.asyncio
+async def test_managed_subscription_is_expired_by_its_own_date(monkeypatch) -> None:
+    """Активный аккаунт с датой в будущем управляемую подписку живой не удерживает."""
+    user = SimpleNamespace(
+        id=42, telegram_id=1001, email=None, remnawave_id=9001, status='active', notification_settings={}
+    )
+    subscription = _subscription(user)
+    api = _FakeApi(_panel_user('ACTIVE', NOW + timedelta(days=20)))
+    service = _service(api)
+    expire = AsyncMock(return_value=True)
+    monkeypatch.setattr('app.services.lte_quota_service.is_managed', lambda _subscription: True)
+    monkeypatch.setattr(monitoring_module, 'get_expired_subscriptions', AsyncMock(return_value=[subscription]))
+    monkeypatch.setattr(monitoring_module, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.database.crud.subscription.expire_subscription_if_still_due', expire)
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock())
+
+    await service._check_expired_subscriptions(db)
+
+    expire.assert_awaited_once_with(db, subscription)
+    assert subscription.end_date == NOW - timedelta(minutes=5), 'дата панели в бота не переносится'
+    api.get_user_by_id.assert_not_awaited(), 'панель об управляемой подписке даже не спрашиваем'
+
+
+@pytest.mark.asyncio
+async def test_unmanaged_subscription_still_takes_the_panel_date(monkeypatch) -> None:
+    """Сторож узкий: у обычной подписки панель по-прежнему истина по сроку."""
+    user = SimpleNamespace(
+        id=42, telegram_id=1001, email=None, remnawave_id=9001, status='active', notification_settings={}
+    )
+    subscription = _subscription(user)
+    api = _FakeApi(_panel_user('ACTIVE', NOW + timedelta(days=20)))
+    service = _service(api)
+    expire = AsyncMock(return_value=True)
+    monkeypatch.setattr('app.services.lte_quota_service.is_managed', lambda _subscription: False)
+    monkeypatch.setattr(monitoring_module, 'get_expired_subscriptions', AsyncMock(return_value=[subscription]))
+    monkeypatch.setattr(monitoring_module, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.database.crud.subscription.expire_subscription_if_still_due', expire)
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock())
+
+    await service._check_expired_subscriptions(db)
+
+    expire.assert_not_awaited()
+    assert subscription.end_date == NOW + timedelta(days=20)
