@@ -23,11 +23,16 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database.models import Base, LteQuota, Subscription, SubscriptionStatus, Tariff, User
 from app.services.lte_quota_service import (
+    GIB,
+    advance_period,
     credit_topup,
+    get_quota_status,
     legacy_autopay_blocked,
     legacy_renewal_requires_expiry,
+    update_entitlement,
 )
-from app.services.pricing_engine import PricingEngine
+from app.services.lte_topup_purchase_service import quote_lte_package
+from app.services.pricing_engine import PricingEngine, pricing_engine
 from tests.donbaton.test_lte_legacy import EPOCH, activate, legacy_seed
 from tests.donbaton.test_lte_quota import LTE, NOW, WIFI
 from tests.fixtures.sqlite_memory import memory_session
@@ -205,12 +210,18 @@ async def test_two_hour_expired_window_cannot_buy_the_technical_tariff(monkeypat
 async def test_lte_topup_stays_available_while_autopay_is_blocked(monkeypatch):
     """Запрет автопродления не закрывает докупку LTE — это разные решения клиента."""
     async with memory_session(monkeypatch, TABLES) as db:
-        sub, _, quota = await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(days=1))
+        sub, user, quota = await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(days=1))
         service, _, _ = _service(monkeypatch)
         await service._process_autopayments(db)
 
-        await credit_topup(db, sub, bytes_amount=20 * 1024**3, operation_id='legacy-topup', now=NOW)
+        # Витрина докупки, которую видит клиент, остаётся рабочей...
+        tariff = await db.get(Tariff, sub.tariff_id)
+        assert quote_lte_package(user, tariff, 10)['price_kopeks'] == 5900
+        # ...и байты реально зачисляются на заблокированную для autopay подписку.
+        before = (await get_quota_status(db, sub, now=NOW))['remaining_bytes']
+        await credit_topup(db, sub, bytes_amount=20 * GIB, operation_id='legacy-topup', now=NOW)
         await db.commit()
+        assert (await get_quota_status(db, sub, now=NOW))['remaining_bytes'] == before + 20 * GIB
 
         assert legacy_autopay_blocked(await db.get(LteQuota, quota.subscription_id)) is True
 
@@ -241,14 +252,87 @@ async def test_expiring_notice_does_not_promise_automatic_renewal(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_recurrent_card_topup_skips_policy_without_error(monkeypatch):
-    """Рекуррентный платёж по карте отличает политику от сбоя расчёта."""
+async def test_expired_terms_are_not_described_in_the_future_tense(monkeypatch):
+    """В окне «недавно истёкших» дата уже в прошлом — «действуют до» было бы ложью."""
     async with memory_session(monkeypatch, TABLES) as db:
-        sub, user, _ = await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(days=1))
+        sub, _, _ = await _seed_legacy(db, custom=True, paid_until=NOW - timedelta(minutes=30))
+        sub.status = SubscriptionStatus.EXPIRED.value
+        await db.commit()
+        bot = SimpleNamespace(send_message=AsyncMock())
+        service, _, _ = _service(monkeypatch, bot=bot)
+
+        await service._process_autopayments(db)
+
+        text = bot.send_message.await_args.kwargs['text']
+        assert 'действуют до' not in text
+        assert 'закончился' in text
+
+
+@pytest.mark.asyncio
+async def test_silent_channel_does_not_burn_the_single_notification(monkeypatch):
+    """Ключ дедупа ставится только после отправки: молчание — не уведомление."""
+    async with memory_session(monkeypatch, TABLES) as db:
+        await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(days=1))
+        cache = _MemoryCache()
+        # Бот ещё не поднят — объясниться нечем.
+        service, _, _ = _service(monkeypatch, bot=None, cache=cache)
+        await service._process_autopayments(db)
+        assert cache.store == {}
+
+        bot = SimpleNamespace(send_message=AsyncMock())
+        service.bot = bot
+        service._notified_users = set()
+        await service._process_autopayments(db)
+        assert bot.send_message.await_count == 1
+        assert cache.store, 'после отправки дедуп не выставлен'
+
+
+@pytest.mark.asyncio
+async def test_disabled_autopay_gets_the_same_advice(monkeypatch):
+    """С выключенным автоплатежом «включите автоплатёж» тоже не сработает."""
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, user, _ = await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(hours=20), autopay=False)
+        import app.services.monitoring_service as monitoring_module
+
+        service, _, _ = _service(monkeypatch, bot=SimpleNamespace(send_message=AsyncMock()))
+        sent = AsyncMock(return_value=True)
+        monkeypatch.setattr(monitoring_module.MonitoringService, '_send_message_with_logo', sent)
+
+        assert await service._send_subscription_expiring_notification(user, sub, 1, legacy_terms=True) is True
+        text = sent.await_args.kwargs['text']
+        assert 'Включите автоплатеж' not in text
+        assert 'Продлите подписку вручную' not in text
+        assert 'выберите тариф' in text
+
+        # Признак считается независимо от autopay_enabled, иначе до текста не дойдёт.
+        notify = AsyncMock(return_value=True)
+        monkeypatch.setattr(monitoring_module.MonitoringService, '_send_subscription_expiring_notification', notify)
+        await service._check_expiring_subscriptions(db)
+        assert notify.await_args is not None, 'уведомление об истечении не отправлялось'
+        assert notify.await_args.kwargs['legacy_terms'] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'status,paid_until',
+    [('active', timedelta(days=1)), ('expired', timedelta(minutes=-30))],
+)
+async def test_recurrent_card_charge_is_skipped_before_pricing(monkeypatch, status, paid_until):
+    """Рекуррент не должен списывать с карты «под продление», которого не будет.
+
+    После original_paid_until validate_legacy_renewal молчит, поэтому без
+    проверки предиката до расчёта EXPIRED-подписка доходила до перебора карт.
+    """
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, user, _ = await _seed_legacy(db, custom=True, paid_until=NOW + paid_until)
+        sub.status = status
+        await db.commit()
         import app.services.recurrent_payment_service as recurrent_module
 
         recorder = _Recorder()
         monkeypatch.setattr(recurrent_module, 'logger', recorder)
+        pricing = AsyncMock()
+        monkeypatch.setattr(pricing_engine, 'calculate_renewal_price', pricing)
         # Прод отдаёт сюда подписку с уже подгруженным тарифом.
         subscription = (
             await db.execute(
@@ -260,9 +344,34 @@ async def test_recurrent_card_topup_skips_policy_without_error(monkeypatch):
             db, subscription, user, None, payment_service=None, subscription_service=None
         )
 
-        assert result == 'skipped'
+        assert result == 'skipped', 'рекуррент дошёл до перебора карт'
+        pricing.assert_not_awaited()
         assert recorder.events('error') == []
-        assert any('политике LTE' in event for event in recorder.events('info'))
+        assert any('индивидуальные условия' in event for event in recorder.events('info'))
+
+
+@pytest.mark.asyncio
+async def test_lte_configuration_failure_stays_an_error(monkeypatch):
+    """Выключенный DONBATON_LTE_ENABLED — авария по всем тарифам, а не политика."""
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, user, _ = await _seed_legacy(db, custom=False, paid_until=NOW + timedelta(days=1))
+        import app.services.recurrent_payment_service as recurrent_module
+
+        recorder = _Recorder()
+        monkeypatch.setattr(recurrent_module, 'logger', recorder)
+        monkeypatch.setattr(settings, 'DONBATON_LTE_ENABLED', False)
+        subscription = (
+            await db.execute(
+                select(Subscription).options(selectinload(Subscription.tariff)).where(Subscription.id == sub.id)
+            )
+        ).scalar_one()
+
+        result = await recurrent_module._process_single_subscription(
+            db, subscription, user, None, payment_service=None, subscription_service=None
+        )
+
+        assert result == 'skipped'
+        assert recorder.events('error'), 'конфигурационная авария ушла в info'
 
 
 def _quota_stub(state):
@@ -299,31 +408,94 @@ def test_predicate_is_false_for_trial_missing_state_and_explicit_purchase():
     standard = {**base, 'snapshot': {'renewal_requires_expiry': False, 'subscription': {'is_trial': False}}}
     assert legacy_autopay_blocked(_quota_stub(standard), now=end - timedelta(days=1)) is False
 
-    # Клиент явно купил новый тариф: update_entitlement кладёт pending_new_period,
-    # advance_period превращает его в new_limit_bytes — запрет снимается.
+    # Клиент явно купил новый тариф: update_entitlement ставит purchased_at и
+    # pending_new_period, advance_period превращает второй в new_limit_bytes.
+    purchased = {**base, 'runtime': {'purchased_at': end.isoformat()}}
+    assert legacy_autopay_blocked(_quota_stub(purchased), now=end) is False
+
     scheduled = {**base, 'runtime': {'pending_new_period': {'starts_at': end.isoformat(), 'limit_bytes': 0}}}
     assert legacy_autopay_blocked(_quota_stub(scheduled), now=end) is False
 
-    started = {**base, 'runtime': {'new_period_started_at': end.isoformat(), 'new_limit_bytes': 60 * 1024**3}}
-    assert legacy_autopay_blocked(_quota_stub(started), now=end) is False
+    converted = {**base, 'runtime': {'trial_converted_at': end.isoformat()}}
+    assert legacy_autopay_blocked(_quota_stub(converted), now=end) is False
+
+    # Маркер читается по присутствию ключа, а не по истинности: тариф «Только
+    # Wi-Fi» записывает нулевой объём LTE, и ledger, записанный до появления
+    # purchased_at, отличается от неперенесённого только этим ключом.
+    for limit_bytes in (60 * GIB, 0):
+        started = {**base, 'runtime': {'new_period_started_at': end.isoformat(), 'new_limit_bytes': limit_bytes}}
+        assert legacy_autopay_blocked(_quota_stub(started), now=end) is False
 
     # Автоматический скаффолд после окончания базы покупкой не является.
     scaffold = {**base, 'runtime': {'new_period_started_at': end.isoformat(), 'base_ended': True}}
     assert legacy_autopay_blocked(_quota_stub(scaffold), now=end) is True
 
 
-@pytest.mark.asyncio
-async def test_explicit_new_purchase_unblocks_autopay(monkeypatch):
-    """После явного выбора тарифа клиентом автопродление снова работает."""
-    from app.services.lte_quota_service import update_entitlement
+def _wifi_only_tariff():
+    """Каталог запрещает LTE-пакет в категории «Только Wi-Fi» (lte_traffic_limit_gb = 0)."""
+    return Tariff(
+        id=7,
+        name='Только Wi-Fi',
+        network_category='wifi',
+        traffic_limit_gb=0,
+        lte_traffic_limit_gb=None,
+        lte_period_days=None,
+        device_limit=3,
+        allowed_squads=[WIFI],
+        period_prices={'30': 19900},
+        is_daily=False,
+        custom_traffic_enabled=False,
+        is_trial_available=False,
+        show_in_gift=False,
+        custom_days_enabled=False,
+        traffic_topup_enabled=False,
+        traffic_topup_packages={},
+    )
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('plan', ['wifi_lte', 'wifi'])
+async def test_explicit_new_purchase_unblocks_autopay(monkeypatch, plan):
+    """После явного выбора тарифа клиентом автопродление снова работает.
+
+    Тариф «Только Wi-Fi» не содержит LTE-пакета, поэтому покупка записывает
+    нулевой объём: маркер обязан пережить и это, и последующий advance_period,
+    который удаляет pending_new_period.
+    """
     async with memory_session(monkeypatch, TABLES) as db:
         sub, _, quota = await _seed_legacy(db, custom=True, paid_until=NOW - timedelta(minutes=30))
         assert legacy_autopay_blocked(quota) is True
 
+        if plan == 'wifi':
+            target = _wifi_only_tariff()
+            db.add(target)
+            await db.flush()
+        else:
+            target = await db.get(Tariff, sub.tariff_id)
+        now = datetime.now(UTC)
         sub.status = SubscriptionStatus.EXPIRED.value
-        target = await db.get(Tariff, sub.tariff_id)
-        await update_entitlement(db, sub, target, now=datetime.now(UTC))
+        await update_entitlement(db, sub, target, now=now)
+        await db.commit()
+        assert legacy_autopay_blocked(await db.get(LteQuota, quota.subscription_id)) is False
+
+        # Ближайший цикл переносит pending_new_period в new_limit_bytes и удаляет
+        # исходный ключ — для wifi оба значения нулевые.
+        advance_period(quota, now + timedelta(seconds=1), paid_until=sub.end_date)
+        await db.commit()
+        runtime = (await db.get(LteQuota, quota.subscription_id)).legacy_state['runtime']
+        assert 'pending_new_period' not in runtime
+        assert legacy_autopay_blocked(await db.get(LteQuota, quota.subscription_id)) is False, (
+            'запрет вернулся после активации купленного периода'
+        )
+
+
+@pytest.mark.asyncio
+async def test_admin_extension_does_not_count_as_a_customer_choice(monkeypatch):
+    """Продление end_date мимо update_entitlement — не покупка нового тарифа."""
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, quota = await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(days=1))
+        sub.end_date += timedelta(days=30)
         await db.commit()
 
-        assert legacy_autopay_blocked(await db.get(LteQuota, quota.subscription_id)) is False
+        assert legacy_autopay_blocked(await db.get(LteQuota, quota.subscription_id)) is True
+        assert (await db.get(LteQuota, quota.subscription_id)).legacy_state is not None
