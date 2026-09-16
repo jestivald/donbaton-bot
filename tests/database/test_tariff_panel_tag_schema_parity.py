@@ -1,4 +1,4 @@
-"""Колонки тарифа из миграции 0119 обязаны совпадать с моделью.
+"""Колонки тарифа из миграции 0121 обязаны совпадать с моделью.
 
 Свежая установка получает таблицу по модели, обновлённая — миграцией. Тег панели
 и дни триала на тарифе появляются одной ревизией; расхождение типа или nullable
@@ -21,7 +21,7 @@ NEW_COLUMNS = ('panel_tag', 'trial_duration_days')
 
 
 def _load_migration():
-    spec = importlib.util.spec_from_file_location('m0119', VERSIONS / MIGRATION)
+    spec = importlib.util.spec_from_file_location('m0121', VERSIONS / MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

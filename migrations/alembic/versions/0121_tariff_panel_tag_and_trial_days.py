@@ -48,6 +48,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Тот же сторож, что в upgrade и в четырёх соседних миграциях: повторный прогон
+    # (в том числе после ручного отката колонки) не должен падать KeyError.
+    present = [name for name in ('trial_duration_days', 'panel_tag') if _has_column('tariffs', name)]
+    if not present:
+        return
     with op.batch_alter_table('tariffs') as batch:
-        batch.drop_column('trial_duration_days')
-        batch.drop_column('panel_tag')
+        for name in present:
+            batch.drop_column(name)
