@@ -3,7 +3,8 @@
 **Дата:** 2026-09-16
 **Репозиторий:** `/Users/admin/Documents/work/vpn/donbaton/forks/bedolaga-bot`
 **Worktree:** `/Users/admin/Documents/work/_worktrees/donbaton-bot/upstream-4.12.1`
-**Ветка:** `codex/upstream-4.12.1`, HEAD = `0b9c28c33e1c455c42cc33214aa624eab1feb341`
+**Ветка:** `codex/upstream-4.12.1`, HEAD = `57a4caa98f3c14df2536d1874869a8b824e64296`
+**Последний коммит, меняющий содержимое образа:** `0b9c28c3` (дальше — только этот документ)
 **База:** `b490a1f8` (прод, ветка `codex/admin-sync-fallback`, образ `donbaton/bedolaga:adminsync-b490a1f8-20260913`)
 **Ничего не запушено, серверы не тронуты. Рабочая копия чистая.**
 
@@ -20,6 +21,7 @@ merge-коммитом) — см. §1 и §2.7.
 ## 1. Что сделано
 
 ```
+57a4caa9 docs(handoff): исправить план отката и дописать найденное ревью
 0b9c28c3 Merge branch 'codex/autopay-legacy-renewal' into codex/upstream-4.12.1
 94c43863 chore: синхронизировать версию в uv.lock с релизом 4.12.1
 02bee712 fix(migrations): downgrade 0121 переживает повторный прогон
@@ -549,7 +551,9 @@ CI-вариант `uv run python -m scripts.generate_structure_reference --check
    `REMNAWAVE_AUTO_SYNC_TIMES`, `TRAFFIC_DAILY_CHECK_ENABLED` +
    `TRAFFIC_DAILY_CHECK_TIME`, `GRACE_ACCESS_MODE`, `DONBATON_LTE_ENABLED`
    (пункт 3 рисков — расписания переезжают с UTC на МСК).
-5. Собрать образ с тегом `donbaton/bedolaga:u4121-0b9c28c3-20260916`.
+5. Собрать образ с тегом `donbaton/bedolaga:u4121-0b9c28c3-20260916`. В теге стоит
+   `0b9c28c3` — последний коммит, меняющий код; всё, что после него на ветке, это
+   сам этот документ, и на содержимое образа оно не влияет.
 6. Убедиться, что том `data/` примонтирован.
 7. Запустить. **Контейнер сам делает `alembic upgrade head` на старте**
    (`main.py:187-205` → `app/database/migrations.py:161`), отдельная команда не нужна.
