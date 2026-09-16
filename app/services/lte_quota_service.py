@@ -356,6 +356,41 @@ def legacy_renewal_requires_expiry(quota, *, now=None):
     )
 
 
+def legacy_autopay_blocked(quota, *, now=None) -> bool:
+    """Фоновое автопродление не оплачивает перенесённые индивидуальные условия.
+
+    До конца оплаченного срока действуют прежние условия, после него тариф
+    выбирает сам клиент: технический target, проставленный импортом, новым
+    согласием на оплату не является. Поэтому, в отличие от
+    ``legacy_renewal_requires_expiry``, запрет не снимается на границе
+    ``original_paid_until`` — иначе в окне «недавно истёкших» (2 часа) autopay
+    успел бы молча списать деньги за технический тариф.
+
+    Снимает запрет только явная покупка клиента: ``update_entitlement``
+    записывает в runtime ``pending_new_period``, а ``advance_period`` при её
+    активации — ``new_limit_bytes``. Автоматический скаффолд после окончания
+    базы ставит один ``new_period_started_at`` и признаком покупки не является.
+    """
+    if legacy_renewal_requires_expiry(quota, now=now):
+        return True
+    state = getattr(quota, 'legacy_state', None)
+    if not (state and state['snapshot']['renewal_requires_expiry']):
+        return False
+    if (state['snapshot']['subscription'] or {}).get('is_trial', False):
+        return False
+    runtime = state.get('runtime') or {}
+    return not (
+        runtime.get('pending_new_period') or runtime.get('new_limit_bytes') or runtime.get('trial_converted_at')
+    )
+
+
+async def autopay_blocked_by_legacy(db, subscription, *, now=None) -> bool:
+    """Обёртка предиката для фоновых циклов: читает квоту подписки без блокировки."""
+    if not is_managed(subscription):
+        return False
+    return legacy_autopay_blocked(await _quota(db, subscription), now=now)
+
+
 async def validate_legacy_renewal(db, subscription, *, now=None):
     if not is_managed(subscription):
         return

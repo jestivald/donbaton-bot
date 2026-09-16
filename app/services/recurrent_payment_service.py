@@ -249,6 +249,8 @@ async def _process_single_subscription(
     else:
         autopay_period = 30
 
+    from app.services.lte_quota_service import LtePolicyError
+
     try:
         from app.database.crud.user import lock_user_for_pricing
         from app.services.pricing_engine import pricing_engine
@@ -263,6 +265,16 @@ async def _process_single_subscription(
             user=user,
         )
         renewal_cost = pricing.final_total
+    except LtePolicyError as policy_error:
+        # Перенесённые индивидуальные условия и прочие политики LTE — штатный
+        # отказ в продлении, а не сбой расчёта: каждый цикл писать ERROR нельзя.
+        logger.info(
+            'Рекуррентный платёж пропущен по политике LTE',
+            subscription_id=subscription.id,
+            user_id=user.id,
+            reason=str(policy_error),
+        )
+        return 'skipped'
     except Exception as e:
         logger.error(
             'Ошибка расчёта стоимости для рекуррентного платежа',
