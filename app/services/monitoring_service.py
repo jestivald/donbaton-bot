@@ -836,11 +836,6 @@ class MonitoringService:
                         continue
 
                     has_saved_card = subscription.autopay_enabled and user.id in users_with_cards
-                    # Автоплатёж по перенесённым индивидуальным условиям не сработает —
-                    # обещать «продлится автоматически» такому клиенту нельзя.
-                    legacy_terms = bool(subscription.autopay_enabled) and await autopay_blocked_by_legacy(
-                        db, subscription
-                    )
 
                     should_send = True
                     for other_days in warning_days:
@@ -858,6 +853,12 @@ class MonitoringService:
 
                     if not should_send:
                         continue
+
+                    # Автоплатёж по перенесённым индивидуальным условиям не сработает —
+                    # обещать «продлится автоматически» такому клиенту нельзя.
+                    legacy_terms = bool(subscription.autopay_enabled) and await autopay_blocked_by_legacy(
+                        db, subscription
+                    )
 
                     # Handle email-only users via notification delivery service
                     if not user.telegram_id:
