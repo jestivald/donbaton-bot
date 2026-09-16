@@ -356,6 +356,62 @@ def legacy_renewal_requires_expiry(quota, *, now=None):
     )
 
 
+#: Ключи runtime, которых нет в свежем ``build_legacy_state``: каждый появляется
+#: только когда клиент применил оплаченное решение. ``purchased_at`` ставит
+#: ``update_entitlement`` и никто не удаляет; остальные оставлены ради ledger'ов,
+#: записанных до его появления (``pending_new_period`` живёт до активации,
+#: ``advance_period`` заменяет его на ``new_limit_bytes``).
+_LEGACY_PURCHASE_MARKERS = ('purchased_at', 'pending_new_period', 'new_limit_bytes', 'trial_converted_at')
+
+
+def legacy_purchase_recorded(state) -> bool:
+    """Клиент сам оплатил новые условия поверх перенесённых.
+
+    Проверяем присутствие ключа, а не истинность значения: тариф «Только Wi-Fi»
+    не содержит LTE-пакета (``lte_traffic_limit_gb in (None, 0)``), поэтому
+    ``update_entitlement`` кладёт ``pending_new_period.limit_bytes = 0``, а
+    ``advance_period`` переносит ``new_limit_bytes = 0`` и удаляет pending.
+    Проверка на истинность приняла бы такую покупку за её отсутствие и вернула
+    бы запрет автопродления навсегда.
+    """
+    runtime = (state or {}).get('runtime') or {}
+    return any(marker in runtime for marker in _LEGACY_PURCHASE_MARKERS)
+
+
+def legacy_autopay_blocked(quota, *, now=None) -> bool:
+    """Фоновое автопродление не оплачивает перенесённые индивидуальные условия.
+
+    До конца оплаченного срока действуют прежние условия, после него тариф
+    выбирает сам клиент: технический target, проставленный импортом, новым
+    согласием на оплату не является. Поэтому, в отличие от
+    ``legacy_renewal_requires_expiry``, запрет не снимается на границе
+    ``original_paid_until`` — иначе в окне «недавно истёкших» (2 часа) autopay
+    успел бы молча списать деньги за технический тариф.
+
+    Снимает запрет только явная покупка клиента (``legacy_purchase_recorded``).
+    Само по себе движение ``end_date`` мимо ``update_entitlement`` — админское
+    продление, бонусные дни — покупкой не является и запрет не снимает:
+    оплаченное решение о новом тарифе принимает клиент. Автоматический скаффолд
+    после окончания базы ставит один ``new_period_started_at``, поэтому этот
+    ключ в маркеры не входит.
+    """
+    if legacy_renewal_requires_expiry(quota, now=now):
+        return True
+    state = getattr(quota, 'legacy_state', None)
+    if not (state and state['snapshot']['renewal_requires_expiry']):
+        return False
+    if (state['snapshot']['subscription'] or {}).get('is_trial', False):
+        return False
+    return not legacy_purchase_recorded(state)
+
+
+async def autopay_blocked_by_legacy(db, subscription, *, now=None) -> bool:
+    """Обёртка предиката для фоновых циклов: читает квоту подписки без блокировки."""
+    if not is_managed(subscription):
+        return False
+    return legacy_autopay_blocked(await _quota(db, subscription), now=now)
+
+
 async def validate_legacy_renewal(db, subscription, *, now=None):
     if not is_managed(subscription):
         return
@@ -906,6 +962,16 @@ async def activate_pending_trial_quota(db, subscription, *, now=None):
     return True
 
 
+def _mark_legacy_purchase(quota, now):
+    """Неубиваемо отметить в перенесённом ledger явную платную покупку клиента."""
+    state = getattr(quota, 'legacy_state', None)
+    if not state or state['runtime'].get('purchased_at'):
+        return
+    state = deepcopy(state)
+    state['runtime']['purchased_at'] = _now(now).isoformat()
+    quota.legacy_state = state
+
+
 async def update_entitlement(db, subscription, tariff, *, now=None):
     validate_subscription_transition(subscription, tariff)
     validate_tariff_for_sale(tariff)
@@ -926,6 +992,11 @@ async def update_entitlement(db, subscription, tariff, *, now=None):
     subscription.traffic_limit_gb = 0
     now = _now(now)
     converting_trial = subscription.is_trial
+    # Любая ветка ниже применяет уже оплаченное решение клиента, поэтому отметка
+    # ставится один раз здесь и переживает все дальнейшие переносы состояния:
+    # объём LTE нового тарифа может быть нулевым, и маркеры-значения потерялись
+    # бы (см. legacy_purchase_recorded).
+    _mark_legacy_purchase(quota, now)
     if _now(subscription.end_date) <= now or converting_trial:
         subscription.device_limit = tariff.device_limit
         quota.panel_access_cleared_at = None

@@ -591,6 +591,60 @@ class MonitoringService:
         ttl_seconds = int(max(0.0, hours_left) * 3600) + 72 * 3600
         await self._save_autopay_fail_state(subscription.id, cycle_token, state, ttl_seconds)
 
+    async def _notify_autopay_legacy_terms(self, subscription, current_time: datetime) -> None:
+        """Одноразовое (на 7 суток) объяснение, почему автоплатёж не сработает.
+
+        Прежние индивидуальные условия уже оплачены до `end_date`, списывать за
+        них нечего, а технический тариф импорта — не выбор клиента. Ключ дедупа
+        такой же по устройству, как у пропуска классической подписки без тарифа,
+        но ставится только после фактической отправки: молчаливая ветка (нет
+        telegram_id, бот не поднят, уведомления выключены) иначе съела бы
+        единственную попытку объясниться.
+        """
+        cache_key = f'autopay_legacy_terms_notified:{subscription.user_id}:{subscription.id}'
+        try:
+            if await cache.exists(cache_key):
+                return
+            user = subscription.user
+            if not (
+                user
+                and user.telegram_id
+                and self.bot
+                and NotificationSettingsService.are_notifications_globally_enabled()
+            ):
+                return
+            texts = get_texts(user.language)
+            # Оплаченный срок мог уже закончиться (окно «недавно истёкших»):
+            # обещать действие прежних условий в прошедшей дате нельзя.
+            if subscription.end_date > current_time:
+                template = texts.t(
+                    'AUTOPAY_LEGACY_TERMS_SKIPPED',
+                    'ℹ️ <b>Автосписание по подписке не выполняется</b>\n\n'
+                    'Прежние индивидуальные условия действуют до {end_date}, '
+                    'автоматических списаний за них нет.\n\n'
+                    'Сейчас можно докупить LTE, а новый тариф выбрать после окончания этого срока.',
+                )
+            else:
+                template = texts.t(
+                    'AUTOPAY_LEGACY_TERMS_ENDED',
+                    'ℹ️ <b>Автосписание по подписке не выполняется</b>\n\n'
+                    'Оплаченный срок прежних индивидуальных условий закончился {end_date}, '
+                    'автоматических списаний за них нет.\n\n'
+                    'Выберите тариф в разделе «Моя подписка», чтобы продолжить пользоваться сервисом.',
+                )
+            await self.bot.send_message(
+                chat_id=user.telegram_id,
+                text=template.format(end_date=format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M')),
+                parse_mode='HTML',
+            )
+            await cache.set(cache_key, 1, expire=86400 * 7)
+        except Exception as notify_err:
+            logger.debug(
+                'Не удалось уведомить о пропуске autopay для индивидуальных условий',
+                subscription_id=subscription.id,
+                error=notify_err,
+            )
+
     async def _check_expired_subscriptions(self, db: AsyncSession):
         try:
             expired_subscriptions = await get_expired_subscriptions(db)
@@ -905,6 +959,8 @@ class MonitoringService:
             return None
 
     async def _check_expiring_subscriptions(self, db: AsyncSession):
+        from app.services.lte_quota_service import autopay_blocked_by_legacy
+
         if not NotificationSettingsService.are_notifications_globally_enabled():
             return
 
@@ -997,8 +1053,13 @@ class MonitoringService:
                         continue
 
                     if self.bot:
+                        # Считаем независимо от autopay_enabled: клиенту с выключенным
+                        # автоплатежом прежний текст советовал «включите автоплатёж или
+                        # продлите вручную», а по перенесённым условиям не сработает ни то,
+                        # ни другое — продлевать нужно не этот тариф, а выбрать новый.
+                        legacy_terms = await autopay_blocked_by_legacy(db, subscription)
                         success = await self._send_subscription_expiring_notification(
-                            user, subscription, days, has_saved_card=has_saved_card
+                            user, subscription, days, has_saved_card=has_saved_card, legacy_terms=legacy_terms
                         )
                         if success:
                             await record_notification(db, user.id, subscription.id, 'expiring', days)
@@ -1588,6 +1649,8 @@ class MonitoringService:
         return subscriptions
 
     async def _process_autopayments(self, db: AsyncSession):
+        from app.services.lte_quota_service import autopay_blocked_by_legacy
+
         try:
             current_time = datetime.now(UTC)
 
@@ -1665,8 +1728,25 @@ class MonitoringService:
                     continue
 
                 days_before_expiry = (sub.end_date - current_time).days
-                if days_before_expiry <= min(sub.autopay_days_before or 3, 3):
-                    autopay_subscriptions.append(sub)
+                if days_before_expiry > min(sub.autopay_days_before or 3, 3):
+                    continue
+
+                # Перенесённые индивидуальные условия: до конца оплаченного срока
+                # действуют прежние условия, после — тариф выбирает сам клиент.
+                # Это штатная политика, а не сбой: без этой ветки расчёт цены
+                # каждый цикл падал бы LtePolicyError, писал ERROR и растил
+                # failed_count по живой подписке, а в двухчасовом окне «недавно
+                # истёкших» autopay успевал бы молча купить технический тариф.
+                if await autopay_blocked_by_legacy(db, sub, now=current_time):
+                    logger.info(
+                        'Пропускаем автопродление подписки с перенесёнными индивидуальными условиями',
+                        sub_id=sub.id,
+                        user_id=sub.user_id,
+                    )
+                    await self._notify_autopay_legacy_terms(sub, current_time)
+                    continue
+
+                autopay_subscriptions.append(sub)
 
             processed_count = 0
             failed_count = 0
@@ -2042,15 +2122,33 @@ class MonitoringService:
             return False
 
     async def _send_subscription_expiring_notification(
-        self, user: User, subscription: Subscription, days: int, *, has_saved_card: bool = False
+        self,
+        user: User,
+        subscription: Subscription,
+        days: int,
+        *,
+        has_saved_card: bool = False,
+        legacy_terms: bool = False,
     ) -> bool:
         try:
             from app.utils.formatters import format_days_declension
 
             texts = get_texts(user.language)
             days_text = format_days_declension(days, user.language)
+            end_date = format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M')
 
-            if subscription.autopay_enabled and has_saved_card:
+            if legacy_terms:
+                # Перенесённые индивидуальные условия автопродлением не оплачиваются:
+                # срок просто закончится, а тариф клиент выбирает сам.
+                autopay_status = texts.t(
+                    'AUTOPAY_STATUS_LEGACY_TERMS',
+                    'ℹ️ Не применяется — действуют прежние индивидуальные условия',
+                )
+                action_text = texts.t(
+                    'AUTOPAY_ACTION_LEGACY_TERMS',
+                    '💡 Срок закончится {end_date}, после этого выберите тариф. Сейчас можно докупить LTE.',
+                ).format(end_date=end_date)
+            elif subscription.autopay_enabled and has_saved_card:
                 autopay_status = texts.t(
                     'AUTOPAY_STATUS_CARD_ACTIVE',
                     '✅ Включен — будет автоматическое списание с карты',
@@ -2084,7 +2182,6 @@ class MonitoringService:
                         '💡 Продлите подписку вручную',
                     )
 
-            end_date = format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M')
             # Add tariff name for multi-subscription clarity
             tariff_label = ''
             if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:

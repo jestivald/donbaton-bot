@@ -249,6 +249,22 @@ async def _process_single_subscription(
     else:
         autopay_period = 30
 
+    from app.services.lte_quota_service import autopay_blocked_by_legacy
+
+    # Проверяем ДО расчёта цены: после original_paid_until validate_legacy_renewal
+    # уже молчит, поэтому без этой ветки расчёт для EXPIRED-подписки в двухчасовом
+    # окне проходил бы, рекуррент считал недостачу и списывал с карты за
+    # продление, которого не будет. Ошибки конфигурации LTE (выключенный флаг,
+    # пустая эпоха, кривые UUID сквадов) сюда не попадают и остаются ERROR ниже —
+    # это авария по всем управляемым тарифам, а не политика по одной подписке.
+    if await autopay_blocked_by_legacy(db, subscription):
+        logger.info(
+            'Рекуррентный платёж пропущен: действуют перенесённые индивидуальные условия',
+            subscription_id=subscription.id,
+            user_id=user.id,
+        )
+        return 'skipped'
+
     try:
         from app.database.crud.user import lock_user_for_pricing
         from app.services.pricing_engine import pricing_engine
