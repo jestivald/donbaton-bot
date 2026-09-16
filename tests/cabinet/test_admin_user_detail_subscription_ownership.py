@@ -416,7 +416,7 @@ async def test_selected_sync_uses_only_selected_panel_id_when_legacy_mode_is_ena
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
     monkeypatch.setattr('app.services.remnawave_service.RemnaWaveService', Service)
     monkeypatch.setattr('app.services.grace_access_runtime.update_panel_user_grace_safe', update_panel_user)
-    monkeypatch.setattr('app.services.subscription_service.get_traffic_reset_strategy', lambda _tariff: 'NO_RESET')
+    monkeypatch.setattr('app.services.panel_sync.payload.get_traffic_reset_strategy', lambda _tariff: 'NO_RESET')
     monkeypatch.setattr('app.utils.subscription_utils.resolve_hwid_device_limit_for_payload', lambda _sub: None)
     user = SimpleNamespace(
         id=OWNER_ID,
@@ -516,7 +516,12 @@ def _legacy_panel_doubles(monkeypatch, *, found: bool):
 
     created = AsyncMock()
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
+    # Занятость id спрашивают двое: наш fallback в кабинете (через реэкспорт из
+    # subscription_service) и запись связи в panel_sync.identity, которая с 4.10.0
+    # зовёт функцию по имени своего модуля. Сессия в этих тестах — AsyncMock,
+    # настоящий SELECT на ней вернул бы «id занят».
     monkeypatch.setattr('app.services.subscription_service.panel_id_is_free_for', AsyncMock(return_value=True))
+    monkeypatch.setattr('app.services.panel_sync.identity.panel_id_is_free_for', AsyncMock(return_value=True))
     monkeypatch.setattr('app.services.remnawave_service.RemnaWaveService', Service)
     monkeypatch.setattr('app.services.grace_access_runtime.update_panel_user_grace_safe', update_panel_user)
     monkeypatch.setattr('app.services.grace_access_runtime.create_panel_user_grace_safe', created)
@@ -658,7 +663,12 @@ async def test_selected_reset_without_link_adopts_the_single_tariff_user_account
 ):
     """Одиночный режим и свободный аккаунт пользователя — сброс выключает именно его."""
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
+    # Занятость id спрашивают двое: наш fallback в кабинете (через реэкспорт из
+    # subscription_service) и запись связи в panel_sync.identity, которая с 4.10.0
+    # зовёт функцию по имени своего модуля. Сессия в этих тестах — AsyncMock,
+    # настоящий SELECT на ней вернул бы «id занят».
     monkeypatch.setattr('app.services.subscription_service.panel_id_is_free_for', AsyncMock(return_value=True))
+    monkeypatch.setattr('app.services.panel_sync.identity.panel_id_is_free_for', AsyncMock(return_value=True))
     ownership_boundary.remnawave_id = LEGACY_USER_PANEL_ID
     owned_subscription.remnawave_id = None
     panel_disable = AsyncMock(return_value=True)

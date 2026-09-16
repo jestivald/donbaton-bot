@@ -10,7 +10,12 @@
 """
 
 from app.services.panel_sync.expiry import panel_expire_at, stale_panel_expire_at
-from app.services.panel_sync.identity import PanelIdentity, resolve_panel_identity
+from app.services.panel_sync.identity import (
+    PanelIdentity,
+    link_subscription_panel_identity,
+    panel_id_is_free_for,
+    resolve_panel_identity,
+)
 from app.services.panel_sync.liveness import is_subscription_expired, is_subscription_live
 from app.services.panel_sync.managed import apply_managed_policy, reproject_after_create
 from app.services.panel_sync.payload import POLICY_FIELDS, PanelPayload, build_panel_payload
@@ -27,6 +32,7 @@ from app.services.panel_sync.projection import (
 )
 from app.services.panel_sync.runner import SyncStats, push_all_subscriptions
 from app.services.panel_sync.tags import normalize_panel_tag, resolve_panel_user_tag
+from app.services.panel_sync.traffic_strategy import get_traffic_reset_strategy
 from app.services.panel_sync.writer import (
     PanelWriteResult,
     patch_panel_account,
@@ -50,9 +56,12 @@ __all__ = [
     'SyncStats',
     'apply_managed_policy',
     'build_panel_payload',
+    'get_traffic_reset_strategy',
     'is_subscription_expired',
     'is_subscription_live',
+    'link_subscription_panel_identity',
     'panel_expire_at',
+    'panel_id_is_free_for',
     'panel_status_for_new_subscription',
     'patch_panel_account',
     'patch_panel_policy',
