@@ -265,8 +265,14 @@ b490a1f8 ← база: прод
 
 ```python
 if _is_managed(subscription):
-    policy = replace(policy, takes_date=False, takes_traffic_limit=False,
-                     takes_device_limit=False, takes_squads=False, status_mode='managed')
+    policy = replace(
+        policy,
+        takes_date=False,
+        takes_traffic_limit=False,
+        takes_device_limit=False,
+        takes_squads=False,
+        status_mode='managed',
+    )
 ```
 
 Иначе «панель побеждает при любом статусе» означало бы, что у исчерпавшего квоту абонента
