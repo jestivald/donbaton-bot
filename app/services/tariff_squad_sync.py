@@ -71,7 +71,18 @@ async def sync_tariff_squads_in_background(tariff_id: int, admin_id: int) -> Non
             from app.services.subscription_service import SubscriptionService
 
             for managed_sub in [sub for sub in subscriptions if network_category(sub)]:
-                await SubscriptionService().update_remnawave_user(db, managed_sub)
+                # Ошибка на одной подписке не должна обрывать проход: дальше по списку
+                # идут неуправляемые, и без этого они не доехали бы до panel_sync вовсе.
+                # Тот же порядок, что у `_sync_one` ниже.
+                try:
+                    await SubscriptionService().update_remnawave_user(db, managed_sub)
+                except Exception as e:
+                    logger.warning(
+                        'Background sync: failed to sync managed subscription',
+                        subscription_id=managed_sub.id,
+                        user_id=managed_sub.user_id,
+                        error=str(e),
+                    )
             subscriptions = [sub for sub in subscriptions if not network_category(sub)]
             if not subscriptions:
                 return
