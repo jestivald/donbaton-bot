@@ -560,36 +560,52 @@ class MonitoringService:
         ttl_seconds = int(max(0.0, hours_left) * 3600) + 72 * 3600
         await self._save_autopay_fail_state(subscription.id, cycle_token, state, ttl_seconds)
 
-    async def _notify_autopay_legacy_terms(self, subscription) -> None:
+    async def _notify_autopay_legacy_terms(self, subscription, current_time: datetime) -> None:
         """Одноразовое (на 7 суток) объяснение, почему автоплатёж не сработает.
 
         Прежние индивидуальные условия уже оплачены до `end_date`, списывать за
         них нечего, а технический тариф импорта — не выбор клиента. Ключ дедупа
-        такой же по устройству, как у пропуска классической подписки без тарифа.
+        такой же по устройству, как у пропуска классической подписки без тарифа,
+        но ставится только после фактической отправки: молчаливая ветка (нет
+        telegram_id, бот не поднят, уведомления выключены) иначе съела бы
+        единственную попытку объясниться.
         """
         cache_key = f'autopay_legacy_terms_notified:{subscription.user_id}:{subscription.id}'
         try:
             if await cache.exists(cache_key):
                 return
             user = subscription.user
-            if (
+            if not (
                 user
                 and user.telegram_id
                 and self.bot
                 and NotificationSettingsService.are_notifications_globally_enabled()
             ):
-                texts = get_texts(user.language)
-                await self.bot.send_message(
-                    chat_id=user.telegram_id,
-                    text=texts.t(
-                        'AUTOPAY_LEGACY_TERMS_SKIPPED',
-                        'ℹ️ <b>Автосписание по подписке не выполняется</b>\n\n'
-                        'Прежние индивидуальные условия действуют до {end_date}, '
-                        'автоматических списаний за них нет.\n\n'
-                        'Сейчас можно докупить LTE, а новый тариф выбрать после окончания этого срока.',
-                    ).format(end_date=format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M')),
-                    parse_mode='HTML',
+                return
+            texts = get_texts(user.language)
+            # Оплаченный срок мог уже закончиться (окно «недавно истёкших»):
+            # обещать действие прежних условий в прошедшей дате нельзя.
+            if subscription.end_date > current_time:
+                template = texts.t(
+                    'AUTOPAY_LEGACY_TERMS_SKIPPED',
+                    'ℹ️ <b>Автосписание по подписке не выполняется</b>\n\n'
+                    'Прежние индивидуальные условия действуют до {end_date}, '
+                    'автоматических списаний за них нет.\n\n'
+                    'Сейчас можно докупить LTE, а новый тариф выбрать после окончания этого срока.',
                 )
+            else:
+                template = texts.t(
+                    'AUTOPAY_LEGACY_TERMS_ENDED',
+                    'ℹ️ <b>Автосписание по подписке не выполняется</b>\n\n'
+                    'Оплаченный срок прежних индивидуальных условий закончился {end_date}, '
+                    'автоматических списаний за них нет.\n\n'
+                    'Выберите тариф в разделе «Моя подписка», чтобы продолжить пользоваться сервисом.',
+                )
+            await self.bot.send_message(
+                chat_id=user.telegram_id,
+                text=template.format(end_date=format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M')),
+                parse_mode='HTML',
+            )
             await cache.set(cache_key, 1, expire=86400 * 7)
         except Exception as notify_err:
             logger.debug(
@@ -854,12 +870,6 @@ class MonitoringService:
                     if not should_send:
                         continue
 
-                    # Автоплатёж по перенесённым индивидуальным условиям не сработает —
-                    # обещать «продлится автоматически» такому клиенту нельзя.
-                    legacy_terms = bool(subscription.autopay_enabled) and await autopay_blocked_by_legacy(
-                        db, subscription
-                    )
-
                     # Handle email-only users via notification delivery service
                     if not user.telegram_id:
                         success = await notification_delivery_service.notify_subscription_expiring(
@@ -879,6 +889,11 @@ class MonitoringService:
                         continue
 
                     if self.bot:
+                        # Считаем независимо от autopay_enabled: клиенту с выключенным
+                        # автоплатежом прежний текст советовал «включите автоплатёж или
+                        # продлите вручную», а по перенесённым условиям не сработает ни то,
+                        # ни другое — продлевать нужно не этот тариф, а выбрать новый.
+                        legacy_terms = await autopay_blocked_by_legacy(db, subscription)
                         success = await self._send_subscription_expiring_notification(
                             user, subscription, days, has_saved_card=has_saved_card, legacy_terms=legacy_terms
                         )
@@ -1557,7 +1572,7 @@ class MonitoringService:
                         sub_id=sub.id,
                         user_id=sub.user_id,
                     )
-                    await self._notify_autopay_legacy_terms(sub)
+                    await self._notify_autopay_legacy_terms(sub, current_time)
                     continue
 
                 autopay_subscriptions.append(sub)

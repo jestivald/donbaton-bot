@@ -849,6 +849,7 @@
   "AUTOPAY_STATUS_LEGACY_TERMS": "ℹ️ 不适用 — 您此前的专属条件仍然有效",
   "AUTOPAY_ACTION_LEGACY_TERMS": "💡 有效期将于 {end_date} 结束，之后请选择套餐。现在可以加购 LTE。",
   "AUTOPAY_LEGACY_TERMS_SKIPPED": "ℹ️ <b>该订阅不会自动扣款</b>\n\n您此前的专属条件在 {end_date} 之前有效，期间不会自动扣款。\n\n现在可以加购 LTE，该期限结束后再选择新套餐。",
+  "AUTOPAY_LEGACY_TERMS_ENDED": "ℹ️ <b>该订阅不会自动扣款</b>\n\n您此前专属条件的付费期限已于 {end_date} 结束，期间不会自动扣款。\n\n请在“我的订阅”中选择套餐以继续使用服务。",
   "AUTOPAY_STATUS_OFF": "❌ 已禁用 — 请别忘了手动续订！",
   "AUTOPAY_ACTION_CHECK_BALANCE": "💰 您当前的余额：{balance}",
   "AUTOPAY_ACTION_ENABLE": "💡 请启用自动支付或手动续订",

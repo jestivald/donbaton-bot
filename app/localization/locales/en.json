@@ -909,6 +909,7 @@
   "AUTOPAY_STATUS_LEGACY_TERMS": "ℹ️ Not applied — your previous individual terms are still in effect",
   "AUTOPAY_ACTION_LEGACY_TERMS": "💡 The term ends on {end_date}; choose a plan after that. You can top up LTE now.",
   "AUTOPAY_LEGACY_TERMS_SKIPPED": "ℹ️ <b>No automatic charge for this subscription</b>\n\nYour previous individual terms are in effect until {end_date}, and nothing is charged automatically for them.\n\nYou can top up LTE now and choose a new plan once that term ends.",
+  "AUTOPAY_LEGACY_TERMS_ENDED": "ℹ️ <b>No automatic charge for this subscription</b>\n\nThe paid term of your previous individual conditions ended on {end_date}, and nothing is charged automatically for them.\n\nChoose a plan in \"My subscription\" to keep using the service.",
   "AUTOPAY_STATUS_OFF": "❌ Disabled — don't forget to renew manually!",
   "AUTOPAY_ACTION_CHECK_BALANCE": "💰 Your current balance: {balance}",
   "AUTOPAY_ACTION_ENABLE": "💡 Enable autopay or renew your subscription manually",
