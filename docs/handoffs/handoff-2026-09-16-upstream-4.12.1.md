@@ -3,8 +3,10 @@
 **Дата:** 2026-09-16
 **Репозиторий:** `/Users/admin/Documents/work/vpn/donbaton/forks/bedolaga-bot`
 **Worktree:** `/Users/admin/Documents/work/_worktrees/donbaton-bot/upstream-4.12.1`
-**Ветка:** `codex/upstream-4.12.1`, HEAD = `57a4caa98f3c14df2536d1874869a8b824e64296`
-**Последний коммит, меняющий содержимое образа:** `0b9c28c3` (дальше — только этот документ)
+**Ветка:** `codex/upstream-4.12.1`
+**Код релиза:** `0b9c28c3` — последний коммит, меняющий содержимое образа. Всё, что после
+него на ветке, это правки самого документа передачи (поэтому его собственный sha здесь не
+называется — он менялся бы каждой такой правкой; актуальный — `git rev-parse HEAD`).
 **База:** `b490a1f8` (прод, ветка `codex/admin-sync-fallback`, образ `donbaton/bedolaga:adminsync-b490a1f8-20260913`)
 **Ничего не запушено, серверы не тронуты. Рабочая копия чистая.**
 
@@ -431,7 +433,7 @@ if _is_managed(subscription):
 
 Всё из корня worktree, venv собран `uv sync` (uv 0.12.12, CPython 3.13).
 
-| Проверка | База `b490a1f8` | HEAD `0b9c28c3` |
+| Проверка | База `b490a1f8` | Код релиза `0b9c28c3` |
 |---|---|---|
 | `uv run pytest -q` | **8312 passed, 54 skipped** | **9271 passed, 163 skipped** |
 | `uv run ruff check .` | All checks passed | All checks passed |
