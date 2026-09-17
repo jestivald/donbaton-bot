@@ -37,6 +37,7 @@ from app.external.remnawave_api import (
 from app.services.lte_quota_service import needs_managed_policy
 from app.services.panel_sync import (
     BULK_SNAPSHOT,
+    link_subscription_panel_identity,
     project_onto_subscription,
     push_all_subscriptions,
     read_panel_user,
@@ -2339,7 +2340,10 @@ class RemnaWaveService:
                 ),
             }
 
-            await create_subscription_no_commit(db, **subscription_data)
+            subscription = await create_subscription_no_commit(db, **subscription_data)
+            # Аккаунт панели — у подписки, а не только у пользователя: мультитариф и
+            # экраны по выбранной подписке (устройства, трафик) читают строго её id.
+            await link_subscription_panel_identity(db, subscription, _normalize_panel_user_id(panel_user.get('id')))
             logger.info('✅ Подготовлена подписка для пользователя', telegram_id=user.telegram_id, expire_at=expire_at)
 
         except Exception as e:
@@ -2437,6 +2441,8 @@ class RemnaWaveService:
                 policy=BULK_SNAPSHOT,
                 snapshot_taken_at=snapshot_taken_at,
             )
+            # Старый импорт оставлял строку без id панели — привязываем при первом проходе.
+            await link_subscription_panel_identity(db, subscription, _normalize_panel_user_id(panel_user.get('id')))
             if changed:
                 logger.debug(
                     'Подписка обновлена из панели',
