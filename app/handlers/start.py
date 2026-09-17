@@ -446,9 +446,7 @@ async def _link_pending_web_auth_after_registration(
                 texts.t('WEB_AUTH_SUCCESS', '✅ Авторизация в кабинете подтверждена! Вернитесь в браузер.')
             )
         else:
-            await answer_func(
-                texts.t('WEB_AUTH_EXPIRED', '❌ Ссылка для входа истекла. Попробуйте снова.')
-            )
+            await answer_func(texts.t('WEB_AUTH_EXPIRED', '❌ Ссылка для входа истекла. Попробуйте снова.'))
     except Exception as e:
         logger.error(
             'Failed to link pending web auth token after registration',
