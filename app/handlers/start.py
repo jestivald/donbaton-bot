@@ -81,7 +81,11 @@ from app.services.registration_access_service import (
 from app.services.registration_invite_service import RegistrationInviteConflict, RegistrationInviteService
 from app.services.subscription_service import SubscriptionService
 from app.services.support_settings_service import SupportSettingsService
-from app.services.web_auth_service import WEB_AUTH_TOKEN_MIN_LENGTH, link_web_auth_token
+from app.services.web_auth_service import (
+    WEB_AUTH_TOKEN_MIN_LENGTH,
+    link_web_auth_token,
+    poll_web_auth_token,
+)
 from app.states import RegistrationStates
 from app.utils.gift_links import InvalidGiftTokenError, parse_gift_claim_input
 from app.utils.long_messages import answer_long_text, edit_long_text, send_long_text
@@ -409,6 +413,46 @@ async def _persist_pending_subid_after_registration(
             'Failed to persist pending subid after registration',
             user_id=getattr(user, 'id', None),
             subid=pending_subid,
+            error=str(e),
+            exc_info=True,
+        )
+
+
+async def _link_pending_web_auth_after_registration(
+    state: FSMContext,
+    user: 'User',
+    answer_func: Callable[..., Any],
+) -> None:
+    """Дожать вход в кабинет, ради которого пользователь и пришёл в бота.
+
+    Пара к ветке `/start webauth_<token>` для незарегистрированного гостя:
+    токен переживает регистрацию в FSM, и как только аккаунт создан — линкуем
+    его, чтобы вкладка кабинета, которая всё это время висит на poll'е,
+    авторизовалась сама. Молча выходим, если токена нет или он протух:
+    регистрация уже прошла и ломать её из-за входа в кабинет нельзя.
+    """
+    try:
+        fresh_state = await state.get_data() or {}
+        token = fresh_state.get('pending_web_auth_token')
+        if not token:
+            return
+
+        texts = get_texts(user.language)
+        linked = await link_web_auth_token(token, user.telegram_id, user.id)
+        await state.update_data(pending_web_auth_token=None)
+
+        if linked:
+            await answer_func(
+                texts.t('WEB_AUTH_SUCCESS', '✅ Авторизация в кабинете подтверждена! Вернитесь в браузер.')
+            )
+        else:
+            await answer_func(
+                texts.t('WEB_AUTH_EXPIRED', '❌ Ссылка для входа истекла. Попробуйте снова.')
+            )
+    except Exception as e:
+        logger.error(
+            'Failed to link pending web auth token after registration',
+            user_id=getattr(user, 'id', None),
             error=str(e),
             exc_info=True,
         )
@@ -1359,11 +1403,32 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                     ),
                     reply_markup=keyboard,
                 )
-            else:
-                logger.warning('Web auth attempt from unregistered user', telegram_id=message.from_user.id)
-                await message.answer('❌ Сначала зарегистрируйтесь в боте, затем попробуйте войти в кабинет.')
-            return
-        start_parameter = None  # Invalid token, ignore
+                return
+
+            # Не зарегистрирован в боте. Раньше здесь был тупик («сначала
+            # зарегистрируйтесь») — вход в кабинет обрывался, а вместе с ним
+            # терялось приглашение: пользователь пришёл по ссылке
+            # `lk/login?ref=<code>`, нажал «Войти через Telegram», и код остался
+            # в localStorage браузера. Теперь запускаем обычную регистрацию,
+            # запомнив токен, а код приглашения достаём из самого токена.
+            logger.info(
+                'Web auth from unregistered user — starting registration',
+                telegram_id=message.from_user.id,
+            )
+            pending_referral_code: str | None = None
+            try:
+                token_data = await poll_web_auth_token(web_auth_token)
+                if token_data and token_data.get('status') == 'pending':
+                    pending_referral_code = token_data.get('referral_code') or None
+            except Exception as exc:
+                logger.warning('Failed to read web auth token payload', error=exc)
+
+            await state.update_data(pending_web_auth_token=web_auth_token)
+            # Отдаём код в общий конвейер /start: он резолвит реферера,
+            # кладёт pending-реферал в Redis и сажает его в FSM регистрации.
+            start_parameter = pending_referral_code
+        else:
+            start_parameter = None  # Invalid token, ignore
 
     # Handle contests deep link: /start contests — the channel announcement's
     # "🎲 Играть" button opens the bot here (a callback button can't open a
@@ -1597,6 +1662,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             await _redeem_pending_coupon(db, state, user, message.answer)
             await _activate_pending_trial(db, state, user, message.answer, message.bot)
             await _persist_pending_subid_after_registration(db, state, user)
+            await _link_pending_web_auth_after_registration(state, user, message.answer)
             await state.update_data(
                 pending_gift_token=None, pending_coupon_token=None, pending_subid=None, pending_trial=None
             )
@@ -2166,8 +2232,12 @@ async def process_referral_code_input(message: types.Message, state: FSMContext,
         return
 
     from app.utils.promo_rate_limiter import promo_limiter, validate_promo_format
+    from app.utils.referral_link import extract_referral_code
 
-    code = message.text.strip()
+    # Пользователи вставляют не код, а ссылку целиком — и кабинетную
+    # (`.../login?ref=<code>`), и ботовую (`t.me/<bot>?start=<code>`).
+    # Без разбора ссылка не проходит validate_promo_format и приглашение теряется.
+    code = extract_referral_code(message.text)
 
     # Валидация формата
     if not validate_promo_format(code):
@@ -2495,6 +2565,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
     await _activate_pending_gift_after_registration(db, state, user, callback.message.answer)
     await _redeem_pending_coupon(db, state, user, callback.message.answer)
     await _persist_pending_subid_after_registration(db, state, user)
+    await _link_pending_web_auth_after_registration(state, user, callback.message.answer)
     # Gift/coupon may have just created a subscription — reload it, otherwise the
     # stale empty list below offers the trial on top of the granted subscription
     try:
@@ -2882,6 +2953,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
     await _activate_pending_gift_after_registration(db, state, user, message.answer)
     await _redeem_pending_coupon(db, state, user, message.answer)
     await _persist_pending_subid_after_registration(db, state, user)
+    await _link_pending_web_auth_after_registration(state, user, message.answer)
     # Gift/coupon may have just created a subscription — reload it, otherwise the
     # stale empty list below offers the trial on top of the granted subscription
     try:

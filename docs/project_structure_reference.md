@@ -452,7 +452,7 @@
   Классы: `ApplePurchaseRequest` (1 методов), `ApplePurchaseResponse`, `AppleAccountTokenResponse`
   Функции: нет
 - `app/cabinet/schemas/auth.py` — Python-модуль
-  Классы: `TelegramAuthRequest`, `TelegramWidgetAuthRequest`, `TelegramOIDCAuthRequest`, `EmailRegisterRequest`, `EmailVerifyRequest`, `EmailLoginRequest`, `RefreshTokenRequest`, `VerificationResendRequest`, `PasswordForgotRequest`, `PasswordResetRequest`, `AutoLoginRequest`, `TokenResponse`, `UserResponse`, `UserAvatarResponse`, `EmailRegisterStandaloneRequest`, `CampaignBonusInfo`, `AuthResponse`, `RegisterResponse`, `EmailChangeRequest`, `EmailChangeVerifyRequest`, `EmailMergeVerifyRequest`, `EmailChangeResponse`, `DeepLinkTokenResponse`, `DeepLinkPollRequest`
+  Классы: `TelegramAuthRequest`, `TelegramWidgetAuthRequest`, `TelegramOIDCAuthRequest`, `EmailRegisterRequest`, `EmailVerifyRequest`, `EmailLoginRequest`, `RefreshTokenRequest`, `VerificationResendRequest`, `PasswordForgotRequest`, `PasswordResetRequest`, `AutoLoginRequest`, `TokenResponse`, `UserResponse`, `UserAvatarResponse`, `EmailRegisterStandaloneRequest`, `CampaignBonusInfo`, `AuthResponse`, `RegisterResponse`, `EmailChangeRequest`, `EmailChangeVerifyRequest`, `EmailMergeVerifyRequest`, `EmailChangeResponse`, `DeepLinkTokenResponse`, `DeepLinkTokenRequest`, `DeepLinkPollRequest`
   Функции: нет
 - `app/cabinet/schemas/balance.py` — Python-модуль
   Классы: `BalanceResponse`, `TransactionResponse`, `TransactionListResponse`, `PaymentOptionResponse`, `PaymentMethodResponse`, `TopUpRequest`, `TopUpResponse`, `StarsInvoiceRequest`, `StarsInvoiceResponse`, `PendingPaymentResponse`, `PendingPaymentListResponse`, `ManualCheckResponse`, `SavedCardResponse`, `SavedCardsListResponse`
@@ -2187,6 +2187,9 @@
 - `app/utils/redis_client.py` — Python-модуль
   Классы: нет
   Функции: `create_redis` — Клиент с пулом соединений к ``url`` (по умолчанию ``settings.REDIS_URL``).
+- `app/utils/referral_link.py` — Python-модуль
+  Классы: нет
+  Функции: `extract_referral_code` — Вернуть код из текста: голый код отдаётся как есть, ссылка — распаршенной.
 - `app/utils/rich_admin.py` — Python-модуль
   Классы: нет
   Функции: `is_rich_admin_enabled`, `rich_footer_now` — Футер с меткой и временем: tg-time рендерится в таймзоне админа., `rich_kv_table` — Таблица «показатель → значение» (bordered/striped). Значения — сырой HTML., `rich_traceback_details` — Сворачиваемый traceback: <details> + <pre><code class="language-python">., `classic_admin_html_to_rich` — Конвертирует классическое HTML-уведомление в rich-разметку., `try_send_rich_admin_message` — Отправляет rich-сообщение в админ-чат. False — слать классический вариант.
@@ -3672,6 +3675,9 @@
 - `tests/donbaton/test_recurring_ui.py` — Python-модуль
   Классы: нет
   Функции: `callbacks`, `recurring_enabled`, `test_managed_purchase_surfaces_exclude_external_authorization`, `test_managed_direct_balance_topup_remains_available_without_recurring`, `test_legacy_default_preserves_both_recurring_providers`, `test_all_checkout_and_cart_restore_calls_supply_explicit_category` — An omitted call-site argument silently falls back to legacy provider buttons., `handler_context`, `test_managed_autopay_menu_has_no_sbp_entry_without_existing_binding`, `test_existing_managed_binding_can_be_cancelled_even_if_feature_disabled`, `test_direct_managed_menu_does_not_offer_creation_but_keeps_existing_cancel`, `test_forged_managed_enable_callback_never_reaches_payment_service`, `test_enable_explains_business_rejection_and_keeps_provider_failure_generic`
+- `tests/donbaton/test_referral_link_handoff.py` — Python-модуль
+  Классы: `TestExtractReferralCode` (3 методов), `TestDeepLinkTokenCarriesReferral` (3 методов), `TestWebAuthDeadEnd` (4 методов)
+  Функции: нет
 - `tests/donbaton/test_tariff_switch.py` — Python-модуль
   Классы: нет
   Функции: `switching_enabled`, `plan`, `seed` — Живая подписка на сетевом тарифе с обычным (не legacy) учётом., `test_switch_applies_new_allowance_to_the_running_cycle`, `test_downgrade_cuts_the_allowance_without_forgiving_spent_bytes`, `test_switch_to_wifi_only_drops_lte_at_once`, `test_legacy_window_moves_devices_now_and_the_allowance_at_the_paid_boundary`, `test_legacy_window_never_takes_away_devices_already_paid_for`, `test_describe_switch_tells_each_surface_the_same_story`, `test_describe_switch_dates_the_allowance_inside_the_legacy_window`, `test_custom_terms_still_wait_for_the_paid_end`, `test_live_old_subscription_cannot_buy_a_network_plan`, `test_network_subscription_cannot_walk_back_to_old_accounting`, `test_disabled_flag_keeps_the_previous_refusal`, `test_only_a_live_paid_subscription_switches`, `test_bot_checkout_quotes_the_full_period_price_for_another_plan` — Все замки на пути `tariff_select:` → период → `tariff_confirm:` сняты разом., `test_live_network_subscription_gets_the_catalogue_button`, `test_purchase_of_another_plan_keeps_the_remaining_days`, `test_network_devices_reset_only_when_the_limit_shrinks`, `test_legacy_pairs_keep_the_upstream_unconditional_reset`, `test_cabinet_switch_sends_network_plans_to_the_purchase_flow`, `test_miniapp_switch_sends_network_plans_to_the_purchase_flow`, `test_cabinet_purchase_of_another_network_plan_goes_through`, `test_cabinet_purchase_of_a_smaller_network_plan_clears_devices`

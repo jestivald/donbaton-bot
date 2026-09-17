@@ -27,8 +27,12 @@ WEB_AUTH_TOKEN_MIN_LENGTH = 16
 WEB_AUTH_PREFIX = 'web_auth'
 
 
-async def create_web_auth_token() -> str:
+async def create_web_auth_token(referral_code: str | None = None) -> str:
     """Generate a web auth token and store it in Redis (pending state).
+
+    ``referral_code`` carries the cabinet's ``?ref=`` code through the deep link
+    so that a user who is NOT yet registered in the bot still gets attributed to
+    the inviter: the browser's localStorage never reaches the bot, the token does.
 
     Returns the raw token string (URL-safe, 24 bytes of entropy).
     """
@@ -38,6 +42,8 @@ async def create_web_auth_token() -> str:
         'status': 'pending',
         'created_at': datetime.now(UTC).isoformat(),
     }
+    if referral_code:
+        value['referral_code'] = str(referral_code)[:64]
     stored = await cache.set(key, value, expire=WEB_AUTH_TOKEN_TTL)
     if not stored:
         logger.error('Failed to store web auth token in Redis')
@@ -65,7 +71,8 @@ async def link_web_auth_token(token: str, telegram_id: int, user_id: int) -> boo
         logger.warning('Web auth token already used', token_prefix=token[:8])
         return False
 
-    # Update token with user info
+    # Update token with user info. `referral_code` (if any) is intentionally kept:
+    # it is only read by the bot while the token is still pending.
     data['status'] = 'linked'
     data['telegram_id'] = telegram_id
     data['user_id'] = user_id

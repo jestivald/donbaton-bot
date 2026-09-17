@@ -253,11 +253,38 @@ class DeepLinkTokenResponse(BaseModel):
     expires_in: int = Field(..., description='Token TTL in seconds')
 
 
+class DeepLinkTokenRequest(BaseModel):
+    """Request to mint a deep link auth token.
+
+    ``referral_code`` is the cabinet's ``?ref=`` code. Deep link auth is NOT only
+    for existing bot users: a fresh visitor who arrived by a referral link picks
+    "log in with Telegram", lands in the bot with no account and registers there.
+    The code has to ride along with the token — the browser's localStorage does
+    not reach the bot.
+    """
+
+    referral_code: str | None = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r'^[a-zA-Z0-9_-]+$',
+        description='Referral code captured from the cabinet URL (?ref=)',
+    )
+    campaign_slug: str | None = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r'^[a-zA-Z0-9_-]+$',
+        description='Campaign slug captured from cabinet URL',
+    )
+
+
 class DeepLinkPollRequest(BaseModel):
     """Request to poll deep link auth status.
 
-    Deep link auth is always for existing bot users — referral codes are not applicable here.
-    Only campaign_slug is supported (campaign bonus can apply to existing users).
+    The referral code travels with the token (see ``DeepLinkTokenRequest``), so it
+    is not repeated here. Only campaign_slug is supported (campaign bonus can
+    apply to existing users).
     """
 
     token: str = Field(..., min_length=16, max_length=128, description='Deep link auth token')
