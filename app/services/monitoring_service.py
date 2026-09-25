@@ -3359,7 +3359,7 @@ class MonitoringService:
 
         while self.is_running:
             try:
-                await run_quota_cycle(self.subscription_service)
+                await run_quota_cycle(self.subscription_service, bot=self.bot)
             except asyncio.CancelledError:
                 return
             except Exception as error:

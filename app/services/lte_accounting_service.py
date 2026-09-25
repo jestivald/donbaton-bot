@@ -17,53 +17,118 @@ class LegacyAccountingError(ValueError):
     """The supplied snapshot cannot establish an unambiguous entitlement."""
 
 
-def valid_telemetry_heartbeat(payload, *, epoch, node_ids, now, max_age_seconds):
-    """Trusted producer evidence for both complete node→panel accounting paths."""
-    if not isinstance(payload, dict) or type(payload.get('version')) is not int or payload['version'] != 1:
-        return False
+@dataclass(frozen=True, slots=True)
+class TelemetryProof:
+    """What one producer lease proves about the configured LTE routes.
+
+    `proven` and `missing` partition the configured nodes. `failed` holds the
+    producer's code for a missing route it named. `extra` lists lease nodes the
+    consumer is not configured for: they are ignored, never counted.
+    """
+
+    version: int
+    proven: tuple[str, ...]
+    missing: tuple[str, ...]
+    failed: dict
+    extra: tuple[str, ...]
+    required: int
+
+    @property
+    def accepted(self) -> bool:
+        return len(self.proven) >= self.required
+
+
+def _listed_nodes(values):
+    nodes = [str(UUID(value)) for value in values] if isinstance(values, list) else []
+    return set(nodes) if nodes and len(set(nodes)) == len(nodes) else None
+
+
+def telemetry_proof(payload, *, epoch, node_ids, min_routes=1):
+    """Structural reading of a lease against the configured nodes; age is not checked.
+
+    v1 (the original producer) is all-or-nothing and stays accepted only with the
+    exact configured set. v2 lists the proven routes in `node_ids` and names each
+    failed one in `failed`; it is accepted with at least `min_routes` proven
+    configured nodes, clamped to 1..configured so a misconfiguration never closes
+    LTE by itself. Returns None for a foreign or malformed lease.
+    """
+    if not isinstance(payload, dict) or type(payload.get('version')) is not int or payload['version'] not in (1, 2):
+        return None
     if not isinstance(epoch, str) or not epoch or payload.get('epoch') != epoch:
-        return False
+        return None
     try:
-        expected = {str(UUID(node_id)) for node_id in node_ids}
-        observed_nodes = payload['node_ids']
-        if not isinstance(observed_nodes, list) or len(observed_nodes) != 2 or len(expected) != 2:
-            return False
-        if {str(UUID(node_id)) for node_id in observed_nodes} != expected:
-            return False
-        observed = timestamp(payload['observed_at'])
-        age = timestamp(now) - observed
-        return timedelta(0) <= age <= timedelta(seconds=max_age_seconds)
+        configured = {str(UUID(node_id)) for node_id in node_ids}
+        listed = _listed_nodes(payload['node_ids'])
+        if not configured or listed is None:
+            return None
+        failed = {}
+        if payload['version'] == 1:
+            if listed != configured:
+                return None
+        else:
+            reported = payload['failed']
+            if not isinstance(reported, dict):
+                return None
+            for node_id, code in reported.items():
+                if not isinstance(code, str) or not 0 < len(code) <= 64:
+                    return None
+                failed[str(UUID(node_id))] = code
+            if len(failed) != len(reported) or set(failed) & listed:
+                return None
     except (ValueError, TypeError, KeyError, AttributeError):
-        return False
+        return None
+    requested = min_routes if type(min_routes) is int and min_routes > 0 else 1
+    missing = tuple(sorted(configured - listed))
+    return TelemetryProof(
+        version=payload['version'],
+        proven=tuple(sorted(configured & listed)),
+        missing=missing,
+        failed={node_id: failed[node_id] for node_id in missing if node_id in failed},
+        extra=tuple(sorted((listed | set(failed)) - configured)),
+        required=min(requested, len(configured)),
+    )
 
 
-def telemetry_within_grace(last_valid, *, epoch, node_ids, now, grace_seconds):
+def live_telemetry_proof(payload, *, epoch, node_ids, now, max_age_seconds, min_routes=1):
+    """The route reading of a current lease, accepted or not; None when foreign or stale."""
+    proof = telemetry_proof(payload, epoch=epoch, node_ids=node_ids, min_routes=min_routes)
+    if proof is None:
+        return None
+    try:
+        age = timestamp(now) - timestamp(payload['observed_at'])
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+    return proof if timedelta(0) <= age <= timedelta(seconds=max_age_seconds) else None
+
+
+def valid_telemetry_heartbeat(payload, *, epoch, node_ids, now, max_age_seconds, min_routes=1):
+    """Trusted, current producer evidence for enough complete node→panel accounting paths."""
+    proof = live_telemetry_proof(
+        payload, epoch=epoch, node_ids=node_ids, now=now, max_age_seconds=max_age_seconds, min_routes=min_routes
+    )
+    return proof is not None and proof.accepted
+
+
+def telemetry_within_grace(last_valid, *, epoch, node_ids, now, grace_seconds, min_routes=1):
     """Bounded tolerance for a producer outage, anchored on the last valid proof.
 
-    The producer drops its lease whenever any single route fails, so a flapping
-    route erases evidence that the accounting path itself is intact. The
-    remembered proof still has to describe the same epoch and the same two
-    verified nodes; only the consumer's own observation time is trusted for age,
-    because a stale `observed_at` is exactly what the grace window forgives.
+    With lease v2 the producer keeps publishing while any route is proven, so
+    the window now covers a producer that proves nothing at all: dead, stopped,
+    or every route down at once. The remembered proof still has to satisfy the
+    current configuration (same epoch, enough of the configured nodes); only the
+    consumer's own observation time is trusted for age, because a stale
+    `observed_at` is exactly what the grace window forgives.
     """
     if not isinstance(last_valid, dict) or type(grace_seconds) is not int or grace_seconds <= 0:
         return False
-    payload = last_valid.get('payload')
-    if not isinstance(payload, dict) or type(payload.get('version')) is not int or payload['version'] != 1:
-        return False
-    if not isinstance(epoch, str) or not epoch or payload.get('epoch') != epoch:
+    proof = telemetry_proof(last_valid.get('payload'), epoch=epoch, node_ids=node_ids, min_routes=min_routes)
+    if proof is None or not proof.accepted:
         return False
     try:
-        expected = {str(UUID(node_id)) for node_id in node_ids}
-        remembered = payload['node_ids']
-        if not isinstance(remembered, list) or len(remembered) != 2 or len(expected) != 2:
-            return False
-        if {str(UUID(node_id)) for node_id in remembered} != expected:
-            return False
         age = timestamp(now) - timestamp(last_valid['seen_at'])
-        return timedelta(0) <= age <= timedelta(seconds=grace_seconds)
     except (ValueError, TypeError, KeyError, AttributeError):
         return False
+    return timedelta(0) <= age <= timedelta(seconds=grace_seconds)
 
 
 def _integer(value: int, name: str, *, minimum: int = 0) -> int:

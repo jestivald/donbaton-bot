@@ -9,7 +9,7 @@ customer-favouring sampling tolerance is deliberately not a last-byte guarantee.
 
 import asyncio
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -19,6 +19,7 @@ from sqlalchemy import or_, select
 from app.config import settings
 from app.database.models import LteOrphanQuota, LteQuota, LteTopup, Subscription, Tariff, TrafficPurchase, User
 from app.external.remnawave_api import TrafficLimitStrategy, UserStatus
+from app.services import lte_telemetry_alerts
 from app.services.lte_accounting_service import (
     LegacyAccountingError,
     advance_legacy_state,
@@ -29,6 +30,7 @@ from app.services.lte_accounting_service import (
     legacy_device_limit,
     legacy_is_unlimited,
     legacy_pool_boundary,
+    live_telemetry_proof,
     physical_counter_delta,
     telemetry_within_grace,
     timestamp,
@@ -53,10 +55,22 @@ class TelemetryEvidence:
     subscription: a slow cycle must not extend a heartbeat. `last_valid` is the
     remembered proof behind the grace window, resolved once so an outage cannot
     turn one Redis read into one per user.
+
+    The rest describes the cycle for the owner's alerts. `proven`/`missing`
+    partition the configured nodes by the current lease (no current lease: all
+    missing). `failed` says why a missing route is missing when a current lease
+    tells: the producer's code, or `unmonitored` for a route it does not check.
+    `state` is the gate decision: `live` (enough routes proven), `grace` (none,
+    but the last proof is recent; `grace_remaining` seconds left) or `closed`.
     """
 
     payload: object = None
     last_valid: object = _UNRESOLVED_MEMORY
+    proven: tuple = ()
+    missing: tuple = ()
+    failed: dict = dataclass_field(default_factory=dict)
+    state: str = 'unknown'
+    grace_remaining: int | None = None
 
 
 class LtePolicyError(ValueError):
@@ -101,9 +115,33 @@ def _telemetry_node_ids():
         nodes = {str(UUID(item.strip())) for item in settings.DONBATON_LTE_NODE_UUIDS.split(',') if item.strip()}
     except (ValueError, AttributeError) as error:
         raise LtePolicyError('Неверные UUID нод подтверждения LTE-учёта') from error
-    if len(nodes) != 2:
-        raise LtePolicyError('Для подтверждения LTE-учёта нужны UUID двух проверенных LTE-нод')
+    if not nodes:
+        raise LtePolicyError('Для подтверждения LTE-учёта нужен UUID хотя бы одной проверенной LTE-ноды')
     return sorted(nodes)
+
+
+_REPORTED_TELEMETRY_CONFIG = set()
+
+
+def _warn_once(event, **fields):
+    """A configuration mismatch is logged once per distinct value, not every cycle."""
+    key = (event, tuple(sorted(fields.items())))
+    if key not in _REPORTED_TELEMETRY_CONFIG:
+        _REPORTED_TELEMETRY_CONFIG.add(key)
+        logger.warning(event, **fields)
+
+
+def _telemetry_min_routes(nodes):
+    """Operator's minimum of proven routes; above the node count it is clamped, never fatal."""
+    requested = settings.DONBATON_LTE_TELEMETRY_MIN_ROUTES
+    if type(requested) is not int or requested < 1:
+        _warn_once('LTE telemetry minimum routes is invalid, using 1', requested=str(requested))
+        return 1
+    if requested > len(nodes):
+        _warn_once(
+            'LTE telemetry minimum routes exceeds configured nodes, clamped', requested=requested, nodes=len(nodes)
+        )
+    return requested
 
 
 async def _read_telemetry_heartbeat(*, now=None):
@@ -156,12 +194,14 @@ async def _read_remembered_heartbeat():
 
 def _live_heartbeat_is_valid(payload, *, now):
     try:
+        nodes = _telemetry_node_ids()
         return valid_telemetry_heartbeat(
             payload,
             epoch=settings.DONBATON_LTE_ACCOUNTING_EPOCH,
-            node_ids=_telemetry_node_ids(),
+            node_ids=nodes,
             now=now,
             max_age_seconds=settings.DONBATON_LTE_MAX_SAMPLE_AGE_SECONDS,
+            min_routes=_telemetry_min_routes(nodes),
         )
     except LtePolicyError:
         return False
@@ -169,15 +209,47 @@ def _live_heartbeat_is_valid(payload, *, now):
 
 def _memory_is_within_grace(last_valid, *, now):
     try:
+        nodes = _telemetry_node_ids()
         return telemetry_within_grace(
             last_valid,
             epoch=settings.DONBATON_LTE_ACCOUNTING_EPOCH,
-            node_ids=_telemetry_node_ids(),
+            node_ids=nodes,
             now=now,
             grace_seconds=settings.DONBATON_LTE_TELEMETRY_GRACE_SECONDS,
+            min_routes=_telemetry_min_routes(nodes),
         )
     except LtePolicyError:
         return False
+
+
+def _telemetry_routes(payload, *, now):
+    """Per-route reading of the cycle's lease; `accepted` tells whether it opens LTE."""
+    try:
+        nodes = _telemetry_node_ids()
+    except LtePolicyError:
+        return False, {}
+    proof = live_telemetry_proof(
+        payload,
+        epoch=settings.DONBATON_LTE_ACCOUNTING_EPOCH,
+        node_ids=nodes,
+        now=now,
+        max_age_seconds=settings.DONBATON_LTE_MAX_SAMPLE_AGE_SECONDS,
+        min_routes=_telemetry_min_routes(nodes),
+    )
+    if proof is None:
+        return False, {'missing': tuple(nodes)}
+    if proof.extra:
+        _warn_once('LTE telemetry lease names unconfigured nodes, ignored', nodes=proof.extra)
+    failed = {node_id: proof.failed.get(node_id, 'unmonitored') for node_id in proof.missing}
+    return proof.accepted, {'proven': proof.proven, 'missing': proof.missing, 'failed': failed}
+
+
+def _lte_accounting_active():
+    return bool(
+        settings.DONBATON_LTE_ENABLED
+        and settings.DONBATON_LTE_ACCOUNTING_READY
+        and settings.DONBATON_LTE_ACCOUNTING_EPOCH
+    )
 
 
 def _grace_remaining_seconds(last_valid, *, now):
@@ -193,23 +265,46 @@ async def _resolve_telemetry_evidence(*, now=None):
 
     The memory is refreshed here, where the lease is actually read, so a cycle
     over hundreds of subscriptions still performs one Redis write, and the
-    single warning below reports one outage instead of one per user.
+    single warning below reports one outage instead of one per user. A partial
+    v2 lease with enough proven routes is live telemetry like a complete one.
     """
     now = _now(now)
     payload = await _read_telemetry_heartbeat(now=now)
+    accepted, routes = _telemetry_routes(payload, now=now)
     if settings.DONBATON_LTE_TELEMETRY_GRACE_SECONDS <= 0 or not settings.DONBATON_LTE_ACCOUNTING_EPOCH:
-        return TelemetryEvidence(payload=payload, last_valid=None)
-    if _live_heartbeat_is_valid(payload, now=now):
-        return TelemetryEvidence(payload=payload, last_valid=await _remember_valid_heartbeat(payload, now=now))
+        if not accepted:
+            _log_lte_closed(last_valid=None)
+        return TelemetryEvidence(payload=payload, last_valid=None, state='live' if accepted else 'closed', **routes)
+    if accepted:
+        last_valid = await _remember_valid_heartbeat(payload, now=now)
+        return TelemetryEvidence(payload=payload, last_valid=last_valid, state='live', **routes)
     last_valid = await _read_remembered_heartbeat()
     if _memory_is_within_grace(last_valid, now=now):
+        remaining = _grace_remaining_seconds(last_valid, now=now)
         logger.warning(
             'LTE telemetry missing, within grace',
             epoch=settings.DONBATON_LTE_ACCOUNTING_EPOCH,
             grace_seconds=settings.DONBATON_LTE_TELEMETRY_GRACE_SECONDS,
-            remaining_seconds=_grace_remaining_seconds(last_valid, now=now),
+            remaining_seconds=remaining,
         )
-    return TelemetryEvidence(payload=payload, last_valid=last_valid)
+        return TelemetryEvidence(
+            payload=payload, last_valid=last_valid, state='grace', grace_remaining=remaining, **routes
+        )
+    _log_lte_closed(last_valid=last_valid)
+    return TelemetryEvidence(payload=payload, last_valid=last_valid, state='closed', **routes)
+
+
+def _log_lte_closed(*, last_valid):
+    """Closing LTE used to be silent: 'within grace' lines just stopped."""
+    if not _lte_accounting_active():
+        return
+    seen_at = last_valid.get('seen_at') if isinstance(last_valid, dict) else None
+    logger.warning(
+        'LTE telemetry missing beyond grace, LTE closed',
+        epoch=settings.DONBATON_LTE_ACCOUNTING_EPOCH,
+        grace_seconds=settings.DONBATON_LTE_TELEMETRY_GRACE_SECONDS,
+        last_valid_seen_at=seen_at if isinstance(seen_at, str) else None,
+    )
 
 
 async def _with_telemetry_status(status, *, now, heartbeat=_UNSET_HEARTBEAT):
@@ -1342,7 +1437,7 @@ async def reconcile_orphan_quota(db, quota, api, *, now=None, heartbeat=_UNSET_H
     return updated
 
 
-async def run_quota_cycle(subscription_service):
+async def run_quota_cycle(subscription_service, bot=None):
     """One independent polling pass; no Telegram, payment or email effects."""
     from app.database.database import AsyncSessionLocal
 
@@ -1388,6 +1483,7 @@ async def run_quota_cycle(subscription_service):
         # Resolve the producer evidence once: every subscription below shares
         # this snapshot, and only its age is re-checked per user.
         evidence = await _resolve_telemetry_evidence()
+        await lte_telemetry_alerts.report_cycle(evidence, bot=bot)
 
         async def reconcile_one(subscription_id):
             async with semaphore, AsyncSessionLocal() as db:

@@ -1,29 +1,44 @@
 """Actual heartbeat consumer: healthy panel GETs cannot conceal frozen accounting."""
 
 import json
+from contextlib import asynccontextmanager
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from structlog.testing import capture_logs
 
 from app.config import settings
-from app.services import lte_quota_service
-from app.services.lte_accounting_service import telemetry_within_grace, timestamp, valid_telemetry_heartbeat
+from app.services import lte_quota_service, lte_telemetry_alerts
+from app.services.admin_notification_service import AdminNotificationService
+from app.services.lte_accounting_service import (
+    telemetry_proof,
+    telemetry_within_grace,
+    timestamp,
+    valid_telemetry_heartbeat,
+)
 from app.services.lte_quota_service import (
+    LtePolicyError,
     TelemetryEvidence,
     _read_telemetry_heartbeat as production_reader,
+    _resolve_telemetry_evidence,
     apply_panel_policy,
     get_quota_status,
     quota_status_from_subscription,
+    run_quota_cycle,
+    validate_tariff_for_sale,
 )
 from app.utils.cache import cache
 from tests.donbaton.conftest import TEST_LTE_NODES
-from tests.donbaton.test_lte_quota import LTE, NOW, TABLES, WIFI, sample, seed
+from tests.donbaton.test_lte_legacy import TABLES as CYCLE_TABLES
+from tests.donbaton.test_lte_quota import LTE, NOW, TABLES, WIFI, sample, seed, tariff
 from tests.fixtures.sqlite_memory import memory_session
 
 
 OTHER_NODE = '00000000-0000-4000-8000-000000000013'
+CLOSED = 'LTE telemetry missing beyond grace, LTE closed'
 
 
 def proof(at=NOW):
@@ -32,6 +47,17 @@ def proof(at=NOW):
         'epoch': settings.DONBATON_LTE_ACCOUNTING_EPOCH,
         'observed_at': at.isoformat(),
         'node_ids': list(TEST_LTE_NODES),
+    }
+
+
+def proof_v2(proven, failed=None, at=NOW):
+    """What the v2 canary writes: the proven subset plus a code per failed route."""
+    return {
+        'version': 2,
+        'epoch': settings.DONBATON_LTE_ACCOUNTING_EPOCH,
+        'observed_at': at.isoformat(),
+        'node_ids': list(proven),
+        'failed': dict(failed or {}),
     }
 
 
@@ -50,7 +76,8 @@ def real_consumer_with_fake_redis(monkeypatch):
     'change',
     [
         {'version': True},
-        {'version': 2},
+        {'version': 2},  # v2 without its failure map is malformed
+        {'version': 3},
         {'epoch': 'other'},
         {'observed_at': 'bad'},
         {'observed_at': (NOW + timedelta(seconds=1)).isoformat()},
@@ -216,8 +243,8 @@ async def test_short_producer_outage_inside_the_window_keeps_lte_and_warns_once(
     monkeypatch.setattr(settings, 'DONBATON_LTE_TELEMETRY_GRACE_SECONDS', 900)
     async with memory_session(monkeypatch, TABLES) as db:
         sub, _, _ = await seed(db)
-        # The producer drops its lease when either route fails, so the anchor is
-        # all that is left of a pipeline that never actually broke.
+        # The producer proves no route right now (or is restarting), so the
+        # anchor is all that is left of a pipeline that never actually broke.
         redis_store[memory_key()] = json.dumps(remembered(NOW - timedelta(minutes=5)))
         with capture_logs() as logs:
             payload = await apply_panel_policy(db, sub, {}, panel_user=sample(0), now=NOW)
@@ -229,16 +256,22 @@ async def test_short_producer_outage_inside_the_window_keeps_lte_and_warns_once(
 
 
 @pytest.mark.asyncio
-async def test_outage_beyond_the_window_closes_lte(monkeypatch, redis_store):
+async def test_outage_beyond_the_window_closes_lte_and_says_so(monkeypatch, redis_store):
     monkeypatch.setattr(settings, 'DONBATON_LTE_TELEMETRY_GRACE_SECONDS', 900)
     async with memory_session(monkeypatch, TABLES) as db:
         sub, _, _ = await seed(db)
-        redis_store[memory_key()] = json.dumps(remembered(NOW - timedelta(minutes=20)))
+        seen_at = NOW - timedelta(minutes=20)
+        redis_store[memory_key()] = json.dumps(remembered(seen_at))
         with capture_logs() as logs:
             payload = await apply_panel_policy(db, sub, {}, panel_user=sample(0), now=NOW)
         assert payload['active_internal_squads'] == [WIFI]
         assert (await get_quota_status(db, sub, now=NOW))['accounting_state'] == 'telemetry_unavailable'
         assert not [log for log in logs if log['event'] == 'LTE telemetry missing, within grace']
+        # Closing LTE used to be silent: the grace warnings simply stopped.
+        closed = [log for log in logs if log['event'] == CLOSED]
+        assert [log['log_level'] for log in closed] == ['warning']
+        assert closed[0]['grace_seconds'] == 900
+        assert timestamp(closed[0]['last_valid_seen_at']) == seen_at
 
 
 @pytest.mark.asyncio
@@ -316,3 +349,181 @@ async def test_a_cycle_resolves_the_memory_once_for_every_subscription(monkeypat
             db, sub, {}, panel_user=sample(0), now=NOW + timedelta(seconds=901), heartbeat=evidence
         )
         assert late['active_internal_squads'] == [WIFI]
+
+
+A, B = TEST_LTE_NODES
+
+
+def accepted(payload, *, nodes=TEST_LTE_NODES, min_routes=1):
+    return valid_telemetry_heartbeat(
+        payload,
+        epoch=settings.DONBATON_LTE_ACCOUNTING_EPOCH,
+        node_ids=nodes,
+        now=NOW,
+        max_age_seconds=180,
+        min_routes=min_routes,
+    )
+
+
+@pytest.mark.parametrize(
+    ('lease', 'min_routes', 'expected'),
+    [
+        (lambda: proof_v2([A, B]), 1, True),
+        (lambda: proof_v2([B], {A: 'unreachable'}), 1, True),
+        (lambda: proof_v2([B]), 1, True),  # a route the canary does not check is simply missing
+        (lambda: proof_v2([B], {A: 'unreachable'}), 2, False),
+        (lambda: proof_v2([B], {A: 'unreachable'}), 5, False),  # clamped to both configured nodes
+        (lambda: proof_v2([A, B]), 5, True),
+        (lambda: proof_v2([B, OTHER_NODE], {A: 'asset'}), 1, True),  # an unconfigured node is ignored
+        (lambda: proof_v2([OTHER_NODE], dict.fromkeys([A, B], 'asset')), 1, False),
+        (lambda: proof_v2([], dict.fromkeys([A, B], 'asset')), 1, False),
+        (lambda: proof_v2([B, B], {A: 'asset'}), 1, False),
+        (lambda: proof_v2([A, B], {A: 'asset'}), 1, False),  # proven and failed at once
+        (lambda: dict(proof_v2([B]), failed=[A]), 1, False),
+        (lambda: proof_v2([B], {A: 7}), 1, False),
+        (lambda: proof_v2([B], {'not-a-uuid': 'asset'}), 1, False),
+        (lambda: proof_v2([B], at=NOW - timedelta(seconds=181)), 1, False),
+        (lambda: dict(proof(), node_ids=[B]), 1, False),  # v1 stays all-or-nothing
+    ],
+)
+def test_v2_lease_is_accepted_on_enough_configured_routes(lease, min_routes, expected):
+    assert accepted(lease(), min_routes=min_routes) is expected
+
+
+def test_route_reading_names_what_is_proven_missing_and_why():
+    reading = telemetry_proof(
+        proof_v2([B, OTHER_NODE], {A: 'not_persisted'}),
+        epoch=settings.DONBATON_LTE_ACCOUNTING_EPOCH,
+        node_ids=TEST_LTE_NODES,
+    )
+    assert reading.proven == (B,)
+    assert reading.missing == (A,)
+    assert reading.failed == {A: 'not_persisted'}
+    assert reading.extra == (OTHER_NODE,)
+    assert reading.accepted
+
+
+def test_grace_accepts_a_remembered_partial_proof():
+    lease = {
+        'payload': proof_v2([B], {A: 'unreachable'}, at=NOW - timedelta(hours=1)),
+        'seen_at': (NOW - timedelta(seconds=300)).isoformat(),
+    }
+    arguments = dict(epoch=settings.DONBATON_LTE_ACCOUNTING_EPOCH, node_ids=TEST_LTE_NODES, now=NOW, grace_seconds=900)
+    assert telemetry_within_grace(lease, **arguments)
+    assert not telemetry_within_grace(lease, min_routes=2, **arguments)
+
+
+@pytest.mark.asyncio
+async def test_one_dead_bypass_keeps_lte_for_everyone_and_anchors_grace(monkeypatch, redis_store):
+    monkeypatch.setattr(settings, 'DONBATON_LTE_TELEMETRY_GRACE_SECONDS', 900)
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, _ = await seed(db)
+        partial = proof_v2([B], {A: 'unreachable'})
+        redis_store[live_key()] = json.dumps(partial)
+        payload = await apply_panel_policy(db, sub, {}, panel_user=sample(0), now=NOW)
+        assert payload['active_internal_squads'] == [WIFI, LTE]
+        assert quota_status_from_subscription(sub)['accounting_state'] == 'ready'
+        # A partial lease is live telemetry: it anchors the grace window like a complete one.
+        assert json.loads(redis_store[memory_key()])['payload'] == partial
+        evidence = await _resolve_telemetry_evidence(now=NOW)
+        assert evidence.state == 'live'
+        assert (evidence.proven, evidence.missing, evidence.failed) == ((B,), (A,), {A: 'unreachable'})
+
+
+@pytest.mark.asyncio
+async def test_losing_every_route_falls_back_to_grace_then_closes(monkeypatch, redis_store):
+    monkeypatch.setattr(settings, 'DONBATON_LTE_TELEMETRY_GRACE_SECONDS', 900)
+    redis_store[live_key()] = json.dumps(proof_v2([B], {A: 'unreachable'}))
+    assert (await _resolve_telemetry_evidence(now=NOW)).state == 'live'
+    del redis_store[live_key()]  # the last route failed too: the canary removed its key
+    grace = await _resolve_telemetry_evidence(now=NOW + timedelta(seconds=60))
+    assert (grace.state, grace.grace_remaining, grace.missing) == ('grace', 840, (A, B))
+    assert (await _resolve_telemetry_evidence(now=NOW + timedelta(seconds=901))).state == 'closed'
+
+
+@pytest.mark.asyncio
+async def test_minimum_above_the_node_count_is_clamped_with_one_warning(monkeypatch, redis_store):
+    monkeypatch.setattr(settings, 'DONBATON_LTE_TELEMETRY_MIN_ROUTES', 5)
+    monkeypatch.setattr(lte_quota_service, '_REPORTED_TELEMETRY_CONFIG', set())
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, _ = await seed(db)
+        redis_store[live_key()] = json.dumps(proof_v2([A, B]))
+        with capture_logs() as logs:
+            for _ in range(3):
+                payload = await apply_panel_policy(db, sub, {}, panel_user=sample(0), now=NOW)
+        assert payload['active_internal_squads'] == [WIFI, LTE]  # the setting alone never closes LTE
+        warnings = [log for log in logs if log['event'].startswith('LTE telemetry minimum routes exceeds')]
+        assert [(log['requested'], log['nodes']) for log in warnings] == [(5, 2)]
+        redis_store[live_key()] = json.dumps(proof_v2([B], {A: 'asset'}))
+        payload = await apply_panel_policy(db, sub, {}, panel_user=sample(0), now=NOW)
+        assert payload['active_internal_squads'] == [WIFI]  # clamped to every configured route
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_nodes_in_a_lease_are_ignored_with_one_warning(monkeypatch, redis_store):
+    monkeypatch.setattr(lte_quota_service, '_REPORTED_TELEMETRY_CONFIG', set())
+    redis_store[live_key()] = json.dumps(proof_v2([B, OTHER_NODE], {A: 'unreachable'}))
+    with capture_logs() as logs:
+        for _ in range(2):
+            evidence = await _resolve_telemetry_evidence(now=NOW)
+    assert evidence.state == 'live'
+    assert evidence.proven == (B,)
+    warnings = [log for log in logs if log['event'] == 'LTE telemetry lease names unconfigured nodes, ignored']
+    assert [log['nodes'] for log in warnings] == [(OTHER_NODE,)]
+
+
+@pytest.mark.asyncio
+async def test_one_to_n_configured_nodes(monkeypatch, redis_store):
+    monkeypatch.setattr(settings, 'DONBATON_LTE_NODE_UUIDS', f'{A},{B},{OTHER_NODE}')
+    # The old v1 canary proves two routes: that no longer covers a third configured one.
+    redis_store[live_key()] = json.dumps(proof())
+    assert (await _resolve_telemetry_evidence(now=NOW)).state == 'closed'
+    redis_store[live_key()] = json.dumps(proof_v2([A, B]))
+    evidence = await _resolve_telemetry_evidence(now=NOW)
+    assert evidence.state == 'live'
+    assert (evidence.missing, evidence.failed) == ((OTHER_NODE,), {OTHER_NODE: 'unmonitored'})
+    monkeypatch.setattr(settings, 'DONBATON_LTE_NODE_UUIDS', A)
+    redis_store[live_key()] = json.dumps(dict(proof(), node_ids=[A]))
+    assert (await _resolve_telemetry_evidence(now=NOW)).state == 'live'
+
+
+def test_lte_sale_needs_at_least_one_verified_node(monkeypatch):
+    monkeypatch.setattr(settings, 'DONBATON_LTE_NODE_UUIDS', ' , ')
+    with pytest.raises(LtePolicyError, match='хотя бы одной'):
+        validate_tariff_for_sale(tariff())
+    monkeypatch.setattr(settings, 'DONBATON_LTE_NODE_UUIDS', A)
+    validate_tariff_for_sale(tariff())
+
+
+@pytest.mark.asyncio
+async def test_cycle_that_closes_lte_logs_it_every_cycle_and_alerts_the_owner_once(monkeypatch, redis_store):
+    from app.database import database
+    from app.services.admin_notification_service import NotificationCategory
+
+    monkeypatch.setattr(settings, 'DONBATON_LTE_TELEMETRY_GRACE_SECONDS', 900)
+    monkeypatch.setattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', True)
+    monkeypatch.setattr(settings, 'ADMIN_NOTIFICATIONS_CHAT_ID', '-100500')
+    monkeypatch.setattr(lte_telemetry_alerts, '_memory', {})
+    send = AsyncMock(return_value=True)
+    monkeypatch.setattr(AdminNotificationService, 'send_admin_notification', send)
+    async with memory_session(monkeypatch, CYCLE_TABLES) as db:
+        await seed(db)
+        maker = async_sessionmaker(db.bind, expire_on_commit=False, autoflush=False)
+        monkeypatch.setattr(database, 'AsyncSessionLocal', maker)
+        api = SimpleNamespace(get_user_by_id=AsyncMock(return_value=sample(0)), update_user=AsyncMock())
+
+        @asynccontextmanager
+        async def client():
+            yield api
+
+        service = SimpleNamespace(is_configured=True, get_api_client=client)
+        # The cycle runs on the wall clock: an anchor an hour old is beyond any grace.
+        redis_store[memory_key()] = json.dumps(remembered(NOW - timedelta(hours=1)))
+        with capture_logs() as logs:
+            await run_quota_cycle(service, bot=object())
+            await run_quota_cycle(service, bot=object())
+    assert api.update_user.await_args_list[0].kwargs['active_internal_squads'] == [WIFI]
+    assert len([log for log in logs if log['event'] == CLOSED]) == 2
+    send.assert_awaited_once()  # one message for the change, not one per cycle
+    assert 'LTE снят у всех' in send.await_args.args[0]
+    assert send.await_args.kwargs == {'category': NotificationCategory.INFRASTRUCTURE}
