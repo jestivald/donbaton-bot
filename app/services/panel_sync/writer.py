@@ -30,6 +30,7 @@ from app.services.panel_sync.identity import (
     find_foreign_panel_owner,
     link_subscription_panel_identity,
     resolve_panel_identity,
+    user_panel_id_is_free_for,
 )
 from app.services.panel_sync.managed import apply_managed_policy, reproject_after_create
 from app.services.panel_sync.payload import POLICY_FIELDS, PanelPayload, build_panel_payload
@@ -164,6 +165,50 @@ async def push_subscription(
             # не попадают: уход в создание плодил бы дубли.
             if not is_user_not_found_error(error) or not recreate_on_missing:
                 raise
+            # Прежде чем создавать: аккаунт подписки мог уже быть заведён прошлой
+            # попыткой, которая не успела записать связь. Создание тогда упирается
+            # в занятое имя — и так на каждом проходе, без выхода.
+            survivor = await resolve_panel_identity(
+                api,
+                user,
+                subscription,
+                multi_tariff=multi_tariff,
+                pinned=pinned,
+                ignore_recorded_ids=True,
+                db=db,
+            )
+            survivor.raise_if_foreign(subscription)
+            if survivor.user_id is not None and survivor.user_id != panel_user_id:
+                logger.warning(
+                    'Записанный панельный id мёртв, аккаунт подписки нашёлся другим ключом — перепривязываем',
+                    subscription_id=getattr(subscription, 'id', None),
+                    dead_panel_user_id=panel_user_id,
+                    panel_user_id=survivor.user_id,
+                    source=survivor.source,
+                )
+                panel_user = await update(
+                    **payload.update_kwargs(
+                        user_id=survivor.user_id,
+                        panel_current=survivor.expire_at,
+                        now=moment,
+                        only_fields=only_fields,
+                    )
+                )
+                await _record_identity(
+                    db,
+                    user,
+                    subscription,
+                    panel_user,
+                    multi_tariff=multi_tariff,
+                    panel_user_id=survivor.user_id,
+                    replace_stale=True,
+                    dead_panel_user_id=panel_user_id,
+                )
+                return PanelWriteResult(
+                    panel_user=panel_user,
+                    action='updated',
+                    panel_user_id=getattr(panel_user, 'id', None) or survivor.user_id,
+                )
             logger.warning(
                 'Панельный аккаунт исчез — создаём заново',
                 subscription_id=getattr(subscription, 'id', None),
@@ -173,7 +218,15 @@ async def push_subscription(
             # Связь ОБЯЗАНА перезаписаться: в колонке лежит id аккаунта, которого
             # в панели больше нет. Оставить его — значит на каждом следующем
             # проходе снова не находить аккаунт и заводить ещё один дубль.
-            await _record_identity(db, user, subscription, panel_user, multi_tariff=multi_tariff, replace_stale=True)
+            await _record_identity(
+                db,
+                user,
+                subscription,
+                panel_user,
+                multi_tariff=multi_tariff,
+                replace_stale=True,
+                dead_panel_user_id=panel_user_id,
+            )
             created_id = getattr(panel_user, 'id', None)
             panel_user = await reproject_after_create(db, subscription, payload, panel_user, update=update, now=moment)
             return PanelWriteResult(
@@ -189,7 +242,14 @@ async def push_subscription(
             now=moment,
         )
         await _record_identity(
-            db, user, subscription, panel_user, multi_tariff=multi_tariff, panel_user_id=panel_user_id
+            db,
+            user,
+            subscription,
+            panel_user,
+            multi_tariff=multi_tariff,
+            panel_user_id=panel_user_id,
+            replace_stale=bool(identity.dead_recorded_ids),
+            dead_panel_user_id=_dead_user_link(identity, user),
         )
         return PanelWriteResult(
             panel_user=panel_user,
@@ -209,7 +269,19 @@ async def push_subscription(
         return PanelWriteResult(panel_user=None, action='no_changes')
 
     panel_user = await create(**payload.create_kwargs(now=moment))
-    await _record_identity(db, user, subscription, panel_user, multi_tariff=multi_tariff)
+    # Аккаунт не нашёлся ни одним ключом, и записанные id проверкой признаны
+    # мёртвыми — связь ОБЯЗАНА перезаписаться. Иначе колонка остаётся занятой
+    # адресом удалённой учётки: следующее нажатие снова её не найдёт и заведёт
+    # ещё одну (issue #3277).
+    await _record_identity(
+        db,
+        user,
+        subscription,
+        panel_user,
+        multi_tariff=multi_tariff,
+        replace_stale=bool(identity.dead_recorded_ids),
+        dead_panel_user_id=_dead_user_link(identity, user),
+    )
     created_id = getattr(panel_user, 'id', None)
     panel_user = await reproject_after_create(db, subscription, payload, panel_user, update=update, now=moment)
     return PanelWriteResult(
@@ -263,6 +335,19 @@ async def _extinguish_stale_date(
     return True
 
 
+def _dead_user_link(identity, user) -> int | None:
+    """Мёртвый ли адрес записан у человека.
+
+    ``_record_identity`` стирает ``users.remnawave_id`` в мультитарифе только
+    при совпадении с этим значением: там аккаунты принадлежат подпискам, и
+    чужой живой адрес человека трогать нельзя.
+    """
+    recorded = getattr(user, 'remnawave_id', None)
+    if recorded and recorded in identity.dead_recorded_ids:
+        return int(recorded)
+    return None
+
+
 async def _record_identity(
     db,
     user,
@@ -272,6 +357,7 @@ async def _record_identity(
     multi_tariff: bool,
     panel_user_id: int | None = None,
     replace_stale: bool = False,
+    dead_panel_user_id: int | None = None,
 ) -> None:
     """Записать в базу, каким аккаунтом панели закрыта эта подписка.
 
@@ -284,6 +370,10 @@ async def _record_identity(
     ``replace_stale`` — в колонке лежит id аккаунта, которого в панели уже нет:
     его надо затереть, иначе следующий проход снова не найдёт аккаунт и заведёт
     ещё один дубль.
+
+    ``dead_panel_user_id`` — тот самый исчезнувший id. В мультитарифе первый
+    аккаунт записан и человеку; мёртвый адрес там достался бы следующей покупке
+    (``should_create_panel_account``), поэтому затираем его и у человека.
     """
     panel_user_id = getattr(panel_user, 'id', None) or panel_user_id
     if panel_user_id is None:
@@ -291,7 +381,7 @@ async def _record_identity(
 
     if replace_stale:
         subscription.remnawave_id = None
-        if not multi_tariff:
+        if not multi_tariff or (dead_panel_user_id and getattr(user, 'remnawave_id', None) == dead_panel_user_id):
             user.remnawave_id = None
 
     short_uuid = getattr(panel_user, 'short_uuid', None)
@@ -304,7 +394,13 @@ async def _record_identity(
     if crypto_link is not None:
         subscription.subscription_crypto_link = crypto_link
 
-    if not multi_tariff and not getattr(user, 'remnawave_id', None):
+    # Одиночный режим адресует панель через человека. В мультитарифе аккаунты у
+    # подписок, но первый из них записываем и человеку: иначе после возврата
+    # оператора в одиночный режим у него «нет аккаунта» — 0 устройств, второй
+    # аккаунт при покупке. Записанный аккаунт не перезаписываем.
+    if not getattr(user, 'remnawave_id', None) and (
+        db is None or await user_panel_id_is_free_for(db, user, panel_user_id)
+    ):
         user.remnawave_id = panel_user_id
 
     if db is None:

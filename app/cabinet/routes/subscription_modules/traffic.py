@@ -18,6 +18,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query as QueryParam, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cabinet.routes.subscription_modules.helpers import ensure_subscription_has_tariff
 from app.config import settings
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.transaction import create_transaction
@@ -26,11 +27,13 @@ from app.database.models import TransactionType, User
 from app.services.donbaton_catalog import network_category
 from app.services.lte_quota_service import LtePolicyError, get_quota_status
 from app.services.lte_topup_purchase_service import LtePurchaseError, purchase_lte_topup, quote_lte_package
+from app.services.panel_sync import should_create_panel_account
 from app.services.pricing_engine import pricing_engine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
 from app.utils.cache import RateLimitCache, cache, cache_key
+from app.utils.legacy_subscription import is_legacy_subscription
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import (
@@ -62,6 +65,9 @@ async def get_traffic_packages(
 
     subscription = await resolve_subscription(db, user, subscription_id)
     if not subscription:
+        return []
+    if is_legacy_subscription(subscription):
+        # Старая подписка: пакетов по классическим ценам не предлагаем — сперва переход на тариф.
         return []
 
     category = network_category(subscription)
@@ -187,6 +193,8 @@ async def purchase_traffic(
     from app.utils.pricing_utils import calculate_prorated_price
 
     subscription = await resolve_subscription(db, user, subscription_id)
+
+    ensure_subscription_has_tariff(subscription)
 
     if not subscription:
         raise HTTPException(
@@ -397,10 +405,7 @@ async def purchase_traffic(
     # remnawave_retry_queue (та же ветка обработки, что и при ошибке).
     try:
         subscription_service = SubscriptionService()
-        if settings.is_multi_tariff_enabled():
-            _should_create = not subscription.remnawave_id
-        else:
-            _should_create = not getattr(user, 'remnawave_id', None)
+        _should_create = await should_create_panel_account(db, subscription, user)
 
         async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
             if _should_create:
@@ -503,6 +508,8 @@ async def save_traffic_cart(
     subscription = await resolve_subscription(db, user, subscription_id)
     if network_category(subscription):
         raise HTTPException(status_code=400, detail='Для LTE используйте покупку отдельного пакета')
+
+    ensure_subscription_has_tariff(subscription)
 
     if not subscription:
         raise HTTPException(
@@ -620,6 +627,8 @@ async def switch_traffic_package(
     if network_category(subscription):
         raise HTTPException(status_code=400, detail='Для LTE используйте покупку отдельного пакета')
 
+    ensure_subscription_has_tariff(subscription)
+
     if not subscription:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -719,10 +728,7 @@ async def switch_traffic_package(
     # already committed, defer slow syncs to remnawave_retry_queue).
     try:
         subscription_service = SubscriptionService()
-        if settings.is_multi_tariff_enabled():
-            _should_create = not subscription.remnawave_id
-        else:
-            _should_create = not getattr(user, 'remnawave_id', None)
+        _should_create = await should_create_panel_account(db, subscription, user)
 
         async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
             if _should_create:

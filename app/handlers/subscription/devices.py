@@ -37,6 +37,7 @@ from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
 from app.states import SubscriptionStates
+from app.utils.legacy_subscription import is_legacy_subscription
 from app.utils.pagination import paginate_list
 from app.utils.pricing_utils import (
     apply_percentage_discount,
@@ -200,6 +201,17 @@ async def handle_change_devices(
         return
 
     if not await _device_slot_changes_allowed(callback, subscription):
+        return
+
+    if is_legacy_subscription(subscription):
+        # Старая подписка (без тарифа при включённых тарифах): докупок нет, сперва переход на тариф.
+        await callback.answer(
+            texts.t(
+                'LEGACY_ADDONS_UNAVAILABLE',
+                '⚠️ Сначала перейдите на тариф — докупки для этой подписки недоступны',
+            ),
+            show_alert=True,
+        )
         return
 
     # Проверяем тариф подписки
@@ -1597,7 +1609,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         period_label = f'{charged_days} дн.' if charged_days > 1 else '1 день'
 
     logger.info(
-        'Добавление устройств: ₽/мес × = ₽ (скидка ₽)',
+        'Добавление устройств',
         devices_count=devices_count,
         discounted_per_month=discounted_per_month / 100,
         period_label=period_label,

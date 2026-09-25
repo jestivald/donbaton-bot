@@ -18,6 +18,8 @@ from app.services.panel_sync.identity import (
     link_subscription_panel_identity,
     panel_id_is_free_for,
     resolve_panel_identity,
+    should_create_panel_account,
+    user_panel_id_is_free_for,
 )
 from app.services.panel_sync.liveness import is_subscription_expired, is_subscription_live
 from app.services.panel_sync.managed import apply_managed_policy, reproject_after_create
@@ -30,6 +32,7 @@ from app.services.panel_sync.projection import (
     WEBHOOK,
     PanelSnapshot,
     ProjectionPolicy,
+    panel_date_behind_paid_renewal,
     panel_date_is_grace_overlay,
     panel_date_is_grace_tail,
     panel_status_for_new_subscription,
@@ -70,6 +73,7 @@ __all__ = [
     'is_subscription_expired',
     'is_subscription_live',
     'link_subscription_panel_identity',
+    'panel_date_behind_paid_renewal',
     'panel_date_is_closing',
     'panel_date_is_grace_overlay',
     'panel_date_is_grace_tail',
@@ -85,5 +89,7 @@ __all__ = [
     'read_panel_user',
     'reproject_after_create',
     'resolve_panel_identity',
+    'should_create_panel_account',
     'stale_panel_expire_at',
+    'user_panel_id_is_free_for',
 ]

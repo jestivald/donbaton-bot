@@ -379,6 +379,9 @@ def test_live_network_subscription_gets_the_catalogue_button(monkeypatch):
     monkeypatch.setattr(keyboards, 'get_display_subscription_link', lambda sub: None)
     live = SimpleNamespace(
         id=1,
+        # У сетевой подписки тариф есть всегда (FK RESTRICT); без него апстримовское
+        # правило 4.14.0 сочло бы её «старой подпиской без тарифа».
+        tariff_id=9,
         actual_status='active',
         status='active',
         network_category='wifi_lte',

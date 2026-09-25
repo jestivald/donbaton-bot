@@ -6,8 +6,10 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from fastapi import HTTPException, status
 
 from app.config import settings
+from app.utils.legacy_subscription import is_legacy_subscription
 
 
 if TYPE_CHECKING:
@@ -105,6 +107,21 @@ def _apply_addon_discount(
         'discount': discount_value,
         'percent': percent,
     }
+
+
+def ensure_subscription_has_tariff(subscription: Any) -> None:
+    """Докупки старой подписке не продаются — сперва переход на тариф.
+
+    Старая подписка (платная, без тарифа при включённых тарифах) считала бы
+    докупку устройств и трафика по классическим настройкам. Кабинет такие
+    кнопки прячет, а здесь отказ до списания — для старого кабинета и прямых
+    запросов. ``None`` пропускаем: «подписки нет» отвечает сам маршрут.
+    """
+    if is_legacy_subscription(subscription):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={'code': 'tariff_required', 'message': 'Subscription has no tariff. Choose a tariff first.'},
+        )
 
 
 async def _subscription_to_response(
@@ -205,12 +222,18 @@ async def _subscription_to_response(
     from app.services.lte_quota_service import get_quota_status
 
     lte_quota = await get_quota_status(db, subscription) if network_category(subscription) else None
+
+    is_trial_subscription = bool(subscription.is_trial or actual_status == 'trial')
+    # Старая подписка: продлить нельзя — кабинет ведёт на выбор тарифа и не
+    # показывает автоплатёж (правило одно на бота и кабинет).
+    requires_tariff_selection = is_legacy_subscription(subscription)
+
     return SubscriptionResponse(
         network_category=network_category(subscription),
         lte_quota=lte_quota,
         id=subscription.id,
         status=actual_status,  # Use actual_status instead of raw status
-        is_trial=subscription.is_trial or actual_status == 'trial',
+        is_trial=is_trial_subscription,
         start_date=subscription.start_date,
         end_date=subscription.end_date,
         days_left=days_left,
@@ -238,4 +261,5 @@ async def _subscription_to_response(
         tariff_id=tariff_id,
         tariff_name=tariff_name,
         traffic_reset_mode=traffic_reset_mode,
+        requires_tariff_selection=requires_tariff_selection,
     )

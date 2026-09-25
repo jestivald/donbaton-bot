@@ -28,6 +28,7 @@ from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
 from app.states import SubscriptionStates
+from app.utils.legacy_subscription import is_legacy_subscription
 from app.utils.pricing_utils import (
     calculate_prorated_price,
 )
@@ -112,6 +113,17 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
         from .lte import show_lte_packages
 
         await show_lte_packages(callback, db_user, db, subscription)
+        return
+
+    if is_legacy_subscription(subscription):
+        # Старая подписка (без тарифа при включённых тарифах): докупок нет, сперва переход на тариф.
+        await callback.answer(
+            texts.t(
+                'LEGACY_ADDONS_UNAVAILABLE',
+                '⚠️ Сначала перейдите на тариф — докупки для этой подписки недоступны',
+            ),
+            show_alert=True,
+        )
         return
 
     if subscription.traffic_limit_gb == 0:
