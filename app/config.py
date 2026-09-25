@@ -103,6 +103,22 @@ class Settings(BaseSettings):
     # категорий остаётся закрытым. Выключено — прежний запрет «другой тариф
     # можно выбрать после окончания подписки».
     DONBATON_TARIFF_SWITCH_ENABLED: bool = False
+    # Уведомления клиенту «LTE почти закончился» / «LTE закончился». Решение и
+    # отметка — в цикле учёта под блокировкой подписки, отправка — после коммита
+    # (app/services/lte_quota_notifications.py). Главный выключатель — первый ключ.
+    DONBATON_LTE_NOTICE_ENABLED: bool = True
+    # Порог «почти закончился» в ГиБ (1 ГиБ = 2**30 байт); 0 выключает это уведомление.
+    DONBATON_LTE_LOW_NOTICE_GB: float = Field(1.0, ge=0)
+    DONBATON_LTE_EXHAUSTED_NOTICE_ENABLED: bool = True
+    # Пробный пакет (~0,59 ГиБ) ниже порога с первой минуты — по умолчанию молчим.
+    DONBATON_LTE_NOTICE_TRIALS: bool = False
+    # Права только в панели (lte_orphan_quotas): клиенту писать некуда, пишем в админ-чат.
+    DONBATON_LTE_NOTICE_ADMIN_ORPHANS: bool = False
+    # Предохранитель от залпа: больше новых кандидатов за один проход — не шлём никому.
+    DONBATON_LTE_NOTICE_MAX_PER_CYCLE: int = Field(20, ge=1)
+    # Свой текст вместо локали: HTML Telegram, можно в несколько строк; пусто — текст из локали.
+    DONBATON_LTE_LOW_NOTICE_TEXT: str = ''
+    DONBATON_LTE_EXHAUSTED_NOTICE_TEXT: str = ''
 
     BOT_TOKEN: str
     BOT_USERNAME: str | None = None

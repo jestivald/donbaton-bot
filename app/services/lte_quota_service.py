@@ -59,6 +59,33 @@ class TelemetryEvidence:
     last_valid: object = _UNRESOLVED_MEMORY
 
 
+@dataclass(frozen=True, slots=True)
+class LteNoticeCandidate:
+    """A customer (or a panel-only right) whose LTE just crossed a notice line.
+
+    Produced by the polling cycle only after the notice mark was committed with
+    the sample, so a failed delivery may lose this period's message but can
+    never repeat it. ``subscription_id`` is set for a bot customer; a panel-only
+    right carries ``panel_id`` / ``panel_username`` for the admin chat instead.
+    """
+
+    event: str  # 'low' | 'exhausted'
+    remaining_bytes: int
+    topup_bytes: int = 0
+    subscription_id: int | None = None
+    panel_id: int | None = None
+    panel_username: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LteNoticeMarks:
+    """Notice marks after a decision, plus the event to announce (if any)."""
+
+    low_sent_at: datetime | None
+    exhausted_sent_at: datetime | None
+    event: str | None = None
+
+
 class LtePolicyError(ValueError):
     """An explicit configuration, accounting or entitlement conflict."""
 
@@ -1212,8 +1239,133 @@ async def apply_panel_policy(db, subscription, payload, *, panel_user=None, now=
     return result
 
 
-async def reconcile_subscription(db, subscription, api, *, user=None, heartbeat=_UNSET_HEARTBEAT):
-    """Serialize sample, ledger mutation and panel projection against purchases."""
+def low_notice_threshold_bytes() -> int:
+    """«LTE почти закончился» threshold in real bytes; 0 switches that notice off."""
+    return max(0, int(settings.DONBATON_LTE_LOW_NOTICE_GB * GIB))
+
+
+def decide_lte_notice(
+    status,
+    *,
+    low_sent_at,
+    exhausted_sent_at,
+    eligible,
+    telemetry_live,
+    is_trial=False,
+    audience_enabled=True,
+    now=None,
+) -> LteNoticeMarks:
+    """Decide the LTE notice marks and the one event to announce; no I/O.
+
+    Marks are re-armed from the ledger alone: a balance above the threshold
+    (top-up, new period, manual credit) clears both, and any positive balance
+    clears «exhausted», so the next exhaustion is announced again. New marks
+    need confirmed accounting — ``ready`` on a live telemetry lease, never the
+    grace window — and a customer who really has LTE: finite and with a non-zero
+    capacity. Wi-Fi-only capacity is zero: it is always ``exhausted`` in the
+    ledger and must never be told so. The mark is set before sending, so a
+    message goes out at most once per crossing; «exhausted» also sets «low»,
+    because the low line was crossed on the way.
+    """
+    if status is None or status.get('is_unlimited'):
+        return LteNoticeMarks(low_sent_at, exhausted_sent_at)
+    remaining = int(status.get('remaining_bytes') or 0)
+    threshold = low_notice_threshold_bytes()
+    if remaining > threshold:
+        low_sent_at = None
+    if remaining > 0:
+        exhausted_sent_at = None
+    capacity = int(status.get('limit_bytes') or 0) + int(status.get('topup_bytes') or 0)
+    confirmed = (
+        telemetry_live
+        and status.get('accounting_state') == 'ready'
+        and settings.DONBATON_LTE_ENABLED
+        and settings.DONBATON_LTE_ACCOUNTING_READY
+    )
+    allowed = (
+        settings.DONBATON_LTE_NOTICE_ENABLED
+        and audience_enabled
+        and eligible
+        and (not is_trial or settings.DONBATON_LTE_NOTICE_TRIALS)
+    )
+    if not (confirmed and allowed and capacity > 0):
+        return LteNoticeMarks(low_sent_at, exhausted_sent_at)
+    now = _now(now)
+    if remaining <= 0:
+        if settings.DONBATON_LTE_EXHAUSTED_NOTICE_ENABLED and exhausted_sent_at is None:
+            return LteNoticeMarks(low_sent_at or now, now, 'exhausted')
+    elif remaining <= threshold and low_sent_at is None:
+        return LteNoticeMarks(now, exhausted_sent_at, 'low')
+    return LteNoticeMarks(low_sent_at, exhausted_sent_at)
+
+
+def _apply_notice_marks(quota, status, **decision) -> str | None:
+    """Write the decided marks onto the locked ledger row; return the event."""
+    marks = decide_lte_notice(
+        status,
+        low_sent_at=quota.low_notice_sent_at,
+        exhausted_sent_at=quota.exhausted_notice_sent_at,
+        **decision,
+    )
+    # Assign only real changes: an unchanged row must stay out of the UPDATE.
+    if marks.low_sent_at is not quota.low_notice_sent_at:
+        quota.low_notice_sent_at = marks.low_sent_at
+    if marks.exhausted_sent_at is not quota.exhausted_notice_sent_at:
+        quota.exhausted_notice_sent_at = marks.exhausted_sent_at
+    return marks.event
+
+
+def _lease_is_live(heartbeat, now) -> bool:
+    """The cycle's own live lease, re-checked for age; the grace memory never counts.
+
+    Grace keeps LTE open on an unconfirmed ledger for a while; a message about
+    the balance must not rest on that. No evidence at all means not live.
+    """
+    if heartbeat is _UNSET_HEARTBEAT:
+        return False
+    payload = heartbeat.payload if isinstance(heartbeat, TelemetryEvidence) else heartbeat
+    return _live_heartbeat_is_valid(payload, now=now)
+
+
+def _subscription_notice(quota, subscription, user, kwargs, heartbeat):
+    status = getattr(subscription, '_lte_quota_status', None)
+    now = datetime.now(UTC)
+    # The final panel projection already folds in every veto (user blocked,
+    # panel disable, expiry): no squads means the customer has no access at all,
+    # and «Wi-Fi keeps working» would be a false promise.
+    eligible = bool(
+        kwargs.get('active_internal_squads')
+        and subscription.status in ('active', 'trial')
+        and subscription.end_date is not None
+        and _now(subscription.end_date) > now
+        and user is not None
+        and user.status == 'active'
+    )
+    event = _apply_notice_marks(
+        quota,
+        status,
+        eligible=eligible,
+        telemetry_live=_lease_is_live(heartbeat, now),
+        is_trial=bool(subscription.is_trial),
+        now=now,
+    )
+    if event is None:
+        return None
+    return LteNoticeCandidate(
+        event=event,
+        remaining_bytes=status['remaining_bytes'],
+        topup_bytes=status['topup_bytes'],
+        subscription_id=subscription.id,
+    )
+
+
+async def reconcile_subscription(db, subscription, api, *, user=None, heartbeat=_UNSET_HEARTBEAT, notices=None):
+    """Serialize sample, ledger mutation and panel projection against purchases.
+
+    With a ``notices`` list (the polling cycle) the LTE notice marks are decided
+    on the same locked row and committed together with the sample; a candidate
+    is appended only after that commit. Nothing is sent from here.
+    """
     if not is_managed(subscription):
         return None
     await _lock_subscription(db, subscription)
@@ -1242,9 +1394,14 @@ async def reconcile_subscription(db, subscription, api, *, user=None, heartbeat=
     # unchanged squad set can otherwise enqueue thousands of needless node jobs.
     updated = panel_user if _panel_policy_matches(panel_user, kwargs) else await _write_policy(api, kwargs)
     quota = await _quota(db, subscription)
+    candidate = None
     if quota:
         quota.panel_access_cleared_at = datetime.now(UTC) if not kwargs.get('active_internal_squads') else None
+        if notices is not None:
+            candidate = _subscription_notice(quota, subscription, user, kwargs, heartbeat)
     await db.commit()
+    if candidate is not None:
+        notices.append(candidate)
     return updated
 
 
@@ -1292,8 +1449,13 @@ def _panel_policy_matches(panel_user, payload):
     return True
 
 
-async def reconcile_orphan_quota(db, quota, api, *, now=None, heartbeat=_UNSET_HEARTBEAT):
-    """Preserve finite panel access without creating an application identity."""
+async def reconcile_orphan_quota(db, quota, api, *, now=None, heartbeat=_UNSET_HEARTBEAT, notices=None):
+    """Preserve finite panel access without creating an application identity.
+
+    There is nobody to message here: with ``DONBATON_LTE_NOTICE_ADMIN_ORPHANS``
+    the notice candidate goes to the admin chat instead (see
+    ``reconcile_subscription`` for the mark and commit order).
+    """
     now = _now(now)
     await db.flush()
     quota = (
@@ -1338,7 +1500,27 @@ async def reconcile_orphan_quota(db, quota, api, *, now=None, heartbeat=_UNSET_H
             payload['status'] = UserStatus.ACTIVE
     updated = panel_user if _panel_policy_matches(panel_user, payload) else await _write_policy(api, payload)
     quota.panel_access_cleared_at = now if not payload['active_internal_squads'] else None
+    candidate = None
+    if notices is not None:
+        event = _apply_notice_marks(
+            quota,
+            status,
+            eligible=bool(active and payload['active_internal_squads']),
+            telemetry_live=_lease_is_live(heartbeat, now),
+            audience_enabled=settings.DONBATON_LTE_NOTICE_ADMIN_ORPHANS,
+            now=now,
+        )
+        if event is not None:
+            candidate = LteNoticeCandidate(
+                event=event,
+                remaining_bytes=status['remaining_bytes'],
+                topup_bytes=status['topup_bytes'],
+                panel_id=quota.panel_id,
+                panel_username=getattr(panel_user, 'username', None),
+            )
     await db.commit()
+    if candidate is not None:
+        notices.append(candidate)
     return updated
 
 
@@ -1347,7 +1529,7 @@ async def run_quota_cycle(subscription_service):
     from app.database.database import AsyncSessionLocal
 
     if not subscription_service.is_configured:
-        return
+        return []
     # Also project WIFI-only when an operator disables an already-used feature.
     async with AsyncSessionLocal() as db:
         ids = list(
@@ -1383,6 +1565,8 @@ async def run_quota_cycle(subscription_service):
             .scalars()
             .all()
         )
+    # LTE notice candidates whose marks this pass committed; the caller sends them.
+    notices: list[LteNoticeCandidate] = []
     async with subscription_service.get_api_client() as api:
         semaphore = asyncio.Semaphore(10)
         # Resolve the producer evidence once: every subscription below shares
@@ -1396,7 +1580,7 @@ async def run_quota_cycle(subscription_service):
                     if sub is None:
                         return
                     user = await db.get(User, sub.user_id)
-                    await reconcile_subscription(db, sub, api, user=user, heartbeat=evidence)
+                    await reconcile_subscription(db, sub, api, user=user, heartbeat=evidence, notices=notices)
                 except Exception as error:
                     await db.rollback()
                     logger.error('LTE quota reconciliation failed', subscription_id=subscription_id, error=str(error))
@@ -1406,7 +1590,7 @@ async def run_quota_cycle(subscription_service):
                 try:
                     quota = await db.get(LteOrphanQuota, panel_id)
                     if quota is not None:
-                        await reconcile_orphan_quota(db, quota, api, heartbeat=evidence)
+                        await reconcile_orphan_quota(db, quota, api, heartbeat=evidence, notices=notices)
                 except Exception as error:
                     await db.rollback()
                     logger.error('Orphan LTE reconciliation failed', panel_id=panel_id, error=str(error))
@@ -1415,3 +1599,4 @@ async def run_quota_cycle(subscription_service):
             *(reconcile_one(subscription_id) for subscription_id in ids),
             *(reconcile_orphan(panel_id) for panel_id in orphan_ids),
         )
+    return notices

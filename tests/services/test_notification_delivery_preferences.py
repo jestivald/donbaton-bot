@@ -68,6 +68,8 @@ async def test_transactional_messages_bypass_global_switch(monkeypatch, notifica
         (NotificationType.WINBACK_DISCOUNT, 'subscription_expiry_enabled'),
         (NotificationType.BALANCE_LOW, 'balance_low_enabled'),
         (NotificationType.WEBHOOK_SUB_BANDWIDTH_THRESHOLD, 'traffic_warning_enabled'),
+        (NotificationType.LTE_QUOTA_LOW, 'traffic_warning_enabled'),
+        (NotificationType.LTE_QUOTA_EXHAUSTED, 'traffic_warning_enabled'),
         (NotificationType.PROMO_OFFER, 'promo_offers_enabled'),
     ],
 )
@@ -80,6 +82,19 @@ async def test_per_user_preferences_block_matching_notifications(monkeypatch, no
 
     assert result is False
     service._send_telegram_notification.assert_not_awaited()
+
+
+@pytest.mark.parametrize('notification_type', [NotificationType.LTE_QUOTA_LOW, NotificationType.LTE_QUOTA_EXHAUSTED])
+async def test_lte_notices_follow_the_global_switch_and_reach_subscribed_users(monkeypatch, notification_type):
+    service = NotificationDeliveryService()
+    service._send_telegram_notification = AsyncMock(return_value=True)
+    monkeypatch.setattr(settings, 'ENABLE_NOTIFICATIONS', True)
+
+    assert await _send(service, _user(), notification_type) is True
+
+    monkeypatch.setattr(settings, 'ENABLE_NOTIFICATIONS', False)
+    assert await _send(service, _user(), notification_type) is False
+    service._send_telegram_notification.assert_awaited_once()
 
 
 async def test_referral_switch_is_enforced_by_unified_delivery(monkeypatch):

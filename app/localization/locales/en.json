@@ -2304,5 +2304,9 @@
   "GIFT_MY_BACK_TO_CARD": "◀️ Back to gift",
   "GRACE_ACCESS_GRANTED_EXPIRED": "🛟 <b>Subscription{tariff_label} has ended, but you are not cut off</b>\n\nFor {hours} h only this stays available: {allowed}. You have {traffic_gb} GB of traffic for it, so you can renew. Everything else stays off until you renew.\n\n⏳ Until {until}.",
   "GRACE_ACCESS_GRANTED_LIMITED": "🛟 <b>Traffic on subscription{tariff_label} is used up, but you are not cut off</b>\n\nFor {hours} h only this stays available: {allowed}. You have {traffic_gb} GB of traffic for it, so you can buy more traffic or renew. Everything else stays off until you pay.\n\n⏳ Until {until}.",
-  "GRACE_ACCESS_ENDED": "⌛ <b>Temporary access has ended</b>\n\nSubscription{tariff_label} was not renewed, temporary access is closed. What was still available is now off too: {allowed}. Renew to get your VPN back."
+  "GRACE_ACCESS_ENDED": "⌛ <b>Temporary access has ended</b>\n\nSubscription{tariff_label} was not renewed, temporary access is closed. What was still available is now off too: {allowed}. Renew to get your VPN back.",
+  "LTE_QUOTA_LOW_NOTICE": "📶 <b>LTE is almost used up</b>\n\nYour “{tariff}” subscription has {remaining} GiB of LTE left. When the package runs out, the LTE tab will disappear, while Wi-Fi keeps working until {end_date}.",
+  "LTE_QUOTA_EXHAUSTED_NOTICE": "📵 <b>LTE is used up</b>\n\nThe LTE package of your “{tariff}” subscription is used up, and the LTE tab is now off. Wi-Fi keeps working as usual until {end_date}.",
+  "LTE_QUOTA_NOTICE_TOPUP_HINT": "You can buy more LTE with the button below.",
+  "LTE_QUOTA_NOTICE_TOPUP_BUTTON": "📶 Buy more LTE"
 }
