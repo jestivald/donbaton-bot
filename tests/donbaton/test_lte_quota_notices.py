@@ -687,7 +687,9 @@ async def test_lte_loop_dispatches_in_background_and_keeps_polling(monkeypatch):
     candidate = LteNoticeCandidate(event='low', remaining_bytes=GIB // 2, subscription_id=1)
     passes = []
 
-    async def fake_cycle(subscription_service):
+    async def fake_cycle(subscription_service, bot=None):
+        # bot= — аргумент гейта v2 (оповещения владельцу); без него цикл после сведения веток
+        # ловил бы TypeError на каждом проходе и крутился бы вечно при POLL_SECONDS=0.
         passes.append(subscription_service)
         if len(passes) == 2:
             service.is_running = False
@@ -786,3 +788,25 @@ def test_env_example_keeps_notice_keys_commented_with_the_code_defaults():
         default = Settings.model_fields[key].default
         expected = {True: 'true', False: 'false'}[default] if isinstance(default, bool) else str(default)
         assert shown == expected, key
+
+
+@pytest.mark.parametrize(('min_routes', 'expected'), [(1, True), (2, False)])
+def test_partial_v2_lease_is_live_for_notices(monkeypatch, min_routes, expected):
+    """Стык с гейтом v2: доказан 1 из 2 маршрутов — для уведомлений телеметрия живая.
+
+    Иначе после перехода канарейки на lease v2 при упавшем обходе уведомления об
+    остатке LTE молча перестали бы уходить, хотя учёт по живым маршрутам подтверждён.
+    Порог — тот же ``DONBATON_LTE_TELEMETRY_MIN_ROUTES``, что открывает сам LTE.
+    """
+    monkeypatch.setattr(settings, 'DONBATON_LTE_TELEMETRY_MIN_ROUTES', min_routes)
+    proven, failed = sorted(TEST_LTE_NODES)
+    now = datetime.now(UTC)
+    payload = {
+        'version': 2,
+        'epoch': settings.DONBATON_LTE_ACCOUNTING_EPOCH,
+        'observed_at': now.isoformat(),
+        'node_ids': [proven],
+        'failed': {failed: 'unreachable'},
+    }
+    evidence = TelemetryEvidence(payload=payload, last_valid=None)
+    assert lte_quota_service._lease_is_live(evidence, now) is expected

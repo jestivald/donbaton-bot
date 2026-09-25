@@ -91,11 +91,19 @@ class Settings(BaseSettings):
     DONBATON_LTE_SQUAD_UUIDS: str = ''
     DONBATON_LTE_POLL_SECONDS: int = Field(30, ge=10, le=300)
     DONBATON_LTE_MAX_SAMPLE_AGE_SECONDS: int = Field(180, ge=30, le=1800)
-    # The canary drops its lease whenever ANY single route fails, so a flapping
-    # route revokes LTE fleet-wide although accounting itself never broke.
+    # Lease v2 keeps the canary publishing while any route is proven; the window
+    # covers a canary that proves nothing at all (dead, stopped, every route down).
     # 0 keeps the strict behaviour; a positive window trusts the last valid
     # proof for that long, at the price of unconfirmed accounting meanwhile.
     DONBATON_LTE_TELEMETRY_GRACE_SECONDS: int = Field(0, ge=0, le=3600)
+    # LTE stays open while at least this many configured routes are proven.
+    # A value above the number of LTE nodes is clamped with a warning.
+    DONBATON_LTE_TELEMETRY_MIN_ROUTES: int = Field(1, ge=1, le=16)
+    # Owner alerts in the admin chat (infrastructure topic): a route unproven
+    # longer than the delay, its recovery, the gate on grace / closed / back.
+    # Reminder while anything stays degraded; 0 disables reminders.
+    DONBATON_LTE_ROUTE_ALERT_DELAY_SECONDS: int = Field(300, ge=0, le=86400)
+    DONBATON_LTE_ROUTE_ALERT_REMIND_SECONDS: int = Field(21600, ge=0, le=604800)
     # Смена сетевого тарифа при живой подписке = покупка нового тарифа на полный
     # срок по обычной цене: остаток дней текущего тарифа сохраняется и
     # добавляется к новому сроку, условия нового тарифа действуют сразу.
