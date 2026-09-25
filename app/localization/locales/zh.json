@@ -2309,5 +2309,9 @@
   "GIFT_MY_BACK_TO_CARD": "◀️ 返回礼物",
   "GRACE_ACCESS_GRANTED_EXPIRED": "🛟 <b>订阅{tariff_label}已到期，但未完全断开</b>\n\n在 {hours} 小时内仅可使用：{allowed}。此期间有 {traffic_gb} GB 流量，以便续订。续订前其他一切不可用。\n\n⏳ 有效至 {until}。",
   "GRACE_ACCESS_GRANTED_LIMITED": "🛟 <b>订阅{tariff_label}的流量已用完，但未完全断开</b>\n\n在 {hours} 小时内仅可使用：{allowed}。此期间有 {traffic_gb} GB 流量，以便加购流量或续订。付款前其他一切不可用。\n\n⏳ 有效至 {until}。",
-  "GRACE_ACCESS_ENDED": "⌛ <b>临时访问已结束</b>\n\n订阅{tariff_label}未续订，临时访问已关闭。此前保留的部分现已不可用：{allowed}。请续订以恢复 VPN。"
+  "GRACE_ACCESS_ENDED": "⌛ <b>临时访问已结束</b>\n\n订阅{tariff_label}未续订，临时访问已关闭。此前保留的部分现已不可用：{allowed}。请续订以恢复 VPN。",
+  "LTE_QUOTA_LOW_NOTICE": "📶 <b>LTE 流量即将用完</b>\n\n订阅「{tariff}」剩余 {remaining} GiB LTE 流量。流量包用完后，LTE 标签将消失，Wi-Fi 可继续使用至 {end_date}。",
+  "LTE_QUOTA_EXHAUSTED_NOTICE": "📵 <b>LTE 流量已用完</b>\n\n订阅「{tariff}」的 LTE 流量包已用完，LTE 标签已关闭。Wi-Fi 照常可用至 {end_date}。",
+  "LTE_QUOTA_NOTICE_TOPUP_HINT": "可通过下方按钮加购 LTE 流量。",
+  "LTE_QUOTA_NOTICE_TOPUP_BUTTON": "📶 加购 LTE"
 }

@@ -96,9 +96,13 @@ class NotificationDeliveryService:
             return False
         if notification_type is NotificationType.BALANCE_LOW and not is_balance_low_enabled(user):
             return False
-        if notification_type is NotificationType.WEBHOOK_SUB_BANDWIDTH_THRESHOLD and not is_traffic_warning_enabled(
-            user
-        ):
+        traffic_warning_types = {
+            NotificationType.WEBHOOK_SUB_BANDWIDTH_THRESHOLD,
+            # Остаток LTE ДонБатона — то же «предупреждение о трафике» в кабинете.
+            NotificationType.LTE_QUOTA_LOW,
+            NotificationType.LTE_QUOTA_EXHAUSTED,
+        }
+        if notification_type in traffic_warning_types and not is_traffic_warning_enabled(user):
             return False
         if notification_type is NotificationType.PROMO_OFFER and not is_promo_offers_enabled(user):
             return False

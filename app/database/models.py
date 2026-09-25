@@ -2902,6 +2902,10 @@ class LteQuota(Base):
     panel_access_cleared_at = Column(AwareDateTime(), nullable=True)
     trial_ends_at = Column(AwareDateTime(), nullable=True)
     pending_period = Column(JSON, nullable=True)
+    # Отметки уведомлений об остатке: ставятся до отправки, снимаются, когда остаток
+    # снова вырос (lte_quota_service.decide_lte_notice).
+    low_notice_sent_at = Column(AwareDateTime(), nullable=True)
+    exhausted_notice_sent_at = Column(AwareDateTime(), nullable=True)
 
 
 class LteOrphanQuota(Base):
@@ -2929,6 +2933,8 @@ class LteOrphanQuota(Base):
     accounting_state = Column(String(24), nullable=False, default='prepared', server_default='prepared')
     legacy_state = Column(JSON, nullable=False)
     panel_access_cleared_at = Column(AwareDateTime(), nullable=True)
+    low_notice_sent_at = Column(AwareDateTime(), nullable=True)
+    exhausted_notice_sent_at = Column(AwareDateTime(), nullable=True)
 
 
 class LteTopup(Base):

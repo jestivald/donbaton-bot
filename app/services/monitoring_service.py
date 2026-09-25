@@ -240,6 +240,7 @@ class MonitoringService:
         self._lte_task = None
         self._withdrawal_reminder_task = None
         self._user_reminder_task = None
+        self._lte_notice_tasks: set[asyncio.Task] = set()
         # In-memory fallback состояния уведомлений об ошибке автоплатежа (на случай
         # недоступности Redis). Ключ — (subscription_id, cycle_token=int(end_date.timestamp())).
         self._autopay_fail_state: dict[tuple[int, int], dict] = {}
@@ -3382,12 +3383,26 @@ class MonitoringService:
 
         while self.is_running:
             try:
-                await run_quota_cycle(self.subscription_service)
+                self._send_lte_notices(await run_quota_cycle(self.subscription_service))
             except asyncio.CancelledError:
                 return
             except Exception as error:
                 logger.error('Ошибка цикла LTE-квот', error=str(error))
             await asyncio.sleep(settings.DONBATON_LTE_POLL_SECONDS)
+
+    def _send_lte_notices(self, notices) -> None:
+        """Уведомления об остатке LTE — фоновой задачей после прохода учёта.
+
+        Отметки уже закоммичены циклом; медленный Telegram не должен задерживать
+        следующий проход, который снимает LTE по исчерпанию.
+        """
+        if not notices:
+            return
+        from app.services.lte_quota_notifications import dispatch
+
+        task = asyncio.create_task(dispatch(self.bot, notices))
+        self._lte_notice_tasks.add(task)
+        task.add_done_callback(self._lte_notice_tasks.discard)
 
     async def _sla_loop(self):
         try:

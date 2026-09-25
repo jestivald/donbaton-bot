@@ -37,6 +37,8 @@ def test_upgrade_preserves_legacy_rows_and_matches_new_table_metadata():
             migration().upgrade()  # create_all + stamp / retried upgrade remain compatible
             migration('0120_legacy_lte_compatibility.py').upgrade()
             migration('0120_legacy_lte_compatibility.py').upgrade()
+            migration('0130_lte_quota_notices.py').upgrade()
+            migration('0130_lte_quota_notices.py').upgrade()
         assert conn.execute(
             sa.text('SELECT traffic_limit_gb, purchased_traffic_gb, network_category FROM subscriptions')
         ).all() == [(1524, 500, None)]
@@ -51,6 +53,7 @@ def test_upgrade_preserves_legacy_rows_and_matches_new_table_metadata():
         }
     with engine.begin() as conn:
         with Operations.context(MigrationContext.configure(conn)):
+            migration('0130_lte_quota_notices.py').downgrade()
             migration('0120_legacy_lte_compatibility.py').downgrade()
             migration().downgrade()
         assert conn.execute(sa.text('SELECT traffic_limit_gb, purchased_traffic_gb FROM subscriptions')).all() == [

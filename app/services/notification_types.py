@@ -80,6 +80,10 @@ class NotificationType(Enum):
     GRACE_ACCESS_GRANTED = 'grace_access_granted'
     GRACE_ACCESS_ENDED = 'grace_access_ended'
 
+    # ДонБатон: остаток пакета LTE (отписка — traffic_warning_enabled)
+    LTE_QUOTA_LOW = 'lte_quota_low'
+    LTE_QUOTA_EXHAUSTED = 'lte_quota_exhausted'
+
     # Support tickets
     TICKET_REPLY = 'ticket_reply'
 
