@@ -22,11 +22,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from aiogram import types
 from fastapi import HTTPException
-from sqlalchemy import update as sa_update
+from sqlalchemy import select, update as sa_update
 
 from app.config import Settings, settings
 from app.database.crud import user as user_crud
-from app.database.models import Base, Subscription, User
+from app.database.models import Base, Subscription, Transaction, TransactionType, User
 from app.handlers.subscription import tariff_purchase
 from app.keyboards import inline as keyboards
 from app.services import subscription_auto_purchase_service as auto
@@ -458,3 +458,50 @@ def test_tariff_button_is_hidden_while_legacy_terms_are_locked(locked, monkeypat
     callbacks = [button.callback_data for row in markup.inline_keyboard for button in row if button.callback_data]
 
     assert ('tariff_list' in callbacks) is (not locked)
+
+
+# --------------------------------------------------------------------------- #
+# 6. Сбой продления после списания возвращает деньги
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_failed_extension_after_the_charge_is_refunded(monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, user = await migrated(db, devices=3, balance=100000)
+        end_before = sub.end_date
+        mute_side_effects(monkeypatch)
+        monkeypatch.setattr(tariff_purchase, 'extend_subscription', AsyncMock(side_effect=RuntimeError('panel down')))
+
+        cb = callback(f'tariff_ext_confirm:{sub.id}:9:30')
+        await tariff_purchase.confirm_tariff_extend(cb, db_user=user, db=db, state=fsm())
+
+        assert 'Средства возвращены' in shown_text(cb) or 'средства возвращены' in shown_text(cb)
+        await db.refresh(user)
+        await db.refresh(sub)
+        assert user.balance_kopeks == 100000
+        assert sub.end_date == end_before
+        refunds = (
+            (await db.execute(select(Transaction).where(Transaction.type == TransactionType.REFUND.value)))
+            .scalars()
+            .all()
+        )
+        assert [refund.amount_kopeks for refund in refunds] == [PRICE_30]
+
+
+@pytest.mark.asyncio
+async def test_successful_extension_is_charged_once(monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, user = await migrated(db, devices=8, balance=100000)
+        end_before = sub.end_date
+        mute_side_effects(monkeypatch)
+
+        cb = callback(f'tariff_ext_confirm:{sub.id}:9:30')
+        await tariff_purchase.confirm_tariff_extend(cb, db_user=user, db=db, state=fsm())
+
+        text = shown_text(cb)
+        assert 'Подписка успешно продлена' in text and 'Устройств: 3' in text
+        await db.refresh(user)
+        await db.refresh(sub)
+        assert user.balance_kopeks == 100000 - PRICE_30
+        assert sub.end_date - end_before == timedelta(days=30)

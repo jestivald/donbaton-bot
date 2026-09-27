@@ -2092,6 +2092,7 @@
   "TARIFF_RENEW_CONFIRM_BUTTON": "✅ Confirm renewal",
   "TARIFF_RENEW_ERROR": "❌ An error occurred while renewing the subscription",
   "TARIFF_RENEW_BLOCKED_TITLE": "🔄 <b>Subscription renewal</b>\n\n",
+  "TARIFF_RENEW_ERROR_REFUNDED": "❌ Could not renew the subscription. The charged amount has been returned to your balance.",
   "TARIFF_RENEW_MISMATCH": "Subscription and plan mismatch, please reopen the renewal",
   "TARIFF_RENEW_NO_TARIFFS": "No plans available for renewal",
   "TARIFF_RENEW_PERIOD_DISCOUNTS_HINT": "\n🎁 <i>Discounts depend on the selected period</i>",

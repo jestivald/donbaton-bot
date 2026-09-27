@@ -1053,6 +1053,7 @@
   "TARIFF_RENEW_CONFIRM_BUTTON": "✅ Подтвердить продление",
   "TARIFF_RENEW_ERROR": "❌ Произошла ошибка при продлении подписки",
   "TARIFF_RENEW_BLOCKED_TITLE": "🔄 <b>Продление подписки</b>\n\n",
+  "TARIFF_RENEW_ERROR_REFUNDED": "❌ Не удалось продлить подписку. Списанные средства возвращены на баланс.",
   "TARIFF_RENEW_MISMATCH": "Несоответствие подписки и тарифа, откройте продление заново",
   "TARIFF_RENEW_NO_TARIFFS": "Нет доступных тарифов для продления",
   "TARIFF_RENEW_PERIOD_DISCOUNTS_HINT": "\n🎁 <i>Скидки зависят от выбранного периода</i>",

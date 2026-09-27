@@ -257,6 +257,65 @@ def _renewal_device_limit(subscription, tariff) -> int | None:
     return subscription.device_limit or tariff.device_limit
 
 
+async def _refund_failed_charge(
+    db: AsyncSession,
+    db_user: User,
+    *,
+    user_id: int,
+    amount_kopeks: int,
+    reason: str,
+    consume_promo: bool,
+    saved_promo: tuple,
+) -> None:
+    """Компенсирующий возврат: списание уже закоммичено, продление не состоялось.
+
+    Тот же блок, что в ``confirm_tariff_purchase``: возврат вместе с промо-скидкой
+    одним коммитом, при сбое — запись ``FAILED_REFUND`` для повторной обработки.
+    Сессия откатывается здесь же; ``rollback()`` экспирирует ``db_user``, поэтому
+    ``user_id`` берётся заранее, а сам пользователь перечитывается.
+    """
+    from app.database.crud.user import add_user_balance
+
+    saved_percent, saved_source, saved_expires = saved_promo
+    try:
+        await db.rollback()
+        await db.refresh(db_user)
+        refund_success = await add_user_balance(
+            db,
+            db_user,
+            amount_kopeks,
+            reason,
+            create_transaction=True,
+            transaction_type=TransactionType.REFUND,
+            commit=False,
+        )
+        if not refund_success:
+            await _persist_failed_refund(
+                user_id=user_id,
+                amount_kopeks=amount_kopeks,
+                reason=f'{reason} (add_user_balance returned False)',
+                error=Exception('add_user_balance returned False'),
+            )
+        if consume_promo and saved_percent > 0:
+            db_user.promo_offer_discount_percent = saved_percent
+            db_user.promo_offer_discount_source = saved_source
+            db_user.promo_offer_discount_expires_at = saved_expires
+        await db.commit()
+    except Exception as refund_error:
+        logger.critical(
+            'CRITICAL: не удалось вернуть средства',
+            user_id=user_id,
+            price_kopeks=amount_kopeks,
+            refund_error=refund_error,
+        )
+        await _persist_failed_refund(
+            user_id=user_id,
+            amount_kopeks=amount_kopeks,
+            reason=reason,
+            error=refund_error,
+        )
+
+
 async def _reset_panel_devices(db_user: User, subscription, *, reason: str) -> None:
     """Снять все HWID в панели. Провал сброса не отменяет уже оплаченную покупку."""
     panel_id = (
@@ -3424,8 +3483,21 @@ async def confirm_tariff_extend(
     except Exception:
         pass
 
+    # Состояние промо-скидки и id — до списания: при возврате сессия откатывается,
+    # и ORM-объекты после rollback() уже не читаются.
+    saved_promo = (
+        (
+            int(getattr(db_user, 'promo_offer_discount_percent', 0) or 0),
+            getattr(db_user, 'promo_offer_discount_source', None),
+            getattr(db_user, 'promo_offer_discount_expires_at', None),
+        )
+        if consume_promo
+        else (0, None, None)
+    )
+    refund_user_id = db_user.id
+
+    # Списываем баланс (subtract_user_balance коммитит сам)
     try:
-        # Списываем баланс
         success = await subtract_user_balance(
             db,
             db_user,
@@ -3434,17 +3506,23 @@ async def confirm_tariff_extend(
             consume_promo_offer=consume_promo,
             mark_as_paid_subscription=True,
         )
-        if not success:
-            try:
-                await callback.message.edit_text(texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса'))
-            except Exception:
-                pass
-            return
+    except Exception as e:
+        logger.error('Ошибка списания баланса при продлении тарифа', error=e, exc_info=True)
+        success = False
+    if not success:
+        try:
+            await callback.message.edit_text(texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса'))
+        except Exception:
+            pass
+        return
 
-        # Запоминаем, был ли триал ДО продления
-        was_trial = subscription.is_trial
+    # Запоминаем, был ли триал ДО продления
+    was_trial = subscription.is_trial
 
-        # Продлеваем подписку; для триала передаём tariff_id чтобы сбросить is_trial
+    # Продлеваем подписку; для триала передаём tariff_id чтобы сбросить is_trial.
+    # Деньги уже списаны и закоммичены: сбой продления обязан их вернуть, как в
+    # confirm_tariff_purchase, иначе клиент платит за продление, которого нет.
+    try:
         subscription = await extend_subscription(
             db,
             subscription,
@@ -3453,7 +3531,29 @@ async def confirm_tariff_extend(
             traffic_limit_gb=tariff.traffic_limit_gb if was_trial else None,
             device_limit=actual_device_limit if was_trial else None,
         )
+    except Exception as e:
+        logger.error('Ошибка продления тарифа после списания — возврат средств', error=e, exc_info=True)
+        await _refund_failed_charge(
+            db,
+            db_user,
+            user_id=refund_user_id,
+            amount_kopeks=final_price,
+            reason='Возврат: ошибка продления тарифа',
+            consume_promo=consume_promo,
+            saved_promo=saved_promo,
+        )
+        try:
+            await callback.message.edit_text(
+                texts.t(
+                    'TARIFF_RENEW_ERROR_REFUNDED',
+                    '❌ Не удалось продлить подписку. Списанные средства возвращены на баланс.',
+                )
+            )
+        except Exception:
+            pass
+        return
 
+    try:
         # Обновляем пользователя в Remnawave
         try:
             subscription_service = SubscriptionService()
