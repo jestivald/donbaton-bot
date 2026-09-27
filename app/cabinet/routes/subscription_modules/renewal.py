@@ -33,6 +33,15 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
+TRIAL_RENEWAL_REFUSAL = 'Пробный период нельзя продлить — выберите тариф.'
+
+
+def _is_network_trial(subscription) -> bool:
+    """Пробная подписка Wi-Fi / Wi-Fi + LTE: продлевать нечего, нужен тариф."""
+    from app.services.donbaton_catalog import network_category
+
+    return bool(getattr(subscription, 'is_trial', False) and network_category(subscription))
+
 
 @router.get('/renewal-options', response_model=list[RenewalOptionResponse])
 async def get_renewal_options(
@@ -54,6 +63,12 @@ async def get_renewal_options(
     _non_renewable = {SubscriptionStatus.DISABLED.value, SubscriptionStatus.PENDING.value}
     _actual_status = getattr(subscription, 'actual_status', subscription.status)
     if _actual_status in _non_renewable:
+        return []
+
+    # Пробную сетевую подписку не продлевают — после неё клиент покупает тариф.
+    # Её тариф неактивный и несетевой, и расчёт цены отказывал бы переходом на
+    # старый учёт: необработанный, он отдавал 500 вместо пустого списка.
+    if _is_network_trial(subscription):
         return []
 
     from app.services.lte_quota_service import LtePolicyError, validate_legacy_renewal
@@ -85,7 +100,17 @@ async def get_renewal_options(
     renewal_tariff = subscription.tariff if subscription.tariff_id else None
 
     for period in periods:
-        pricing = await pricing_engine.calculate_renewal_price(db, subscription, period, user=user)
+        try:
+            pricing = await pricing_engine.calculate_renewal_price(db, subscription, period, user=user)
+        except ValueError as error:  # LtePolicyError — подкласс ValueError
+            # Отказ политики по периоду — не повод ронять весь список в 500.
+            logger.info(
+                'Renewal option skipped by pricing policy',
+                subscription_id=subscription.id,
+                period_days=period,
+                reason=str(error),
+            )
+            continue
 
         if pricing.final_total <= 0 and pricing.original_total <= 0:
             if renewal_tariff is None or not renewal_tariff.has_configured_price_for_period(period):
@@ -150,6 +175,12 @@ async def renew_subscription(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f'Cannot renew subscription with status: {_actual_status}',
+        )
+
+    if _is_network_trial(subscription):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=TRIAL_RENEWAL_REFUSAL,
         )
 
     if (

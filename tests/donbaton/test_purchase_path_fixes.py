@@ -24,9 +24,11 @@ from aiogram import types
 from fastapi import HTTPException
 from sqlalchemy import select, update as sa_update
 
+from app.cabinet.routes.subscription_modules import helpers as cabinet_helpers, renewal as cabinet_renewal
+from app.cabinet.schemas.subscription import RenewalRequest
 from app.config import Settings, settings
 from app.database.crud import user as user_crud
-from app.database.models import Base, Subscription, Transaction, TransactionType, User
+from app.database.models import Base, Subscription, Tariff, Transaction, TransactionType, User
 from app.handlers.subscription import tariff_purchase
 from app.keyboards import inline as keyboards
 from app.services import subscription_auto_purchase_service as auto
@@ -35,6 +37,7 @@ from app.services.lte_quota_service import (
     apply_panel_policy,
     autopay_blocked_by_legacy,
     initialize_quota,
+    initialize_trial_quota,
 )
 from app.services.pricing_engine import PricingEngine, pricing_engine
 from app.webapi.routes import miniapp
@@ -458,6 +461,86 @@ def test_tariff_button_is_hidden_while_legacy_terms_are_locked(locked, monkeypat
     callbacks = [button.callback_data for row in markup.inline_keyboard for button in row if button.callback_data]
 
     assert ('tariff_list' in callbacks) is (not locked)
+
+
+# --------------------------------------------------------------------------- #
+# 4. Кабинет: продление пробной сетевой подписки
+# --------------------------------------------------------------------------- #
+
+
+async def network_trial(db):
+    trial_tariff = Tariff(id=6, name='Пробный', is_active=False, traffic_limit_gb=340, device_limit=3, period_prices={})
+    user = User(id=1, telegram_id=1, first_name='T', status='active', balance_kopeks=100000)
+    db.add_all([trial_tariff, user])
+    await db.flush()
+    sub = Subscription(
+        id=1,
+        user_id=1,
+        tariff_id=6,
+        status='trial',
+        is_trial=True,
+        device_limit=3,
+        traffic_limit_gb=340,
+        end_date=NOW + timedelta(days=3),
+    )
+    db.add(sub)
+    await db.flush()
+    await initialize_trial_quota(db, sub, legacy_traffic_limit_gb=340, now=NOW)
+    await db.commit()
+    await db.refresh(sub, ['tariff'])
+    assert sub.network_category == 'wifi_lte'
+    return sub, user
+
+
+@pytest.mark.asyncio
+async def test_cabinet_trial_has_no_renewal_options_and_a_clear_refusal(monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, user = await network_trial(db)
+        monkeypatch.setattr(cabinet_helpers, 'resolve_subscription', AsyncMock(return_value=sub))
+
+        assert await cabinet_renewal.get_renewal_options(user=user, db=db, subscription_id=None) == []
+
+        with pytest.raises(HTTPException) as error:
+            await cabinet_renewal.renew_subscription(
+                RenewalRequest(period_days=30), user=user, db=db, subscription_id=None
+            )
+        assert error.value.status_code == 400
+        assert error.value.detail == 'Пробный период нельзя продлить — выберите тариф.'
+
+
+@pytest.mark.asyncio
+async def test_cabinet_renewal_options_skip_a_refused_period_instead_of_500(monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        plan = tariff(id=9, device_limit=3, period_prices={'30': PRICE_30, '90': 79900})
+        user = User(id=1, telegram_id=1, first_name='T', status='active')
+        db.add_all([plan, user])
+        await db.flush()
+        sub = Subscription(
+            id=1,
+            user_id=1,
+            tariff_id=9,
+            status='active',
+            is_trial=False,
+            device_limit=3,
+            end_date=NOW + timedelta(days=5),
+        )
+        db.add(sub)
+        await db.flush()
+        await initialize_quota(db, sub, plan, now=NOW)
+        await db.commit()
+        await db.refresh(sub, ['tariff'])
+        monkeypatch.setattr(cabinet_helpers, 'resolve_subscription', AsyncMock(return_value=sub))
+        real = pricing_engine.calculate_renewal_price
+
+        async def refuse_90(db_, subscription, period, **kwargs):
+            if period == 90:
+                raise LtePolicyError('Этот срок сейчас недоступен')
+            return await real(db_, subscription, period, **kwargs)
+
+        monkeypatch.setattr(pricing_engine, 'calculate_renewal_price', refuse_90)
+
+        options = await cabinet_renewal.get_renewal_options(user=user, db=db, subscription_id=None)
+        assert [option.period_days for option in options] == [30]
 
 
 # --------------------------------------------------------------------------- #
