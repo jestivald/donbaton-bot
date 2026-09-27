@@ -352,7 +352,7 @@ async def test_topup_still_auto_extends_an_ordinary_network_subscription(monkeyp
 # --------------------------------------------------------------------------- #
 
 
-LOCK_REASON = 'индивидуальные условия действуют до окончания оплаченного срока'
+LOCK_REASON = 'Прежние индивидуальные условия действуют до'
 
 
 @pytest.mark.asyncio

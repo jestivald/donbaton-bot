@@ -520,13 +520,6 @@ async def test_bot_extend_button_renews_the_current_plan(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        'Зона другого исполнителя: confirm_tariff_extend (tariff_purchase.py) должен передать '
-        'extend_subscription(..., client_purchase=True) — иначе «Продлить» в боте не ставит отметку покупки'
-    ),
-)
 async def test_bot_extend_button_records_the_purchase(monkeypatch):
     async with memory_session(monkeypatch, TABLES) as db:
         sub, quota, _, _ = await locked_legacy(db, devices=8)
@@ -538,13 +531,6 @@ async def test_bot_extend_button_records_the_purchase(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        'Зона другого исполнителя: confirm_tariff_purchase (tariff_purchase.py) сбрасывает HWID при '
-        'меньшем лимите и в окне прежних условий — нужна проверка legacy_terms_keep_devices, как в кабинете'
-    ),
-)
 async def test_bot_catalog_purchase_keeps_devices_inside_the_window(monkeypatch):
     async with memory_session(monkeypatch, TABLES) as db:
         sub, _, _, _ = await locked_legacy(db, devices=4)

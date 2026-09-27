@@ -2492,7 +2492,14 @@ async def confirm_tariff_purchase(
             action='create' if _should_create else 'update',
         )
 
-    if network_switch and should_reset_devices_on_switch(switch_from_tariff, tariff):
+    from app.services.lte_quota_service import legacy_terms_keep_devices
+
+    if (
+        network_switch
+        and should_reset_devices_on_switch(switch_from_tariff, tariff)
+        # В окне прежних условий лимит не уменьшается (больший из двух), как в кабинете.
+        and not await legacy_terms_keep_devices(db, subscription)
+    ):
         # Без сброса панель оставила бы за клиентом уже подключённые устройства
         # сверх нового, меньшего лимита — понижение тарифа ничего бы не меняло.
         await _reset_panel_devices(db_user, subscription, reason='смена тарифа')
@@ -3532,6 +3539,8 @@ async def confirm_tariff_extend(
             tariff_id=tariff.id if was_trial else None,
             traffic_limit_gb=tariff.traffic_limit_gb if was_trial else None,
             device_limit=actual_device_limit if was_trial else None,
+            # Оплата клиента: для перенесённых условий ставит отметку покупки.
+            client_purchase=True,
         )
     except Exception as e:
         logger.error('Ошибка продления тарифа после списания — возврат средств', error=e, exc_info=True)
@@ -4443,7 +4452,13 @@ async def confirm_tariff_switch(
                 'Multi-tariff: subscription missing remnawave_id, using user fallback',
                 subscription_id=getattr(subscription, 'id', None),
             )
-        if _reset_panel_id and should_reset_devices_on_switch(switch_from_tariff, tariff):
+        from app.services.lte_quota_service import legacy_terms_keep_devices
+
+        if (
+            _reset_panel_id
+            and should_reset_devices_on_switch(switch_from_tariff, tariff)
+            and not await legacy_terms_keep_devices(db, subscription)
+        ):
             try:
                 from app.services.remnawave_service import RemnaWaveService
 
