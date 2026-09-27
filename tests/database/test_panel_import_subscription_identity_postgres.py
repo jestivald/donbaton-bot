@@ -20,14 +20,15 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import select
 
 from app.config import Settings
-from app.database.models import Subscription, SubscriptionStatus, User
+from app.database.models import LteOrphanQuota, Subscription, SubscriptionStatus, User
 from app.services.remnawave_service import RemnaWaveService
 from tests.fixtures.postgres_db import postgres_session
 
 
 pytestmark = pytest.mark.postgres
 
-TABLES = [Subscription.__table__, User.__table__]
+# lte_orphan_quotas: создание подписки из панели сперва проверяет права «сироты».
+TABLES = [Subscription.__table__, User.__table__, LteOrphanQuota.__table__]
 MIGRATION = (
     Path(__file__).resolve().parents[2] / 'migrations/alembic/versions/0126_subscription_panel_identity_backfill.py'
 )

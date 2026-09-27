@@ -34,6 +34,7 @@ from app.database.models import (
     User,
     UserPromoGroup,
 )
+from app.services.donbaton_admin_guards import NETWORK_TARIFF_CHANGE_REFUSAL, tariff_change_refusal
 from app.utils.subscription_time import local_days_until
 
 from ..dependencies import get_cabinet_db, require_permission
@@ -51,6 +52,13 @@ from .admin_users import _sync_subscription_to_panel
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/admin/bulk', tags=['Cabinet Admin Bulk Actions'])
+
+# Сетевую подписку массовая смена тарифа не трогает и считает пропущенной.
+NETWORK_TARIFF_SKIP_MESSAGE = f'Пропущено. {NETWORK_TARIFF_CHANGE_REFUSAL}'
+_USER_SKIP_MESSAGES = frozenset({'User not found', NETWORK_TARIFF_SKIP_MESSAGE})
+_SUBSCRIPTION_SKIP_MESSAGES = frozenset(
+    {'Subscription not found', 'User not found for subscription', NETWORK_TARIFF_SKIP_MESSAGE}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +153,21 @@ def _resolve_subscription(user: User, override: Subscription | None = None) -> S
 # ---------------------------------------------------------------------------
 
 
+async def _policy_failure(db: AsyncSession, user: User, error: Exception) -> BulkUserResult:
+    """Отказ условий подписки: откатить и вернуть причину вместо «internal error».
+
+    Поля пользователя читаем ДО отката: он экспайрит объекты сессии, и ленивая
+    догрузка в async-контексте уронила бы MissingGreenlet. По той же причине
+    сводку подписок не строим (пустой список вместо ``None``).
+    """
+    user_id, username = user.id, user.username
+    try:
+        await db.rollback()
+    except Exception:
+        pass
+    return BulkUserResult(user_id=user_id, success=False, message=str(error), username=username, subscriptions=[])
+
+
 async def _do_extend_subscription(
     db: AsyncSession,
     user: User,
@@ -165,7 +188,11 @@ async def _do_extend_subscription(
             username=user.username,
         )
 
-    await extend_subscription(db, sub, days)
+    try:
+        await extend_subscription(db, sub, days)
+    except ValueError as error:
+        # LtePolicyError — подкласс ValueError: правило отказало, покажем причину.
+        return await _policy_failure(db, user, error)
     await db.refresh(sub)
     await _sync_subscription_to_panel(db, user, sub)
 
@@ -280,6 +307,16 @@ async def _do_change_tariff(
     if not sub:
         return BulkUserResult(user_id=user.id, success=False, message='No subscription found', username=user.username)
 
+    # Сетевые условия ведёт леджер LTE, а эта смена пишет поля подписки напрямую:
+    # такую подписку пропускаем (в итоге — «пропущено»), в том числе в пробном прогоне.
+    if await tariff_change_refusal(db, sub, tariff):
+        return BulkUserResult(
+            user_id=user.id,
+            success=False,
+            message=NETWORK_TARIFF_SKIP_MESSAGE,
+            username=user.username,
+        )
+
     # Проверка дубликата в мультитарифном режиме
     if settings.is_multi_tariff_enabled() and tariff.id != sub.tariff_id:
         from app.database.crud.subscription import get_subscription_by_user_and_tariff
@@ -324,7 +361,8 @@ async def _do_change_tariff(
     # only renews is_trial=False subs) and granted a full ~30-day tariff period.
     # A trial stays a trial across a tariff change and expires normally.
 
-    # Reset purchased traffic on tariff change
+    # Reset purchased traffic on tariff change. Подписка с раздельным учётом сюда не
+    # доходит (tariff_change_refusal выше): её TrafficPurchase — записи переноса.
     await db.execute(sa_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == sub.id))
     sub.purchased_traffic_gb = 0
     sub.traffic_reset_at = None
@@ -387,7 +425,11 @@ async def _do_add_traffic(
             username=user.username,
         )
 
-    await add_subscription_traffic(db, sub, traffic_gb)
+    try:
+        await add_subscription_traffic(db, sub, traffic_gb)
+    except ValueError as error:
+        # Сетевой подписке общий трафик не добавляют: LTE докупается отдельным пакетом.
+        return await _policy_failure(db, user, error)
     # Reactivate subscription if it was LIMITED/EXPIRED
     await reactivate_subscription(db, sub)
     await db.refresh(sub)
@@ -1036,7 +1078,7 @@ async def bulk_execute(
             result = await _execute_for_subscription(db, sid, action, params, tariff, dry_run)
 
             results.append(result)
-            if result.message in ('Subscription not found', 'User not found for subscription'):
+            if result.message in _SUBSCRIPTION_SKIP_MESSAGES:
                 skipped_count += 1
             elif result.success:
                 success_count += 1
@@ -1082,7 +1124,7 @@ async def bulk_execute(
         result = await _execute_for_user(db, uid, action, params, tariff, dry_run, admin_id=admin_id)
 
         results.append(result)
-        if result.message == 'User not found':
+        if result.message in _USER_SKIP_MESSAGES:
             skipped_count += 1
         elif result.success:
             success_count += 1
@@ -1134,7 +1176,7 @@ async def _stream_bulk_execute(
     for i, uid in enumerate(user_ids):
         result = await _execute_for_user(db, uid, action, params, tariff, dry_run, admin_id=admin_id)
 
-        if result.message == 'User not found':
+        if result.message in _USER_SKIP_MESSAGES:
             skipped_count += 1
         elif result.success:
             success_count += 1
@@ -1195,7 +1237,7 @@ async def _stream_bulk_execute_subscriptions(
     for i, sid in enumerate(sub_ids):
         result = await _execute_for_subscription(db, sid, action, params, tariff, dry_run)
 
-        if result.message in ('Subscription not found', 'User not found for subscription'):
+        if result.message in _SUBSCRIPTION_SKIP_MESSAGES:
             skipped_count += 1
         elif result.success:
             success_count += 1

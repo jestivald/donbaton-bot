@@ -410,6 +410,15 @@ def _panel_sync_note(sync_result) -> str:
     return ''
 
 
+def _policy_refusal(error: Exception) -> HTTPException:
+    """Отказ условий подписки (``LtePolicyError``/``ValueError``) — 400 с причиной.
+
+    Глобального обработчика у кабинета нет: необработанное исключение становилось
+    500 без объяснения, и админ не видел, что продление запрещено правилом.
+    """
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error) or type(error).__name__)
+
+
 async def _adoptable_user_panel_id(db: AsyncSession, user: User, subscription: Subscription) -> int | None:
     """Панельный аккаунт пользователя, которым можно адресовать выбранную подписку без id.
 
@@ -1418,6 +1427,10 @@ async def update_user_subscription(
                 status_code=status.HTTP_409_CONFLICT,
                 detail='User already has an active subscription for this tariff. Extend it instead.',
             )
+        except ValueError as error:
+            # LtePolicyError — подкласс ValueError: условия Wi-Fi/LTE отказали до коммита.
+            await db.rollback()
+            raise _policy_refusal(error) from error
 
         # Sync to Remnawave panel
         await _sync_subscription_to_panel(db, user, new_sub)
@@ -1443,7 +1456,12 @@ async def update_user_subscription(
                 detail='Days must be a positive integer',
             )
 
-        await extend_subscription(db, subscription, request.days)
+        try:
+            await extend_subscription(db, subscription, request.days)
+        except ValueError as error:
+            # LtePolicyError — подкласс ValueError: отказ политики, а не сбой сервера.
+            await db.rollback()
+            raise _policy_refusal(error) from error
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
@@ -1469,7 +1487,12 @@ async def update_user_subscription(
             )
 
         # Сокращение через отрицательный аргумент: extend_subscription(-N) уменьшает end_date
-        await extend_subscription(db, subscription, -request.days, commit=False)
+        try:
+            await extend_subscription(db, subscription, -request.days, commit=False)
+        except ValueError as error:
+            # LtePolicyError — подкласс ValueError; commit=False: откатываем сами.
+            await db.rollback()
+            raise _policy_refusal(error) from error
         now = datetime.now(UTC)
         if subscription.end_date <= now:
             subscription.status = SubscriptionStatus.EXPIRED.value
@@ -1511,6 +1534,11 @@ async def update_user_subscription(
         else:
             subscription.status = SubscriptionStatus.EXPIRED.value
             subscription.grace_suppressed_until = datetime.now(UTC)
+        # Новая дата — новый отсчёт напоминаний, как в extend_subscription: иначе
+        # отметки «за N дней до конца», разосланные под прежнюю дату, глушат их.
+        from app.database.crud.notification import clear_notifications
+
+        await clear_notifications(db, subscription.id, commit=False)
 
         await db.commit()
         await db.refresh(subscription)
@@ -1535,6 +1563,23 @@ async def update_user_subscription(
                 detail='tariff_id parameter is required',
             )
 
+        tariff = await get_tariff_by_id(db, request.tariff_id)
+        if not tariff:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail='Tariff not found',
+            )
+
+        # Прямая запись тарифа, устройств и сквадов обходит леджер LTE: Wi-Fi → Wi-Fi + LTE
+        # оставил бы категорию wifi без пакета, 10 → 9 — прежние 120 ГиБ, а легаси →
+        # сетевой ронял бы синхронизацию. Сетевые условия меняет только покупка.
+        # Проверяем до отмены привязок автоплатежа: отказ не должен их трогать.
+        from app.services.donbaton_admin_guards import tariff_change_refusal
+
+        refusal = await tariff_change_refusal(db, subscription, tariff)
+        if refusal:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=refusal)
+
         # Смена тарифа делает СБП-привязку Platega несогласованной: она продолжила
         # бы списывать СТАРУЮ сумму со СТАРЫМ каденсом. Отменяем привязку — юзер
         # переподключит СБП-автопродление под новый тариф (нужна новая
@@ -1546,12 +1591,6 @@ async def update_user_subscription(
             await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
 
             await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
-        tariff = await get_tariff_by_id(db, request.tariff_id)
-        if not tariff:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail='Tariff not found',
-            )
 
         # Проверка: нельзя сменить тариф, если у пользователя уже есть
         # другая активная подписка с целевым тарифом
@@ -1589,7 +1628,9 @@ async def update_user_subscription(
         # only renews is_trial=False subs) and granted a full ~30-day tariff period.
         # A trial stays a trial across a tariff change and expires normally.
 
-        # Сбрасываем докупленный трафик при смене тарифа
+        # Сбрасываем докупленный трафик при смене тарифа. Сюда доходит только подписка
+        # без раздельного учёта (см. tariff_change_refusal выше): у перенесённой
+        # TrafficPurchase — аудиторские записи переноса, и удалять их нельзя.
         from sqlalchemy import delete as sql_delete
 
         await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
@@ -1615,8 +1656,9 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Синхронизируем с RemnaWave (discovery/create + сброс трафика по админ-настройке)
+        sync_result = None
         try:
-            await _sync_subscription_to_panel(
+            sync_result = await _sync_subscription_to_panel(
                 db,
                 user,
                 subscription,
@@ -1625,12 +1667,13 @@ async def update_user_subscription(
             )
         except Exception as e:
             logger.error('Failed to sync tariff switch with RemnaWave', error=e)
+            sync_result = {'error': str(e)}
 
         logger.info('Admin changed tariff for user to', admin_id=admin.id, user_id=user_id, tariff_name=tariff.name)
 
         return UpdateSubscriptionResponse(
             success=True,
-            message=f'Tariff changed to {tariff.name}',
+            message=f'Tariff changed to {tariff.name}' + _panel_sync_note(sync_result),
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
@@ -1829,7 +1872,12 @@ async def update_user_subscription(
 
         from app.database.crud.subscription import add_subscription_traffic, reactivate_subscription
 
-        await add_subscription_traffic(db, subscription, request.traffic_gb)
+        try:
+            await add_subscription_traffic(db, subscription, request.traffic_gb)
+        except ValueError as error:
+            # Сетевой подписке общий трафик не добавляют: LTE докупается отдельным пакетом.
+            await db.rollback()
+            raise _policy_refusal(error) from error
 
         # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
         await reactivate_subscription(db, subscription)
@@ -4140,6 +4188,27 @@ async def sync_user_from_panel(
                     'Похоже, у человека две записи в боте — объедините их или удалите лишнюю.'
                 )
                 return SyncFromPanelResponse(success=False, message=message, errors=[message])
+
+            # Права «сироты» (только в панели, свой леджер LTE) не превращаются в
+            # бот-подписку созданием из панели: новая строка унесла бы LTE-сквад без
+            # учёта, а цикл квот сироты падал бы каждый проход. Как и в ночной
+            # синхронизации (_create_subscription_from_panel_data), отказываем до
+            # любых изменений.
+            would_create = request.create_if_missing and not (selected_sub or from_subs) and panel_user.expire_at
+            if would_create:
+                from app.services.donbaton_admin_guards import has_orphan_lte_quota
+
+                if await has_orphan_lte_quota(db, panel_user.id):
+                    logger.warning(
+                        'Sync from panel refused: panel account has panel-only LTE rights',
+                        user_id=user.id,
+                        panel_user_id=panel_user.id,
+                    )
+                    message = (
+                        f'У аккаунта панели {panel_user.id} свои права LTE только в панели (lte_orphan_quotas): '
+                        'подписку в боте из него не создаём — сначала перенесите леджер.'
+                    )
+                    return SyncFromPanelResponse(success=False, message=message, errors=[message])
 
             # Build panel info. active_internal_squads is a list[dict] (see the
             # diagnostic in get_user_sync_status / auth.py); the previous .uuid/str
