@@ -139,4 +139,6 @@ async def _project(db, subscription, payload: PanelPayload, *, panel_user, now) 
         active_internal_squads=tuple(projected['active_internal_squads']),
         hwid_device_limit=projected.get('hwid_device_limit', payload.hwid_device_limit),
         managed=True,
+        # Дату политика называет только окну оплаты (конец окна).
+        payment_window_until=projected.get('expire_at'),
     )

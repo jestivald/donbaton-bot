@@ -1805,6 +1805,7 @@
   "DAILY_SUBSCRIPTION_RESUMED": "▶️ Subscription resumed!",
   "DAILY_SUBSCRIPTION_RESUMED_AFTER_TOPUP": "✅ <b>Subscription resumed!</b>\n\nYour daily plan «{tariff_name}» has been resumed after balance top-up.\n\n💳 Charged: {amount}\n💰 Remaining: {balance}",
   "WEBHOOK_SUB_EXPIRED": "❌ <b>Subscription{tariff_label} expired</b>\n\nYour subscription has ended. Renew to restore VPN access.",
+  "DONBATON_PAYMENT_WINDOW_EXPIRED_HINT": "⏳ For {period} (until {until}) the “{server}” server keeps working in the app — select it to open the bot and pay; the other servers are off until payment.",
   "WEBHOOK_SUB_DISABLED": "🚫 <b>Subscription{tariff_label} disabled</b>\n\nYour subscription has been disabled by the administrator.",
   "WEBHOOK_SUB_ENABLED": "✅ <b>Subscription{tariff_label} activated</b>\n\nYour subscription is active again. Enjoy!",
   "WEBHOOK_SUB_LIMITED": "⚠️ <b>Traffic limit reached</b>\n\nYou have used all available traffic for your subscription{tariff_label}. Purchase additional traffic or wait for a reset.",

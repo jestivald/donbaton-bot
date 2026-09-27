@@ -78,6 +78,23 @@ def transliterate_cyrillic(value: str) -> str:
     return ''.join(result)
 
 
+def normalize_squad_uuid(value) -> str:
+    """Один UUID сквада панели в каноническом виде; пусто — «не задан».
+
+    Нужен и загрузке настроек, и правке из админки (бот и кабинет применяют
+    значение простым присваиванием, валидаторы модели там не срабатывают).
+    """
+    from uuid import UUID
+
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    try:
+        return str(UUID(text))
+    except ValueError as error:
+        raise ValueError(f'Нужен UUID сквада панели, получено: {text[:64]!r}') from error
+
+
 logger = structlog.get_logger(__name__)
 
 
@@ -127,6 +144,17 @@ class Settings(BaseSettings):
     # Свой текст вместо локали: HTML Telegram, можно в несколько строк; пусто — текст из локали.
     DONBATON_LTE_LOW_NOTICE_TEXT: str = ''
     DONBATON_LTE_EXHAUSTED_NOTICE_TEXT: str = ''
+    # Окно оплаты: столько часов после окончания срока подписки Wi-Fi/LTE в
+    # панели остаётся один сквад — сервер «Telegram + наша инфраструктура», чтобы
+    # клиент мог открыть бота и заплатить. 0 или пустой UUID — окна нет, доступ
+    # снимается сразу, как раньше. Пишет его тот же цикл LTE, что и остальной
+    # доступ (app/services/donbaton_payment_window.py).
+    DONBATON_PAYMENT_WINDOW_HOURS: int = Field(0, ge=0, le=168)
+    DONBATON_PAYMENT_WINDOW_SQUAD_UUID: str = ''
+    # Решение владельца (27.09.2026): окно получают и пробные.
+    DONBATON_PAYMENT_WINDOW_TRIAL_ENABLED: bool = True
+    # Как сервер окна называется в приложении клиента — только для текста уведомления.
+    DONBATON_PAYMENT_WINDOW_SERVER_NAME: str = '💳 Оплата | Telegram'
 
     BOT_TOKEN: str
     BOT_USERNAME: str | None = None
@@ -1659,6 +1687,11 @@ class Settings(BaseSettings):
         if not parsed.hostname:
             raise ValueError('Proxy URL must contain a hostname')
         return value
+
+    @field_validator('DONBATON_PAYMENT_WINDOW_SQUAD_UUID', mode='before')
+    @classmethod
+    def normalize_payment_window_squad(cls, value: str | None) -> str:
+        return normalize_squad_uuid(value)
 
     @field_validator('MAIN_MENU_MODE', mode='before')
     @classmethod

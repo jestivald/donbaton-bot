@@ -2105,12 +2105,16 @@ class MonitoringService:
                     tariff_label = f' «{tariff_name}»'
                 elif hasattr(subscription, 'tariff') and subscription.tariff:
                     tariff_label = f' «{subscription.tariff.name}»'
+            from app.services.donbaton_payment_window import expired_notice_hint
+
+            # Окно оплаты ДонБатона: какой сервер ещё работает, чтобы дойти до бота.
+            access_line = expired_notice_hint(subscription, user) or '🔧 Доступ к серверам заблокирован до продления.'
             message = f"""
 ⛔ <b>Подписка{tariff_label} истекла</b>
 
 Ваша подписка истекла. Для восстановления доступа продлите подписку.
 
-🔧 Доступ к серверам заблокирован до продления.
+{access_line}
 """
 
             from aiogram.types import InlineKeyboardMarkup
