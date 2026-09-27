@@ -2091,6 +2091,8 @@
   "TARIFF_RENEW_CONFIRM": "✅ <b>Підтвердження продовження</b>\n\n📦 Тариф: <b>{name}</b>\n📊 Трафік: {traffic}\n📱 Пристроїв: {devices}\n📅 Період: {period}\n{discount}\n💰 <b>До сплати: {total}</b>\n\n💳 Ваш баланс: {balance}\nПісля оплати: {after}",
   "TARIFF_RENEW_CONFIRM_BUTTON": "✅ Підтвердити продовження",
   "TARIFF_RENEW_ERROR": "❌ Сталася помилка під час продовження підписки",
+  "TARIFF_RENEW_BLOCKED_TITLE": "🔄 <b>Продовження підписки</b>\n\n",
+  "TARIFF_RENEW_ERROR_REFUNDED": "❌ Не вдалося продовжити підписку. Списані кошти повернуто на баланс.",
   "TARIFF_RENEW_MISMATCH": "Невідповідність підписки і тарифу, відкрийте продовження заново",
   "TARIFF_RENEW_NO_TARIFFS": "Немає доступних тарифів для продовження",
   "TARIFF_RENEW_PERIOD_DISCOUNTS_HINT": "\n🎁 <i>Знижки залежать від обраного періоду</i>",

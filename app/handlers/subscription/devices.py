@@ -68,8 +68,12 @@ async def _device_slot_changes_allowed(callback, subscription):
     from app.services.donbaton_catalog import network_category
 
     if network_category(subscription):
+        # С правилом смены другой тариф покупается в любой момент (витрина
+        # «📦 Тариф»); «после окончания подписки» верно только без него.
         await callback.answer(
-            'Количество устройств закреплено за тарифом. Другой тариф можно выбрать после окончания подписки.',
+            'Количество устройств задано тарифом. Другой тариф можно купить в разделе «📦 Тариф».'
+            if settings.DONBATON_TARIFF_SWITCH_ENABLED
+            else 'Количество устройств закреплено за тарифом. Другой тариф можно выбрать после окончания подписки.',
             show_alert=True,
         )
         return False

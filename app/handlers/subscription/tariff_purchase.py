@@ -31,6 +31,7 @@ from app.services.donbaton_catalog import (
     NETWORK_EXPLANATION,
     available_categories,
     category_tariffs,
+    network_category,
     select_category,
     tariff_traffic_label,
 )
@@ -198,6 +199,123 @@ async def _network_switch_stub(callback, texts) -> None:
     await callback.answer()
 
 
+#: Telegram показывает во всплывающем ответе на callback не больше 200 символов.
+_CALLBACK_ALERT_LIMIT = 200
+
+
+async def _answer_policy_refusal(callback, error: Exception, texts) -> None:
+    """Показать клиенту настоящую причину отказа, а не «❌ Произошла ошибка».
+
+    Расчёт цены и проверки тарифа отказывают ``ValueError`` (``LtePolicyError`` —
+    его подкласс) с текстом для клиента: «прежние индивидуальные условия…»,
+    «срок отсутствует в тарифе», «сначала перенесите докупки». Непойманный,
+    он уходил в декоратор ``error_handler`` и превращался в общий ``texts.ERROR``.
+    Вызывается до списания и до ``callback.answer()``.
+    """
+    text = str(error).strip() or texts.ERROR
+    if len(text) > _CALLBACK_ALERT_LIMIT:
+        text = text[: _CALLBACK_ALERT_LIMIT - 1].rstrip() + '…'
+    logger.info('Покупка тарифа отклонена политикой', callback_data=getattr(callback, 'data', None), reason=str(error))
+    await callback.answer(text, show_alert=True)
+
+
+def _fixed_device_limit(subscription, tariff) -> bool:
+    """Лимит устройств задаёт сетевой тариф Wi-Fi / Wi-Fi + LTE, а не подписка."""
+    return bool(network_category(tariff) or network_category(subscription))
+
+
+def _same_tariff_quote_device_limit(subscription, tariff) -> int | None:
+    """``device_limit`` для движка цены при покупке ТОГО ЖЕ тарифа поверх подписки.
+
+    Апстрим передаёт лимит подписки, чтобы посчитать доплату за докупленные
+    устройства. У сетевого тарифа лимит фиксирован, и движок принимает только
+    тарифный, а у перенесённых подписок фактический лимит другой (4, 8, 0…):
+    покупка и продление того же тарифа падали «❌ Произошла ошибка». ``None`` —
+    движок возьмёт лимит тарифа.
+    """
+    if subscription is None or subscription.tariff_id != tariff.id or _fixed_device_limit(subscription, tariff):
+        return None
+    return subscription.device_limit
+
+
+def _same_tariff_extend_device_limit(subscription, tariff) -> int | None:
+    """Лимит устройств, который покупка ТОГО ЖЕ тарифа записывает в подписку.
+
+    Как в кабинете: сетевой тариф даёт свой лимит (права переноса в окне
+    совместимости сохраняет ``apply_panel_policy``), остальные — апстрим:
+    докупленные устройства сохраняются.
+    """
+    if _fixed_device_limit(subscription, tariff):
+        return tariff.device_limit
+    return max(tariff.device_limit or 0, subscription.device_limit or 0)
+
+
+def _renewal_device_limit(subscription, tariff) -> int | None:
+    """Устройства на экранах продления и в цене: у сетевого тарифа — тарифные."""
+    if _fixed_device_limit(subscription, tariff):
+        return tariff.device_limit
+    return subscription.device_limit or tariff.device_limit
+
+
+async def _refund_failed_charge(
+    db: AsyncSession,
+    db_user: User,
+    *,
+    user_id: int,
+    amount_kopeks: int,
+    reason: str,
+    consume_promo: bool,
+    saved_promo: tuple,
+) -> None:
+    """Компенсирующий возврат: списание уже закоммичено, продление не состоялось.
+
+    Тот же блок, что в ``confirm_tariff_purchase``: возврат вместе с промо-скидкой
+    одним коммитом, при сбое — запись ``FAILED_REFUND`` для повторной обработки.
+    Сессия откатывается здесь же; ``rollback()`` экспирирует ``db_user``, поэтому
+    ``user_id`` берётся заранее, а сам пользователь перечитывается.
+    """
+    from app.database.crud.user import add_user_balance
+
+    saved_percent, saved_source, saved_expires = saved_promo
+    try:
+        await db.rollback()
+        await db.refresh(db_user)
+        refund_success = await add_user_balance(
+            db,
+            db_user,
+            amount_kopeks,
+            reason,
+            create_transaction=True,
+            transaction_type=TransactionType.REFUND,
+            commit=False,
+        )
+        if not refund_success:
+            await _persist_failed_refund(
+                user_id=user_id,
+                amount_kopeks=amount_kopeks,
+                reason=f'{reason} (add_user_balance returned False)',
+                error=Exception('add_user_balance returned False'),
+            )
+        if consume_promo and saved_percent > 0:
+            db_user.promo_offer_discount_percent = saved_percent
+            db_user.promo_offer_discount_source = saved_source
+            db_user.promo_offer_discount_expires_at = saved_expires
+        await db.commit()
+    except Exception as refund_error:
+        logger.critical(
+            'CRITICAL: не удалось вернуть средства',
+            user_id=user_id,
+            price_kopeks=amount_kopeks,
+            refund_error=refund_error,
+        )
+        await _persist_failed_refund(
+            user_id=user_id,
+            amount_kopeks=amount_kopeks,
+            reason=reason,
+            error=refund_error,
+        )
+
+
 async def _reset_panel_devices(db_user: User, subscription, *, reason: str) -> None:
     """Снять все HWID в панели. Провал сброса не отменяет уже оплаченную покупку."""
     panel_id = (
@@ -258,11 +376,13 @@ async def _tariff_switch_note(
         )
     else:
         lines.append(texts.t('TARIFF_SWITCH_NOTE_CARRY', 'Остаток сохранится и добавится к новому сроку.\n'))
-    old_devices = getattr(current, 'device_limit', None) or 0
+    # Фактический лимит подписки, а не тарифа: у перенесённой подписки он свой
+    # (8 при тарифе на 3), и «Устройств: 7 → 8» при покупке на 7 было бы неправдой.
+    old_devices = getattr(subscription, 'device_limit', None) or 0
     if switch['device_limit_now'] != old_devices:
         lines.append(
             texts.t('TARIFF_SWITCH_NOTE_DEVICES', '📱 Устройств: {old} → {new} (сразу)\n').format(
-                old=old_devices, new=switch['device_limit_now']
+                old=Texts.format_device_limit(old_devices), new=Texts.format_device_limit(switch['device_limit_now'])
             )
         )
     lines.append(_tariff_switch_lte_line(switch, current, texts))
@@ -1456,13 +1576,17 @@ async def handle_custom_confirm(
     # Calculate price via PricingEngine (single source of truth for all discounts)
     from app.services.pricing_engine import pricing_engine
 
-    result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        custom_days,
-        device_limit=tariff.device_limit,
-        custom_traffic_gb=custom_traffic if tariff.can_purchase_custom_traffic() else None,
-        user=db_user,
-    )
+    try:
+        result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            custom_days,
+            device_limit=tariff.device_limit,
+            custom_traffic_gb=custom_traffic if tariff.can_purchase_custom_traffic() else None,
+            user=db_user,
+        )
+    except ValueError as error:  # LtePolicyError — подкласс ValueError
+        await _answer_policy_refusal(callback, error, texts)
+        return
     total_price = result.final_total
 
     # Проверяем, что цена за период валидна (original_total — цена до скидок)
@@ -1481,6 +1605,16 @@ async def handle_custom_confirm(
         )
         return
 
+    # Отказ политики — до ответа на callback: клиент видит причину, а не
+    # «Ошибка списания баланса».
+    from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+    try:
+        await validate_user_tariff_purchase(db, db_user, tariff)
+    except ValueError as error:
+        await _answer_policy_refusal(callback, error, texts)
+        return
+
     # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
     # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
     try:
@@ -1496,9 +1630,6 @@ async def handle_custom_confirm(
 
     try:
         # Списываем баланс
-        from app.services.donbaton_catalog import validate_user_tariff_purchase
-
-        await validate_user_tariff_purchase(db, db_user, tariff)
         success = await subtract_user_balance(
             db,
             db_user,
@@ -1827,9 +1958,8 @@ async def select_tariff_period(
     else:
         _existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
-    device_limit = None
-    if _existing_sub and _existing_sub.tariff_id == tariff.id:
-        device_limit = _existing_sub.device_limit
+    # Сетевой тариф — фиксированный лимит устройств: None, движок возьмёт тарифный.
+    device_limit = _same_tariff_quote_device_limit(_existing_sub, tariff)
 
     # Цена — тем же PricingEngine, что и confirm_tariff_purchase: ручной расчёт от
     # period_prices не видел доплату за устройства сверх включённых в тариф, превью
@@ -1837,12 +1967,16 @@ async def select_tariff_period(
     # «Недостаточно средств».
     from app.services.pricing_engine import pricing_engine
 
-    result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        period,
-        device_limit=device_limit,
-        user=db_user,
-    )
+    try:
+        result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            period,
+            device_limit=device_limit,
+            user=db_user,
+        )
+    except ValueError as error:  # LtePolicyError — подкласс ValueError
+        await _answer_policy_refusal(callback, error, texts)
+        return
     final_price = result.final_total
     original_price = result.original_total
     total_discount = result.promo_group_discount + result.promo_offer_discount
@@ -2038,16 +2172,18 @@ async def confirm_tariff_purchase(
     else:
         existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
-    device_limit = None
-    if existing_sub and existing_sub.tariff_id == tariff.id:
-        device_limit = existing_sub.device_limit
+    device_limit = _same_tariff_quote_device_limit(existing_sub, tariff)
 
-    result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        period,
-        device_limit=device_limit,
-        user=db_user,
-    )
+    try:
+        result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            period,
+            device_limit=device_limit,
+            user=db_user,
+        )
+    except ValueError as error:  # LtePolicyError — подкласс ValueError
+        await _answer_policy_refusal(callback, error, texts)
+        return
     final_price = result.final_total
 
     # Проверяем баланс (user already locked, balance is fresh)
@@ -2056,6 +2192,16 @@ async def confirm_tariff_purchase(
         await callback.answer(
             texts.t('MINIAPP_PURCHASE_STATUS_INSUFFICIENT', 'Недостаточно средств на балансе'), show_alert=True
         )
+        return
+
+    # Отказ политики — до ответа на callback: клиент видит причину, а не
+    # «Ошибка списания баланса».
+    from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+    try:
+        await validate_user_tariff_purchase(db, db_user, tariff)
+    except ValueError as error:
+        await _answer_policy_refusal(callback, error, texts)
         return
 
     # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
@@ -2072,9 +2218,6 @@ async def confirm_tariff_purchase(
     saved_promo_source = getattr(db_user, 'promo_offer_discount_source', None) if consume_promo else None
     saved_promo_expires = getattr(db_user, 'promo_offer_discount_expires_at', None) if consume_promo else None
     try:
-        from app.services.donbaton_catalog import validate_user_tariff_purchase
-
-        await validate_user_tariff_purchase(db, db_user, tariff)
         success = await subtract_user_balance(
             db,
             db_user,
@@ -2126,7 +2269,7 @@ async def confirm_tariff_purchase(
         if settings.is_multi_tariff_enabled():
             if existing_subscription and existing_subscription.tariff_id == tariff.id:
                 # Extend existing subscription for this tariff
-                effective_device_limit = max(tariff.device_limit or 0, existing_subscription.device_limit or 0)
+                effective_device_limit = _same_tariff_extend_device_limit(existing_subscription, tariff)
                 subscription = await extend_subscription(
                     db,
                     existing_subscription,
@@ -2192,8 +2335,9 @@ async def confirm_tariff_purchase(
         elif existing_subscription:
             # Legacy single-subscription: extend or switch
             # Сохраняем докупленные устройства при продлении того же тарифа
+            # (у сетевого тарифа лимит фиксирован — берётся тарифный)
             if existing_subscription.tariff_id == tariff.id:
-                effective_device_limit = max(tariff.device_limit or 0, existing_subscription.device_limit or 0)
+                effective_device_limit = _same_tariff_extend_device_limit(existing_subscription, tariff)
             else:
                 effective_device_limit = tariff.device_limit
             subscription = await extend_subscription(
@@ -2478,12 +2622,16 @@ async def confirm_daily_tariff_purchase(
     # Apply group + promo-offer discounts via PricingEngine (single source of truth)
     from app.services.pricing_engine import pricing_engine
 
-    pricing_result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        period_days=1,
-        device_limit=tariff.device_limit,
-        user=db_user,
-    )
+    try:
+        pricing_result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            period_days=1,
+            device_limit=tariff.device_limit,
+            user=db_user,
+        )
+    except ValueError as error:  # LtePolicyError — подкласс ValueError
+        await _answer_policy_refusal(callback, error, texts)
+        return
     final_daily_price = pricing_result.final_total
     consume_promo = pricing_result.breakdown.get('offer_discount_pct', 0) > 0
 
@@ -2842,6 +2990,40 @@ def get_tariff_extend_confirm_keyboard(
     )
 
 
+async def _show_renewal_refusal(callback: types.CallbackQuery, texts, subscription, error: Exception) -> None:
+    """Экран «продлить нельзя»: причина политики и что можно сделать сейчас.
+
+    Докупка LTE прежним условиям доступна, поэтому для «Wi-Fi + LTE» — её кнопка;
+    в мультитарифе кнопки ведут к этой подписке (как в уведомлениях об остатке LTE).
+    """
+    multi = settings.is_multi_tariff_enabled()
+    rows = []
+    if network_category(subscription) == 'wifi_lte' and not getattr(subscription, 'is_trial', False):
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('LTE_QUOTA_NOTICE_TOPUP_BUTTON', '📶 Докупить LTE'),
+                    callback_data=f'st:{subscription.id}' if multi else 'buy_traffic',
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'),
+                callback_data=f'sm:{subscription.id}' if multi else 'menu_subscription',
+            )
+        ]
+    )
+    logger.info('Продление отклонено политикой', subscription_id=subscription.id, reason=str(error))
+    await callback.message.edit_text(
+        texts.t('TARIFF_RENEW_BLOCKED_TITLE', '🔄 <b>Продление подписки</b>\n\n') + html.escape(str(error)),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
 async def show_tariff_extend(
     callback: types.CallbackQuery,
     db_user: User,
@@ -2983,6 +3165,17 @@ async def show_tariff_extend(
         await callback.answer()
         return
 
+    # Цены не показываем, если продление всё равно отклонят: перенесённые
+    # индивидуальные условия ждут окончания оплаченного срока.
+    if network_category(subscription):
+        from app.services.lte_quota_service import LtePolicyError, validate_legacy_renewal
+
+        try:
+            await validate_legacy_renewal(db, subscription)
+        except LtePolicyError as error:
+            await _show_renewal_refusal(callback, texts, subscription, error)
+            return
+
     traffic = tariff_traffic_label(tariff, format_traffic(tariff.traffic_limit_gb))
 
     # Проверяем есть ли у пользователя скидки по периодам
@@ -3001,7 +3194,8 @@ async def show_tariff_extend(
             'TARIFF_RENEW_PERIOD_DISCOUNTS_HINT', '\n🎁 <i>Скидки зависят от выбранного периода</i>'
         )
 
-    actual_device_limit = subscription.device_limit or tariff.device_limit
+    # У сетевого тарифа — тарифный лимит и без доплаты за устройства.
+    actual_device_limit = _renewal_device_limit(subscription, tariff)
 
     await callback.message.edit_text(
         texts.t(
@@ -3061,17 +3255,24 @@ async def select_tariff_extend_period(
     if not subscription:
         await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
         return
-    actual_device_limit = subscription.device_limit or tariff.device_limit
+    # У сетевого тарифа лимит фиксирован: тарифный, даже если у подписки другой.
+    actual_device_limit = _renewal_device_limit(subscription, tariff)
 
     # Calculate price via PricingEngine (per-category discounts: period + devices)
     from app.services.pricing_engine import pricing_engine
 
-    result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        period,
-        device_limit=actual_device_limit,
-        user=db_user,
-    )
+    try:
+        result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            period,
+            device_limit=actual_device_limit,
+            user=db_user,
+            db=db,
+            subscription=subscription,
+        )
+    except ValueError as error:  # LtePolicyError — подкласс ValueError
+        await _answer_policy_refusal(callback, error, texts)
+        return
     final_price = result.final_total
     original_price = result.original_total
     total_discount = result.promo_group_discount + result.promo_offer_discount
@@ -3234,7 +3435,8 @@ async def confirm_tariff_extend(
         )
         return
 
-    actual_device_limit = subscription.device_limit or tariff.device_limit
+    # У сетевого тарифа лимит фиксирован: тарифный, даже если у подписки другой.
+    actual_device_limit = _renewal_device_limit(subscription, tariff)
 
     from app.database.crud.user import lock_user_for_pricing
 
@@ -3243,12 +3445,18 @@ async def confirm_tariff_extend(
     # Calculate price via PricingEngine (handles per-category discounts: period + devices)
     from app.services.pricing_engine import pricing_engine
 
-    result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        period,
-        device_limit=actual_device_limit,
-        user=db_user,
-    )
+    try:
+        result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            period,
+            device_limit=actual_device_limit,
+            user=db_user,
+            db=db,
+            subscription=subscription,
+        )
+    except ValueError as error:  # LtePolicyError — подкласс ValueError
+        await _answer_policy_refusal(callback, error, texts)
+        return
     final_price = result.final_total
     consume_promo = result.promo_offer_discount > 0
 
@@ -3260,6 +3468,16 @@ async def confirm_tariff_extend(
         )
         return
 
+    # Отказ политики — до ответа на callback: клиент видит причину, а не
+    # «Ошибка списания баланса».
+    from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+    try:
+        await validate_user_tariff_purchase(db, db_user, tariff)
+    except ValueError as error:
+        await _answer_policy_refusal(callback, error, texts)
+        return
+
     # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
     # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
     try:
@@ -3267,11 +3485,21 @@ async def confirm_tariff_extend(
     except Exception:
         pass
 
-    try:
-        # Списываем баланс
-        from app.services.donbaton_catalog import validate_user_tariff_purchase
+    # Состояние промо-скидки и id — до списания: при возврате сессия откатывается,
+    # и ORM-объекты после rollback() уже не читаются.
+    saved_promo = (
+        (
+            int(getattr(db_user, 'promo_offer_discount_percent', 0) or 0),
+            getattr(db_user, 'promo_offer_discount_source', None),
+            getattr(db_user, 'promo_offer_discount_expires_at', None),
+        )
+        if consume_promo
+        else (0, None, None)
+    )
+    refund_user_id = db_user.id
 
-        await validate_user_tariff_purchase(db, db_user, tariff)
+    # Списываем баланс (subtract_user_balance коммитит сам)
+    try:
         success = await subtract_user_balance(
             db,
             db_user,
@@ -3280,17 +3508,23 @@ async def confirm_tariff_extend(
             consume_promo_offer=consume_promo,
             mark_as_paid_subscription=True,
         )
-        if not success:
-            try:
-                await callback.message.edit_text(texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса'))
-            except Exception:
-                pass
-            return
+    except Exception as e:
+        logger.error('Ошибка списания баланса при продлении тарифа', error=e, exc_info=True)
+        success = False
+    if not success:
+        try:
+            await callback.message.edit_text(texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса'))
+        except Exception:
+            pass
+        return
 
-        # Запоминаем, был ли триал ДО продления
-        was_trial = subscription.is_trial
+    # Запоминаем, был ли триал ДО продления
+    was_trial = subscription.is_trial
 
-        # Продлеваем подписку; для триала передаём tariff_id чтобы сбросить is_trial
+    # Продлеваем подписку; для триала передаём tariff_id чтобы сбросить is_trial.
+    # Деньги уже списаны и закоммичены: сбой продления обязан их вернуть, как в
+    # confirm_tariff_purchase, иначе клиент платит за продление, которого нет.
+    try:
         subscription = await extend_subscription(
             db,
             subscription,
@@ -3299,7 +3533,29 @@ async def confirm_tariff_extend(
             traffic_limit_gb=tariff.traffic_limit_gb if was_trial else None,
             device_limit=actual_device_limit if was_trial else None,
         )
+    except Exception as e:
+        logger.error('Ошибка продления тарифа после списания — возврат средств', error=e, exc_info=True)
+        await _refund_failed_charge(
+            db,
+            db_user,
+            user_id=refund_user_id,
+            amount_kopeks=final_price,
+            reason='Возврат: ошибка продления тарифа',
+            consume_promo=consume_promo,
+            saved_promo=saved_promo,
+        )
+        try:
+            await callback.message.edit_text(
+                texts.t(
+                    'TARIFF_RENEW_ERROR_REFUNDED',
+                    '❌ Не удалось продлить подписку. Списанные средства возвращены на баланс.',
+                )
+            )
+        except Exception:
+            pass
+        return
 
+    try:
         # Обновляем пользователя в Remnawave
         try:
             subscription_service = SubscriptionService()
@@ -3899,12 +4155,16 @@ async def select_tariff_switch_period(
     # Calculate price via PricingEngine (per-category discounts: period + devices for new tariff)
     from app.services.pricing_engine import pricing_engine
 
-    result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        period,
-        device_limit=tariff.device_limit or 0,
-        user=db_user,
-    )
+    try:
+        result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            period,
+            device_limit=tariff.device_limit or 0,
+            user=db_user,
+        )
+    except ValueError as error:  # LtePolicyError — подкласс ValueError
+        await _answer_policy_refusal(callback, error, texts)
+        return
     final_price = result.final_total
     original_price = result.original_total
     total_discount = result.promo_group_discount + result.promo_offer_discount
@@ -4056,12 +4316,16 @@ async def confirm_tariff_switch(
 
     # New tariff device_limit applies on switch (extra devices not transferred)
     effective_device_limit = tariff.device_limit or 0
-    result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        period,
-        device_limit=effective_device_limit,
-        user=db_user,
-    )
+    try:
+        result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            period,
+            device_limit=effective_device_limit,
+            user=db_user,
+        )
+    except ValueError as error:  # LtePolicyError — подкласс ValueError
+        await _answer_policy_refusal(callback, error, texts)
+        return
     final_price = result.final_total
     consume_promo = result.promo_offer_discount > 0
 
@@ -4073,6 +4337,16 @@ async def confirm_tariff_switch(
         )
         return
 
+    # Отказ политики — до ответа на callback: клиент видит причину, а не
+    # «Ошибка списания баланса».
+    from app.services.donbaton_catalog import validate_user_tariff_purchase
+
+    try:
+        await validate_user_tariff_purchase(db, db_user, tariff)
+    except ValueError as error:
+        await _answer_policy_refusal(callback, error, texts)
+        return
+
     # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
     # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
     try:
@@ -4082,9 +4356,6 @@ async def confirm_tariff_switch(
 
     try:
         # Списываем баланс
-        from app.services.donbaton_catalog import validate_user_tariff_purchase
-
-        await validate_user_tariff_purchase(db, db_user, tariff)
         success = await subtract_user_balance(
             db,
             db_user,
@@ -4313,12 +4584,16 @@ async def confirm_daily_tariff_switch(
     # Apply group + promo-offer discounts via PricingEngine (single source of truth)
     from app.services.pricing_engine import pricing_engine
 
-    pricing_result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        period_days=1,
-        device_limit=tariff.device_limit,
-        user=db_user,
-    )
+    try:
+        pricing_result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            period_days=1,
+            device_limit=tariff.device_limit,
+            user=db_user,
+        )
+    except ValueError as error:  # LtePolicyError — подкласс ValueError
+        await _answer_policy_refusal(callback, error, texts)
+        return
     final_daily_price = pricing_result.final_total
     consume_promo = pricing_result.breakdown.get('offer_discount_pct', 0) > 0
 

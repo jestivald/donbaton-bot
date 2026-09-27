@@ -2091,6 +2091,8 @@
   "TARIFF_RENEW_CONFIRM": "✅ <b>续订确认</b>\n\n📦 套餐：<b>{name}</b>\n📊 流量：{traffic}\n📱 设备：{devices}\n📅 周期：{period}\n{discount}\n💰 <b>应付：{total}</b>\n\n💳 您的余额：{balance}\n支付后：{after}",
   "TARIFF_RENEW_CONFIRM_BUTTON": "✅ 确认续订",
   "TARIFF_RENEW_ERROR": "❌ 续订时出错",
+  "TARIFF_RENEW_BLOCKED_TITLE": "🔄 <b>续订订阅</b>\n\n",
+  "TARIFF_RENEW_ERROR_REFUNDED": "❌ 无法续订订阅。已扣除的金额已退回到您的余额。",
   "TARIFF_RENEW_MISMATCH": "订阅与套餐不匹配，请重新打开续订",
   "TARIFF_RENEW_NO_TARIFFS": "没有可用于续订的套餐",
   "TARIFF_RENEW_PERIOD_DISCOUNTS_HINT": "\n🎁 <i>折扣视所选周期而定</i>",

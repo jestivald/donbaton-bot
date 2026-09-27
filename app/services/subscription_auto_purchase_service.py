@@ -958,16 +958,30 @@ async def _auto_purchase_tariff(
             await user_cart_service.clear_topup_intent(user.id)
             return False
 
+    from app.services.donbaton_catalog import network_category
+
+    # Сетевой тариф — фиксированный лимит устройств: движок принимает только
+    # тарифный, а у перенесённых подписок фактический другой (4, 8, 0…).
+    fixed_devices = bool(network_category(tariff) or network_category(existing_subscription))
     device_limit = None
-    if existing_subscription and existing_subscription.tariff_id == tariff_id:
+    if existing_subscription and existing_subscription.tariff_id == tariff_id and not fixed_devices:
         device_limit = existing_subscription.device_limit
 
-    result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        period_days,
-        device_limit=device_limit,
-        user=user,
-    )
+    try:
+        result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            period_days,
+            device_limit=device_limit,
+            user=user,
+        )
+    except ValueError as error:  # LtePolicyError — подкласс ValueError
+        logger.info(
+            '🔁 Автопокупка тарифа: отказ политики тарифа',
+            format_user_id=_format_user_id(user),
+            tariff_id=tariff_id,
+            reason=str(error),
+        )
+        return False
     final_price = result.final_total
     consume_promo = result.promo_offer_discount > 0
 
@@ -1020,7 +1034,10 @@ async def _auto_purchase_tariff(
         if existing_subscription:
             # Продлеваем существующую подписку
             # Сохраняем докупленные устройства при продлении того же тарифа
-            if existing_subscription.tariff_id == tariff.id:
+            # (у сетевого тарифа лимит фиксирован — берётся тарифный, как в кабинете)
+            if existing_subscription.tariff_id == tariff.id and fixed_devices:
+                effective_device_limit = tariff.device_limit
+            elif existing_subscription.tariff_id == tariff.id:
                 effective_device_limit = max(tariff.device_limit or 0, existing_subscription.device_limit or 0)
             else:
                 effective_device_limit = tariff.device_limit
@@ -2350,6 +2367,20 @@ async def try_auto_extend_expired_after_topup(
     if not bool(getattr(subscription, 'autopay_enabled', False)):
         logger.info(
             '🔄 Автопродление expired: пропуск — автоплатёж пользователем не включён',
+            format_user_id=_format_user_id(user),
+            subscription_id=getattr(subscription, 'id', None),
+        )
+        return False
+
+    # Тот же запрет, что у фонового автоплатежа и рекуррента: перенесённые
+    # индивидуальные условия не оплачиваются автоматически. После окончания срока
+    # тариф выбирает сам клиент — технический тариф импорта согласием на оплату не
+    # является, а пополнение баланса не должно молча его покупать.
+    from app.services.lte_quota_service import autopay_blocked_by_legacy
+
+    if await autopay_blocked_by_legacy(db, subscription):
+        logger.info(
+            '🔄 Автопродление expired: пропуск — перенесённые индивидуальные условия, тариф выбирает клиент',
             format_user_id=_format_user_id(user),
             subscription_id=getattr(subscription, 'id', None),
         )
