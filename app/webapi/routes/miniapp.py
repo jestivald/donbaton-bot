@@ -5387,6 +5387,11 @@ async def submit_subscription_renewal_endpoint(
         pricing_result = await pricing_engine.calculate_renewal_price(db, subscription, period_days, user=user)
     except HTTPException:
         raise
+    except ValueError as error:  # LtePolicyError — подкласс ValueError: причина отказа, не сбой расчёта
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={'code': 'renewal_rejected', 'message': str(error)},
+        ) from error
     except Exception as error:
         logger.error(
             'Failed to calculate renewal pricing for subscription (period)',
@@ -6685,17 +6690,31 @@ async def purchase_tariff_endpoint(
         payload.period_days = 1
 
     # Calculate price via PricingEngine (single source of truth)
+    from app.services.donbaton_catalog import network_category
+
     subs = getattr(user, 'subscriptions', None) or []
     # Find subscription with same tariff for device limit inheritance
     matching_sub = next((s for s in subs if s.tariff_id == tariff.id and s.is_active), None)
-    device_limit = matching_sub.device_limit if matching_sub else None
-
-    result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        payload.period_days,
-        device_limit=device_limit,
-        user=user,
+    # Сетевой тариф — фиксированный лимит устройств: движок принимает только
+    # тарифный, а у перенесённых подписок фактический другой (4, 8, 0…).
+    device_limit = (
+        matching_sub.device_limit
+        if matching_sub and not (network_category(tariff) or network_category(matching_sub))
+        else None
     )
+
+    try:
+        result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            payload.period_days,
+            device_limit=device_limit,
+            user=user,
+        )
+    except ValueError as error:  # LtePolicyError — подкласс ValueError; иначе 500
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={'code': 'purchase_rejected', 'message': str(error)},
+        ) from error
     price_kopeks = result.final_total
     consume_promo_offer = result.promo_offer_discount > 0
     bd = result.breakdown
@@ -6770,7 +6789,10 @@ async def purchase_tariff_endpoint(
 
     if subscription:
         # Preserve extra purchased devices when renewing the same tariff
-        if subscription.tariff_id == tariff.id:
+        # (у сетевого тарифа лимит фиксирован — берётся тарифный, как в кабинете)
+        if subscription.tariff_id == tariff.id and (network_category(tariff) or network_category(subscription)):
+            effective_device_limit = tariff.device_limit
+        elif subscription.tariff_id == tariff.id:
             effective_device_limit = max(tariff.device_limit or 0, subscription.device_limit or 0)
         else:
             effective_device_limit = tariff.device_limit

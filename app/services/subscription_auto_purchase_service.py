@@ -958,16 +958,30 @@ async def _auto_purchase_tariff(
             await user_cart_service.clear_topup_intent(user.id)
             return False
 
+    from app.services.donbaton_catalog import network_category
+
+    # Сетевой тариф — фиксированный лимит устройств: движок принимает только
+    # тарифный, а у перенесённых подписок фактический другой (4, 8, 0…).
+    fixed_devices = bool(network_category(tariff) or network_category(existing_subscription))
     device_limit = None
-    if existing_subscription and existing_subscription.tariff_id == tariff_id:
+    if existing_subscription and existing_subscription.tariff_id == tariff_id and not fixed_devices:
         device_limit = existing_subscription.device_limit
 
-    result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        period_days,
-        device_limit=device_limit,
-        user=user,
-    )
+    try:
+        result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            period_days,
+            device_limit=device_limit,
+            user=user,
+        )
+    except ValueError as error:  # LtePolicyError — подкласс ValueError
+        logger.info(
+            '🔁 Автопокупка тарифа: отказ политики тарифа',
+            format_user_id=_format_user_id(user),
+            tariff_id=tariff_id,
+            reason=str(error),
+        )
+        return False
     final_price = result.final_total
     consume_promo = result.promo_offer_discount > 0
 
@@ -1020,7 +1034,10 @@ async def _auto_purchase_tariff(
         if existing_subscription:
             # Продлеваем существующую подписку
             # Сохраняем докупленные устройства при продлении того же тарифа
-            if existing_subscription.tariff_id == tariff.id:
+            # (у сетевого тарифа лимит фиксирован — берётся тарифный, как в кабинете)
+            if existing_subscription.tariff_id == tariff.id and fixed_devices:
+                effective_device_limit = tariff.device_limit
+            elif existing_subscription.tariff_id == tariff.id:
                 effective_device_limit = max(tariff.device_limit or 0, existing_subscription.device_limit or 0)
             else:
                 effective_device_limit = tariff.device_limit

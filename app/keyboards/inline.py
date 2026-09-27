@@ -1117,6 +1117,22 @@ def get_insufficient_balance_keyboard(
     return keyboard
 
 
+def _legacy_terms_locked(subscription) -> bool:
+    """Перенесённые индивидуальные условия ждут окончания срока: другой тариф не купить.
+
+    Кнопка «📦 Тариф» вела бы в витрину, где покупка всё равно получит отказ.
+    Статус квоты — только предзагруженный (экран подписки грузит его до
+    клавиатуры); без него кнопку не прячем. Раннее продление легаси
+    (``DONBATON_LEGACY_EARLY_RENEWAL_ENABLED``) снимает замок — тогда тоже не прячем.
+    """
+    from app.services.lte_quota_service import quota_status_from_subscription
+
+    if getattr(settings, 'DONBATON_LEGACY_EARLY_RENEWAL_ENABLED', False):
+        return False
+    status = quota_status_from_subscription(subscription) or {}
+    return bool(status.get('renewal_requires_expiry'))
+
+
 def get_subscription_keyboard(
     language: str = DEFAULT_LANGUAGE,
     has_subscription: bool = False,
@@ -1283,7 +1299,10 @@ def get_subscription_keyboard(
             # обычная покупка нового тарифа на полный срок, а не переключение с
             # доплатой (оно для этих категорий закрыто).
             _network_switch = (
-                _network_subscription and not _dead_subscription and settings.DONBATON_TARIFF_SWITCH_ENABLED
+                _network_subscription
+                and not _dead_subscription
+                and settings.DONBATON_TARIFF_SWITCH_ENABLED
+                and not _legacy_terms_locked(subscription)
             )
             # Старой подписке (без тарифа) кнопку «Перейти на тариф» уже дали
             # вместо продления выше — вторая кнопка «Тариф» ей не нужна.

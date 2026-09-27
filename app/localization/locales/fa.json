@@ -1052,6 +1052,7 @@
   "TARIFF_RENEW_CONFIRM": "✅ <b>تأیید تمدید</b>\n\n📦 تعرفه: <b>{name}</b>\n📊 ترافیک: {traffic}\n📱 دستگاه‌ها: {devices}\n📅 دوره: {period}\n{discount}\n💰 <b>مبلغ قابل پرداخت: {total}</b>\n\n💳 موجودی شما: {balance}\nپس از پرداخت: {after}",
   "TARIFF_RENEW_CONFIRM_BUTTON": "✅ تأیید تمدید",
   "TARIFF_RENEW_ERROR": "❌ هنگام تمدید اشتراک خطایی رخ داد",
+  "TARIFF_RENEW_BLOCKED_TITLE": "🔄 <b>تمدید اشتراک</b>\n\n",
   "TARIFF_RENEW_MISMATCH": "اشتراک و تعرفه مطابقت ندارند، لطفاً تمدید را دوباره باز کنید",
   "TARIFF_RENEW_NO_TARIFFS": "تعرفه‌ای برای تمدید در دسترس نیست",
   "TARIFF_RENEW_PERIOD_DISCOUNTS_HINT": "\n🎁 <i>تخفیف به دوره انتخابی بستگی دارد</i>",

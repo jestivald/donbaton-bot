@@ -2091,6 +2091,7 @@
   "TARIFF_RENEW_CONFIRM": "✅ <b>Renewal confirmation</b>\n\n📦 Plan: <b>{name}</b>\n📊 Traffic: {traffic}\n📱 Devices: {devices}\n📅 Period: {period}\n{discount}\n💰 <b>To pay: {total}</b>\n\n💳 Your balance: {balance}\nAfter payment: {after}",
   "TARIFF_RENEW_CONFIRM_BUTTON": "✅ Confirm renewal",
   "TARIFF_RENEW_ERROR": "❌ An error occurred while renewing the subscription",
+  "TARIFF_RENEW_BLOCKED_TITLE": "🔄 <b>Subscription renewal</b>\n\n",
   "TARIFF_RENEW_MISMATCH": "Subscription and plan mismatch, please reopen the renewal",
   "TARIFF_RENEW_NO_TARIFFS": "No plans available for renewal",
   "TARIFF_RENEW_PERIOD_DISCOUNTS_HINT": "\n🎁 <i>Discounts depend on the selected period</i>",
