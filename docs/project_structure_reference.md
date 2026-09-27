@@ -3841,6 +3841,9 @@
 - `tests/donbaton/test_pricing_transition_integration.py` — Python-модуль
   Классы: нет
   Функции: `accounting_config`, `test_expired_legacy_with_valid_grants_has_no_purchase_quote`, `test_expired_legacy_without_live_grants_can_quote_new_paid_term`, `test_imported_custom_early_renewal_cannot_quote_through_purchase_entry`, `test_renewal_missing_managed_marker_still_checks_old_purchase_rows`, `test_detached_buyer_cannot_bypass_database_entitlement_check`
+- `tests/donbaton/test_purchase_path_fixes.py` — Python-модуль
+  Классы: нет
+  Функции: `configured`, `keep_legacy_lock` — Замок индивидуальных условий — как на проде до решения владельца., `callback`, `fsm`, `shown_text`, `buttons`, `assert_alert`, `migrated` — Перенесённая подписка на техническом тарифе 9 (3 устройства)., `locked_user` — ``lock_user_for_pricing`` без ``FOR UPDATE``: SQLite его не знает., `mute_side_effects` — Всё, что после списания и продления уходит наружу: панель, админы, корзина., `test_topup_does_not_auto_extend_expired_locked_legacy`, `test_topup_still_auto_extends_an_ordinary_network_subscription` — Гвард режет только замок: обычная сетевая подписка продлевается как раньше.
 - `tests/donbaton/test_recurring_guards.py` — Python-модуль
   Классы: нет
   Функции: `recurrent_enabled`, `test_purchase_rejects_managed_before_pending_row_or_provider`, `test_enable_and_direct_mixin_reject_both_entitlement_sources`, `test_legacy_enable_keeps_existing_provider_contract`, `test_old_telegram_callback_gets_clear_rejection`, `test_raw_cabinet_purchase_rejects_disabled_managed_sales`

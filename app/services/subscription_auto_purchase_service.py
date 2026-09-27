@@ -2355,6 +2355,20 @@ async def try_auto_extend_expired_after_topup(
         )
         return False
 
+    # Тот же запрет, что у фонового автоплатежа и рекуррента: перенесённые
+    # индивидуальные условия не оплачиваются автоматически. После окончания срока
+    # тариф выбирает сам клиент — технический тариф импорта согласием на оплату не
+    # является, а пополнение баланса не должно молча его покупать.
+    from app.services.lte_quota_service import autopay_blocked_by_legacy
+
+    if await autopay_blocked_by_legacy(db, subscription):
+        logger.info(
+            '🔄 Автопродление expired: пропуск — перенесённые индивидуальные условия, тариф выбирает клиент',
+            format_user_id=_format_user_id(user),
+            subscription_id=getattr(subscription, 'id', None),
+        )
+        return False
+
     # Only process subscriptions expired within the last 30 days
     if subscription.end_date is None:
         return False
