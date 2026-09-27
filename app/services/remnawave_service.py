@@ -2361,6 +2361,24 @@ class RemnaWaveService:
             return {'created': 0, 'updated': 0, 'errors': 1, 'deleted': 0}
 
     async def _create_subscription_from_panel_data(self, db: AsyncSession, user, panel_user):
+        # Права «сироты» ведёт отдельный леджер (lte_orphan_quotas). Подписка, собранная
+        # из панели, скопировала бы её LTE-сквад без учёта, а цикл квот сироты после
+        # такой привязки падал бы каждый проход. Не создаём ни её, ни «базовую»
+        # подписку из ветки ошибки ниже — только предупреждение для разбора вручную.
+        # Сбой самой проверки не глушим: создать подписку «на всякий случай» нельзя,
+        # а ошибку чтения базы вызывающий цикл синхронизации разбирает сам.
+        from app.services.donbaton_admin_guards import has_orphan_lte_quota
+
+        panel_user_id = _normalize_panel_user_id(panel_user.get('id'))
+        if await has_orphan_lte_quota(db, panel_user_id):
+            logger.warning(
+                '⚠️ Подписка из панели не создана: у аккаунта свои права LTE только в панели (сирота)',
+                user_id=getattr(user, 'id', None),
+                telegram_id=getattr(user, 'telegram_id', None),
+                panel_user_id=panel_user_id,
+            )
+            return
+
         try:
             from app.database.crud.subscription import create_subscription_no_commit
             from app.database.models import SubscriptionStatus

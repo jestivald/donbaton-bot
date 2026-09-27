@@ -43,6 +43,7 @@ from app.keyboards.admin import (
 )
 from app.localization.texts import Texts, get_texts
 from app.services.lte_quota_service import needs_managed_policy
+from app.services.panel_sync.db_session import rollback_quietly
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_service import UserService
@@ -3068,7 +3069,9 @@ async def process_subscription_extension_days(callback: types.CallbackQuery, db_
         await callback.answer('❌ Количество дней должно быть от -365 до 365, исключая 0', show_alert=True)
         return
 
-    success = await _extend_subscription_by_days(db, user_id, days, db_user.id, subscription_id=subscription_id)
+    success, refusal = await _extend_subscription_by_days(
+        db, user_id, days, db_user.id, subscription_id=subscription_id
+    )
 
     if success:
         if days > 0:
@@ -3083,7 +3086,7 @@ async def process_subscription_extension_days(callback: types.CallbackQuery, db_
         )
     else:
         await callback.message.edit_text(
-            '❌ Ошибка продления подписки',
+            _admin_failure_text('❌ Ошибка продления подписки', refusal),
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[[types.InlineKeyboardButton(text='📱 К подписке', callback_data=back_cb)]]
             ),
@@ -3119,7 +3122,9 @@ async def process_subscription_extension_text(
             await message.answer('❌ Количество дней должно быть от -365 до 365, исключая 0')
             return
 
-        success = await _extend_subscription_by_days(db, user_id, days, db_user.id, subscription_id=subscription_id)
+        success, refusal = await _extend_subscription_by_days(
+            db, user_id, days, db_user.id, subscription_id=subscription_id
+        )
 
         if success:
             if days > 0:
@@ -3133,7 +3138,7 @@ async def process_subscription_extension_text(
                 ),
             )
         else:
-            await message.answer('❌ Ошибка продления подписки')
+            await message.answer(_admin_failure_text('❌ Ошибка продления подписки', refusal))
 
     except ValueError:
         await message.answer('❌ Введите корректное число дней')
@@ -3210,7 +3215,7 @@ async def process_traffic_addition_button(callback: types.CallbackQuery, db_user
         else f'admin_user_subscription_{user_id}'
     )
 
-    success = await _add_subscription_traffic(db, user_id, gb, db_user.id, subscription_id=subscription_id)
+    success, refusal = await _add_subscription_traffic(db, user_id, gb, db_user.id, subscription_id=subscription_id)
 
     if success:
         traffic_text = '♾️ безлимитный' if gb == 0 else f'{gb} ГБ'
@@ -3222,7 +3227,7 @@ async def process_traffic_addition_button(callback: types.CallbackQuery, db_user
         )
     else:
         await callback.message.edit_text(
-            '❌ Ошибка добавления трафика',
+            _admin_failure_text('❌ Ошибка добавления трафика', refusal),
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[[types.InlineKeyboardButton(text='📱 К подписке', callback_data=back_cb)]]
             ),
@@ -3256,7 +3261,7 @@ async def process_traffic_addition_text(message: types.Message, db_user: User, s
             await message.answer('❌ Количество ГБ должно быть от 0 до 10000 (0 = безлимит)')
             return
 
-        success = await _add_subscription_traffic(db, user_id, gb, db_user.id, subscription_id=subscription_id)
+        success, refusal = await _add_subscription_traffic(db, user_id, gb, db_user.id, subscription_id=subscription_id)
 
         if success:
             traffic_text = '♾️ безлимитный' if gb == 0 else f'{gb} ГБ'
@@ -3267,7 +3272,7 @@ async def process_traffic_addition_text(message: types.Message, db_user: User, s
                 ),
             )
         else:
-            await message.answer('❌ Ошибка добавления трафика')
+            await message.answer(_admin_failure_text('❌ Ошибка добавления трафика', refusal))
 
     except ValueError:
         await message.answer('❌ Введите корректное число ГБ')
@@ -4425,6 +4430,13 @@ async def _update_user_traffic(
         return False
 
 
+def _admin_failure_text(title: str, refusal: str | None) -> str:
+    """Сообщение админу об отказе: с причиной, если её назвало правило подписки."""
+    if not refusal:
+        return title
+    return f'{title}\n\n{html.escape(refusal)}'
+
+
 async def _resolve_admin_subscription(
     db: AsyncSession, user_id: int, subscription_id: int | None = None, tariff_id: int | None = None
 ) -> 'Subscription | None':
@@ -4477,7 +4489,8 @@ async def _resolve_admin_subscription(
 
 async def _extend_subscription_by_days(
     db: AsyncSession, user_id: int, days: int, admin_id: int, subscription_id: int | None = None
-) -> bool:
+) -> tuple[bool, str | None]:
+    """Продлить (или сократить) подписку; вернуть успех и причину отказа правил."""
     try:
         from app.database.crud.subscription import extend_subscription
         from app.services.subscription_service import SubscriptionService
@@ -4485,9 +4498,16 @@ async def _extend_subscription_by_days(
         subscription = await _resolve_admin_subscription(db, user_id, subscription_id)
         if not subscription:
             logger.error('Подписка не найдена для пользователя', user_id=user_id)
-            return False
+            return False, None
 
-        await extend_subscription(db, subscription, days, commit=False)
+        try:
+            await extend_subscription(db, subscription, days, commit=False)
+        except ValueError as e:
+            # LtePolicyError — подкласс ValueError: правило подписки отказало до записи,
+            # и админу нужна причина, а не «ошибка». commit=False — откатываем сами.
+            logger.warning('Продление подписки отклонено правилами', user_id=user_id, error=str(e))
+            await rollback_quietly(db)
+            return False, str(e)
         now = datetime.now(UTC)
         if days < 0 and subscription.end_date <= now:
             subscription.status = SubscriptionStatus.EXPIRED.value
@@ -4504,16 +4524,18 @@ async def _extend_subscription_by_days(
             logger.info(
                 'Админ сократил подписку пользователя на дней', admin_id=admin_id, user_id=user_id, value=abs(days)
             )
-        return True
+        return True, None
 
     except Exception as e:
         logger.error('Ошибка продления подписки', error=e)
-        return False
+        await rollback_quietly(db)
+        return False, None
 
 
 async def _add_subscription_traffic(
     db: AsyncSession, user_id: int, gb: int, admin_id: int, subscription_id: int | None = None
-) -> bool:
+) -> tuple[bool, str | None]:
+    """Добавить трафик подписке; вернуть успех и причину отказа правил."""
     try:
         from app.database.crud.subscription import (
             add_subscription_traffic,
@@ -4524,13 +4546,20 @@ async def _add_subscription_traffic(
         subscription = await _resolve_admin_subscription(db, user_id, subscription_id)
         if not subscription:
             logger.error('Подписка не найдена для пользователя', user_id=user_id)
-            return False
+            return False, None
 
         if gb == 0:
             subscription.traffic_limit_gb = 0
             await db.commit()
         else:
-            await add_subscription_traffic(db, subscription, gb)
+            try:
+                await add_subscription_traffic(db, subscription, gb)
+            except ValueError as e:
+                # Сетевой подписке общий трафик не добавляют (LTE — отдельный пакет):
+                # отказ приходит до записи, показываем его причину.
+                logger.warning('Добавление трафика отклонено правилами', user_id=user_id, error=str(e))
+                await rollback_quietly(db)
+                return False, str(e)
 
         # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
         await reactivate_subscription(db, subscription)
@@ -4551,11 +4580,12 @@ async def _add_subscription_traffic(
 
         traffic_text = 'безлимитный' if gb == 0 else f'{gb} ГБ'
         logger.info('Админ добавил трафик пользователю', admin_id=admin_id, traffic_text=traffic_text, user_id=user_id)
-        return True
+        return True, None
 
     except Exception as e:
         logger.error('Ошибка добавления трафика', error=e)
-        return False
+        await rollback_quietly(db)
+        return False, None
 
 
 async def _deactivate_user_subscription(
@@ -5634,7 +5664,9 @@ async def change_subscription_type_confirm(callback: types.CallbackQuery, db_use
         else f'admin_user_subscription_{user_id}'
     )
 
-    success = await _change_subscription_type(db, user_id, new_type, db_user.id)
+    success, refusal = await _change_subscription_type(
+        db, user_id, new_type, db_user.id, subscription_id=subscription_id
+    )
 
     if success:
         type_text = 'платной' if new_type == 'paid' else 'триальной'
@@ -5646,7 +5678,7 @@ async def change_subscription_type_confirm(callback: types.CallbackQuery, db_use
         )
     else:
         await callback.message.edit_text(
-            '❌ Ошибка изменения типа подписки',
+            _admin_failure_text('❌ Ошибка изменения типа подписки', refusal),
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text='📱 К подписке', callback_data=back_cb)]]
             ),
@@ -5655,20 +5687,38 @@ async def change_subscription_type_confirm(callback: types.CallbackQuery, db_use
     await callback.answer()
 
 
-async def _change_subscription_type(db: AsyncSession, user_id: int, new_type: str, admin_id: int) -> bool:
+async def _change_subscription_type(
+    db: AsyncSession, user_id: int, new_type: str, admin_id: int, *, subscription_id: int | None = None
+) -> tuple[bool, str | None]:
+    """Переключить «пробная ↔ платная»; вернуть успех и причину отказа."""
     try:
+        from app.services.donbaton_admin_guards import subscription_type_change_refusal
         from app.services.subscription_service import SubscriptionService
 
-        subscription = await _resolve_admin_subscription(db, user_id)
+        # Выбранная в мультитарифе подписка, а не «лучшая активная»: переключать
+        # тип надо ровно у той, чью карточку открыл админ.
+        subscription = await _resolve_admin_subscription(db, user_id, subscription_id)
         if not subscription:
             logger.error('Подписка не найдена для пользователя', user_id=user_id)
-            return False
+            return False, None
 
         new_is_trial = new_type == 'trial'
 
         if subscription.is_trial == new_is_trial:
             logger.info('Тип подписки уже установлен корректно для пользователя', user_id=user_id)
-            return True
+            return True, None
+
+        # Пробный пакет LTE помнит конец пробы и платным периодом не пополняется:
+        # сетевую подписку переводит в платную только покупка тарифа.
+        refusal = await subscription_type_change_refusal(db, subscription, to_trial=new_is_trial)
+        if refusal:
+            logger.warning(
+                'Смена типа сетевой подписки отклонена',
+                user_id=user_id,
+                subscription_id=subscription.id,
+                new_type=new_type,
+            )
+            return False, refusal
 
         old_type = 'триальной' if subscription.is_trial else 'платной'
         new_type_text = 'триальной' if new_is_trial else 'платной'
@@ -5694,12 +5744,12 @@ async def _change_subscription_type(db: AsyncSession, user_id: int, new_type: st
             old_type=old_type,
             new_type_text=new_type_text,
         )
-        return True
+        return True, None
 
     except Exception as e:
         logger.error('Ошибка изменения типа подписки', error=e)
         await db.rollback()
-        return False
+        return False, None
 
 
 # =============================================================================
@@ -5734,6 +5784,13 @@ async def show_admin_tariff_change(callback: types.CallbackQuery, db_user: User,
 
     if not subscription:
         await callback.answer('❌ У пользователя нет подписки', show_alert=True)
+        return
+
+    # Сетевую подписку ведёт леджер LTE — прямая смена тарифа его обошла бы.
+    from app.services.donbaton_admin_guards import NETWORK_TARIFF_CHANGE_REFUSAL, uses_network_accounting
+
+    if await uses_network_accounting(db, subscription):
+        await callback.answer(NETWORK_TARIFF_CHANGE_REFUSAL, show_alert=True)
         return
 
     # Получаем все активные тарифы
@@ -5839,6 +5896,13 @@ async def select_admin_tariff_change(callback: types.CallbackQuery, db_user: Use
         await callback.answer('ℹ️ Этот тариф уже установлен', show_alert=True)
         return
 
+    from app.services.donbaton_admin_guards import tariff_change_refusal
+
+    refusal = await tariff_change_refusal(db, subscription, tariff)
+    if refusal:
+        await callback.answer(refusal, show_alert=True)
+        return
+
     traffic_str = '♾️' if tariff.traffic_limit_gb == 0 else f'{tariff.traffic_limit_gb} ГБ'
     servers_count = len(tariff.allowed_squads) if tariff.allowed_squads else 0
 
@@ -5904,6 +5968,21 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         await callback.answer('❌ У пользователя нет подписки', show_alert=True)
         return
 
+    # Подтверждение могло прийти старой кнопкой: проверяем здесь, а не только на выборе.
+    # Сетевые условия (категория, пакет LTE, устройства) меняет только покупка.
+    from app.services.donbaton_admin_guards import tariff_change_refusal
+
+    refusal = await tariff_change_refusal(db, subscription, tariff)
+    if refusal:
+        await callback.message.edit_text(
+            f'❌ <b>Тариф не изменён</b>\n\n{html.escape(refusal)}',
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[[types.InlineKeyboardButton(text='📱 К подписке', callback_data=back_cb)]]
+            ),
+        )
+        await callback.answer()
+        return
+
     try:
         old_tariff_id = subscription.tariff_id
 
@@ -5929,7 +6008,8 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         subscription.connected_squads = tariff.allowed_squads or []
         subscription.updated_at = datetime.now(UTC)
 
-        # Сбрасываем докупленный трафик при смене тарифа
+        # Сбрасываем докупленный трафик при смене тарифа. Подписка с раздельным учётом
+        # сюда не доходит (tariff_change_refusal выше): её TrafficPurchase — записи переноса.
         from sqlalchemy import delete as sql_delete
 
         from app.database.models import TrafficPurchase
