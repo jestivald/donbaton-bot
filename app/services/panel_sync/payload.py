@@ -67,6 +67,18 @@ class PanelPayload:
     #: это решение «отобрать доступ», а не «мы ещё не знаем». Флаг же служит
     #: признаком «политика уже применена» — повторно её накладывать не нужно.
     managed: bool = False
+    #: Окно оплаты ДонБатона (`app/services/donbaton_payment_window.py`): срок
+    #: подписки кончился, но до этого момента панель держит аккаунт ACTIVE с одним
+    #: сквадом окна. Тогда в ``expireAt`` уходит конец окна, а не ``end_date``, —
+    #: иначе панель погасила бы аккаунт сразу же, а писатель ещё и «погасил» бы
+    #: дату окна как противоречащую боту. ``end_date`` остаётся настоящим сроком.
+    payment_window_until: datetime | None = None
+
+    def _expiry(self) -> tuple[datetime, bool]:
+        """Какую дату и с каким «живым» признаком отдавать в ``expireAt``."""
+        if self.payment_window_until is not None:
+            return self.payment_window_until, True
+        return self.end_date, self.is_live
 
     def _common(self) -> dict:
         kwargs: dict = {
@@ -94,7 +106,8 @@ class PanelPayload:
         # У нового аккаунта снимать нечего, поэтому пустой список безопасен, а
         # поле в POST обязательно.
         kwargs['active_internal_squads'] = list(self.active_internal_squads)
-        kwargs['expire_at'] = panel_expire_at(self.end_date, is_active=self.is_live, creating=True, now=now)
+        expires, live = self._expiry()
+        kwargs['expire_at'] = panel_expire_at(expires, is_active=live, creating=True, now=now)
         return kwargs
 
     def update_kwargs(
@@ -130,9 +143,10 @@ class PanelPayload:
         # доступ включённым.
         if self.active_internal_squads or self.managed:
             kwargs['active_internal_squads'] = list(self.active_internal_squads)
+        expires, live = self._expiry()
         expire_at = panel_expire_at(
-            self.end_date,
-            is_active=self.is_live,
+            expires,
+            is_active=live,
             creating=False,
             now=now,
             panel_current=panel_current,
@@ -151,6 +165,10 @@ class PanelPayload:
             # Пересчитываются они из леджера при каждой сборке, так что лишними
             # в запросе не бывают.
             kept = (set(only_fields) | POLICY_FIELDS) if self.managed else set(only_fields)
+            if self.managed and self.payment_window_until is not None:
+                # Дата окна — часть решения политики: ACTIVE без неё панель
+                # тут же погасит обратно по прошедшему сроку.
+                kept.add('expire_at')
             kwargs = {key: value for key, value in kwargs.items() if key in kept}
         kwargs['user_id'] = user_id
         return kwargs

@@ -1693,6 +1693,7 @@
   "DAILY_SUBSCRIPTION_RESUMED": "▶️ 订阅已恢复！",
   "DAILY_SUBSCRIPTION_RESUMED_AFTER_TOPUP": "✅ <b>订阅已恢复！</b>\n\n您的日套餐「{tariff_name}」已在充值后恢复。\n\n💳 扣费：{amount}\n💰 余额：{balance}",
   "WEBHOOK_SUB_EXPIRED": "❌ <b>订阅{tariff_label}已过期</b>\n\n您的订阅已结束。请续订以恢复VPN访问。",
+  "DONBATON_PAYMENT_WINDOW_EXPIRED_HINT": "⏳ 在 {period} 内（至 {until}），应用中的「{server}」服务器仍可使用——选择它即可打开机器人并付款；其他服务器在付款前不可用。",
   "WEBHOOK_SUB_DISABLED": "🚫 <b>订阅{tariff_label}已被禁用</b>\n\n您的订阅已被管理员禁用。",
   "WEBHOOK_SUB_ENABLED": "✅ <b>订阅{tariff_label}已激活</b>\n\n您的订阅已重新激活。祝使用愉快！",
   "WEBHOOK_SUB_LIMITED": "⚠️ <b>已达到流量限制</b>\n\n您已用完订阅{tariff_label}的所有可用流量。请购买额外流量或等待重置。",

@@ -240,6 +240,8 @@ async def push_subscription(
             panel_user_id=panel_user_id,
             already_sent=already_sent,
             now=moment,
+            # В окне оплаты дата в панели — конец окна, и она будущая по праву.
+            end_date=payload.payment_window_until,
         )
         await _record_identity(
             db,
@@ -297,6 +299,7 @@ async def _extinguish_stale_date(
     panel_user_id: int,
     already_sent: datetime | None,
     now: datetime,
+    end_date: datetime | None = None,
 ) -> bool:
     """Погасить дату, если панель после обновления всё ещё держит будущее.
 
@@ -306,7 +309,8 @@ async def _extinguish_stale_date(
     Прошедшую дату панель при обновлении не принимает, поэтому ставим ближайший
     допустимый момент; следующий проход увидит там прошлое и уже ничего не тронет.
     """
-    end_date = getattr(subscription, 'end_date', None)
+    if end_date is None:
+        end_date = getattr(subscription, 'end_date', None)
     if end_date is None:
         return False
     extinguish_at = stale_panel_expire_at(getattr(panel_user, 'expire_at', None), end_date=end_date, now=now)
@@ -481,6 +485,7 @@ async def patch_panel_policy(
     *,
     user_id: int,
     fields: dict,
+    payment_window_until: datetime | None = None,
     update_call=None,
 ) -> RemnaWaveUser:
     """Записать в панель то, что посчитала политика Wi-Fi/LTE.
@@ -497,9 +502,15 @@ async def patch_panel_policy(
     * кому писать. У «сироты» — аккаунта панели с квотой, но без подписки в боте
       — строки подписки нет вовсе, и собирать её состояние не из чего.
 
-    Поэтому здесь нет ни даты, ни описания, ни поиска аккаунта: адрес и поля
-    вызывающий уже посчитал. Набор полей проверяется — этот вход не должен стать
-    лазейкой, через которую в панель уедет что-нибудь помимо политики.
+    Поэтому здесь нет ни описания, ни поиска аккаунта: адрес и поля вызывающий
+    уже посчитал. Набор полей проверяется — этот вход не должен стать лазейкой,
+    через которую в панель уедет что-нибудь помимо политики.
+
+    Дата — только у окна оплаты (``payment_window_until``, см.
+    ``app/services/donbaton_payment_window.py``): истёкшей подписке на время окна
+    панель держит аккаунт ACTIVE до конца окна, и без даты в будущем она погасила
+    бы его сама. Отдельный аргумент, а не поле в ``fields``: дата уходит только
+    вместе с решением политики «ACTIVE, один сквад окна».
     """
     unexpected = set(fields) - set(POLICY_FIELDS)
     if unexpected:
@@ -507,5 +518,15 @@ async def patch_panel_policy(
             f'patch_panel_policy пишет только поля политики Wi-Fi/LTE, лишние: {sorted(unexpected)}. '
             f'Подписка целиком — push_subscription, карточка аккаунта — patch_panel_account.'
         )
+    if payment_window_until is not None and not (
+        _value(fields.get('status')) == 'ACTIVE' and len(fields.get('active_internal_squads') or ()) == 1
+    ):
+        raise ValueError('patch_panel_policy: дату пишет только окно оплаты — ACTIVE и один сквад окна')
     update = update_call or api.update_user
+    if payment_window_until is not None:
+        return await update(user_id=user_id, expire_at=payment_window_until, **fields)
     return await update(user_id=user_id, **fields)
+
+
+def _value(value):
+    return getattr(value, 'value', value)

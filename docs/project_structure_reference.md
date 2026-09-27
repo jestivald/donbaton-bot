@@ -87,8 +87,8 @@
   Функции: `create_bot` — Create a Bot instance with SOCKS5 proxy and/or custom Telegram API server.
 - `app/cabinet/`
 - `app/config.py` — Python-модуль
-  Классы: `Settings` (397 методов)
-  Функции: `transliterate_cyrillic` — Заменяет кириллические буквы латинскими, сохраняя регистр («Шмель» → «Shmel»)., `set_period_prices_from_db` — Устанавливает периоды/цены из БД., `get_db_period_prices` — Возвращает периоды/цены из БД если они загружены., `clear_db_period_prices` — Очищает кеш цен из тарифов (при переключении в classic mode)., `refresh_period_prices` — Rebuild cached period price mapping., `refresh_classic_period_prices` — Rebuild CLASSIC_PERIOD_PRICES from current settings., `get_traffic_prices`, `refresh_traffic_prices`
+  Классы: `Settings` (398 методов)
+  Функции: `transliterate_cyrillic` — Заменяет кириллические буквы латинскими, сохраняя регистр («Шмель» → «Shmel»)., `normalize_squad_uuid` — Один UUID сквада панели в каноническом виде; пусто — «не задан»., `set_period_prices_from_db` — Устанавливает периоды/цены из БД., `get_db_period_prices` — Возвращает периоды/цены из БД если они загружены., `clear_db_period_prices` — Очищает кеш цен из тарифов (при переключении в classic mode)., `refresh_period_prices` — Rebuild cached period price mapping., `refresh_classic_period_prices` — Rebuild CLASSIC_PERIOD_PRICES from current settings., `get_traffic_prices`, `refresh_traffic_prices`
 - `app/database/`
 - `app/external/`
 - `app/handlers/`
@@ -1485,6 +1485,9 @@
 - `app/services/donbaton_catalog.py` — Python-модуль
   Классы: нет
   Функции: `network_category`, `tariff_network_fields`, `tariff_traffic_label`, `available_categories`, `select_category`, `category_tariffs`, `validate_tariff_definition` — Validate draft data without requiring a configured or enabled panel., `validate_user_tariff_purchase` — Check current paid rights before a checkout commits a balance debit.
+- `app/services/donbaton_payment_window.py` — Python-модуль
+  Классы: `PaymentWindow`
+  Функции: `window_hours` — Длина окна в часах; 0 — окна нет (выключено или нет сквада)., `window_squad` — UUID сквада окна или ``None``, если окно выключено или настроено неверно., `payment_window` — Окно оплаты подписки в момент ``now`` или ``None``., `cycle_candidates` — Условие выборки цикла LTE для подписок, у которых сейчас может быть окно., `panel_date_is_window` — Дата аккаунта в панели — не срок подписки, а конец окна оплаты., `expired_notice_hint` — Строка для «⛔ Подписка истекла»: какой сервер открыть, чтобы заплатить., `same_panel_date` — Совпадают ли две даты панели с точностью до её округления.
 - `app/services/donut_service.py` — Python-модуль
   Классы: `DonutAPIError` (1 методов), `DonutService` (18 методов)
   Функции: нет
@@ -1739,7 +1742,7 @@
   Классы: `RemnaWaveAutoSyncStatus`, `FullSyncAlreadyRunning` (1 методов), `RemnaWaveAutoSyncService` (12 методов)
   Функции: `is_full_sync_running`, `perform_full_sync` — Полная синхронизация — одна для бота, кабинета и расписания., `sync_servers_from_panel` — Сквады панели → серверы бота; кеш стран сбрасывается.
 - `app/services/remnawave_webhook_service.py` — Python-модуль
-  Классы: `RemnaWaveWebhookService` (48 методов)
+  Классы: `RemnaWaveWebhookService` (49 методов)
   Функции: нет
 - `app/services/reporting_service.py` — Python-модуль
   Классы: `ReportingServiceError`, `ReportPeriod`, `ReportPeriodRange`, `ReportingService` (22 методов)
@@ -1796,7 +1799,7 @@
   Классы: `SystemErrorLogService` (13 методов)
   Функции: нет
 - `app/services/system_settings_service.py` — Python-модуль
-  Классы: `SettingDefinition` (1 методов), `ChoiceOption`, `ReadOnlySettingError`, `BotConfigurationService` (53 методов)
+  Классы: `SettingDefinition` (1 методов), `ChoiceOption`, `ReadOnlySettingError`, `BotConfigurationService` (54 методов)
   Функции: нет
 - `app/services/tabpay_service.py` — Python-модуль
   Классы: `TabPayAPIError` (1 методов), `TabPayNetworkError`, `TabPayService` (15 методов)
@@ -1926,7 +1929,7 @@
   Классы: нет
   Функции: `apply_managed_policy` — Наложить политику Wi-Fi/LTE на набор полей. Для прочих подписок — no-op., `reproject_after_create` — Досэмплировать счётчик только что заведённого аккаунта и досыпать LTE.
 - `app/services/panel_sync/payload.py` — Python-модуль
-  Классы: `PanelPayload` (3 методов)
+  Классы: `PanelPayload` (4 методов)
   Функции: `resolve_panel_status` — Статус аккаунта в панели, каким его видит бот., `build_panel_payload` — Собрать поля запроса из пользователя, подписки и её тарифа.
 - `app/services/panel_sync/projection.py` — Python-модуль
   Классы: `ProjectionPolicy`, `PanelSnapshot`
@@ -3835,6 +3838,9 @@
 - `tests/donbaton/test_payment_cutover_guards.py` — Python-модуль
   Классы: нет
   Функции: `service`, `seed`, `external_boundaries`, `assert_only_credit`, `test_already_charged_legacy_stars_credits_actual_amount_once`, `test_stars_credit_and_receipt_roll_back_together_then_retry_delivers`, `test_yookassa_retired_invoice_credits_exact_record_amount_and_links_receipt_once`, `test_yookassa_failed_cutover_credit_rolls_back_receipt_link_and_balance`, `test_successful_trial_handler_routes_retired_invoice_by_real_charge_id`, `test_stars_precheckout_checks_pending_subscription_category_before_charge`, `test_flags_off_keeps_old_invoice_and_cart_policy_without_extra_queries`, `test_stale_or_repriced_saved_cart_drops_intent_before_debit`, `test_current_managed_30_day_cart_is_not_rejected_as_legacy`, `test_any_priced_period_of_managed_tariff_keeps_saved_cart`, `test_invalid_pending_ids_are_retired_without_database_overflow`, `test_custom_paid_terms_block_direct_autopurchase_before_price_or_debit`, `test_generic_minicart_and_direct_service_cannot_restore_old_global_quota`
+- `tests/donbaton/test_payment_window.py` — Python-модуль
+  Классы: `FakePanel` (5 методов)
+  Функции: `configured`, `now_utc`, `seed` — Платная подписка Wi-Fi + LTE, закончившаяся ``ended_ago`` назад., `window_end`, `test_expired_paid_subscription_keeps_only_the_window_squad`, `test_window_payload_reaches_the_panel_with_its_own_date` — Путь «подписка целиком» (покупка, админка, update_remnawave_user)., `test_writer_does_not_extinguish_the_window_date` — Писатель гасит будущую дату истёкшей подписки — но не дату окна., `test_after_the_window_access_is_cleared_as_before`, `test_disabled_or_misconfigured_window_behaves_as_before`, `test_trial_gets_the_window_only_with_its_flag`, `test_blocked_user_gets_no_window_on_either_path`, `test_subscription_disabled_in_the_bot_gets_no_window`, `test_live_and_lte_exhausted_subscriptions_are_untouched` — Окно — только про истечение срока. Исчерпанный LTE по-прежнему оставляет Wi-Fi., `test_plain_subscription_is_not_managed_and_gets_no_window`, `test_cycle_opens_the_window_once_and_does_not_rewrite_it`, `test_panel_disable_still_closes_the_window`, `test_cycle_selects_the_window_and_clears_access_after_it` — Подписка, истёкшая до включения окна, возвращается в цикл на остаток окна., `test_cycle_opens_the_window_for_an_expired_trial_by_default` — Решение владельца: пробным окно даём (флаг по умолчанию включён)., `test_cycle_does_not_reselect_cleared_subscriptions_without_a_window` — Снятая пробная при выключенном флаге и заблокированный — в цикл не возвращаются., `test_payment_inside_the_window_restores_regular_squads_and_new_date`, `test_window_traffic_on_a_zero_multiplier_node_is_not_charged` — Сквад окна стоит на ноде с множителем 0: счётчик панели не растёт — списывать нечего., `test_window_bytes_never_eat_the_newly_paid_period` — Даже если окно по ошибке на ноде с множителем: оплаченный в окне период цел., `expired_managed`, `test_window_state_in_the_panel_is_not_imported`, `test_bulk_sync_skips_managed_subscriptions` — Ночная синхронизация «все» управляемые подписки не трогает вовсе., `panel_event`, `webhook_service`, `test_webhooks_do_not_revive_a_subscription_in_the_window`, `test_expiry_webhook_at_the_window_end_is_not_announced_again`, `test_panel_reminders_about_the_window_date_are_not_sent`, `test_panel_reminders_for_a_live_subscription_still_go_out`, `test_monitoring_never_takes_the_window_for_a_renewal` — Мониторинг перед гашением не спрашивает панель у управляемой подписки., `test_expired_notice_names_the_window_server`, `test_expired_hint_is_localized_and_escapes_the_server_name`, `test_squad_uuid_is_validated_and_normalized`, `test_admin_edits_are_validated_in_the_bot_and_the_cabinet`, `test_env_example_keeps_the_window_keys_commented`, `test_policy_writer_takes_a_date_only_with_the_window_shape`
 - `tests/donbaton/test_pending_trial_integration.py` — Python-модуль
   Классы: нет
   Функции: `clock`, `seed`, `pending`, `test_new_pending_and_retry_preserve_original_offer_and_close_access`, `test_paid_pending_activation_anchors_full_saved_duration_once`, `test_reused_legacy_pending_gets_first_ledger_before_commit`, `test_observed_pending_trial_cannot_be_reissued_by_activation`, `test_flags_off_leave_pending_trial_without_new_ledger`, `test_direct_trial_creation_reusing_pending_keeps_original_duration_and_cap`, `test_expired_managed_trial_cannot_be_recycled_into_unpaid_invoice`

@@ -1142,6 +1142,29 @@ class RemnaWaveWebhookService:
     # User event handlers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_payment_window_date(subscription: Subscription, data: dict) -> bool:
+        """Событие панели об «истечении» считается от конца окна оплаты, а не от срока.
+
+        Во время окна оплаты ДонБатона (``app/services/donbaton_payment_window.py``)
+        аккаунт истёкшей подписки Wi-Fi/LTE держит в панели дату ``end_date + окно``,
+        и панель по ней шлёт «истекает через 48/24 ч», «истекла», «истекла сутки
+        назад». Клиенту это врёт: подписка уже закончилась, бот сообщил об этом
+        в её срок. Такие события не озвучиваем; статус подписки они не меняли и не
+        меняют.
+        """
+        from app.services.donbaton_payment_window import panel_date_is_window
+
+        if not isinstance(data, dict):
+            return False
+        if panel_date_is_window(subscription, read_panel_user(data).expire_at):
+            logger.info(
+                'Webhook: событие об истечении по дате окна оплаты — клиенту не пишем',
+                subscription_id=subscription.id,
+            )
+            return True
+        return False
+
     async def _handle_user_expired(
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
     ) -> None:
@@ -1190,6 +1213,11 @@ class RemnaWaveWebhookService:
             GraceReason.EXPIRED,
             source='webhook',
         )
+
+        if self._is_payment_window_date(subscription, data):
+            # Панель погасила окно оплаты, а не подписку: об истечении бот уже
+            # сообщил в срок подписки, второй раз «истекла» через 48 ч — лишнее.
+            return
 
         await self._notify_user(
             user,
@@ -1716,6 +1744,8 @@ class RemnaWaveWebhookService:
         if not subscription:
             logger.info('Webhook expires_72h: подписка не найдена в БД, пропуск', user_id=user.id)
             return
+        if self._is_payment_window_date(subscription, data):
+            return
         await self._notify_user(
             user,
             'WEBHOOK_SUB_EXPIRES_72H',
@@ -1728,6 +1758,8 @@ class RemnaWaveWebhookService:
     ) -> None:
         if not subscription:
             logger.info('Webhook expires_48h: подписка не найдена в БД, пропуск', user_id=user.id)
+            return
+        if self._is_payment_window_date(subscription, data):
             return
         await self._notify_user(
             user,
@@ -1742,6 +1774,8 @@ class RemnaWaveWebhookService:
         if not subscription:
             logger.info('Webhook expires_24h: подписка не найдена в БД, пропуск', user_id=user.id)
             return
+        if self._is_payment_window_date(subscription, data):
+            return
         await self._notify_user(
             user,
             'WEBHOOK_SUB_EXPIRES_24H',
@@ -1754,6 +1788,8 @@ class RemnaWaveWebhookService:
     ) -> None:
         if not subscription:
             logger.info('Webhook expired_24h_ago: подписка не найдена в БД, пропуск', user_id=user.id)
+            return
+        if self._is_payment_window_date(subscription, data):
             return
         await self._notify_user(
             user,
@@ -1774,6 +1810,8 @@ class RemnaWaveWebhookService:
         """
         if not subscription:
             logger.info('Webhook user.expiration: подписка не найдена в БД, пропуск', user_id=user.id)
+            return
+        if self._is_payment_window_date(subscription, data):
             return
 
         # Ресивер кладёт envelope-meta вебхука в data['_meta'] (см.

@@ -1331,6 +1331,21 @@ async def apply_panel_policy(db, subscription, payload, *, panel_user=None, now=
         result['active_internal_squads'] = list(wifi)
         if accounting_enabled and status['accounting_state'] == 'ready' and not status['exhausted']:
             result['active_internal_squads'] += list(lte)
+    elif _value(payload.get('status', 'EXPIRED')) not in ('DISABLED', 'LIMITED'):
+        from app.services.donbaton_payment_window import payment_window
+
+        # Окно оплаты: срок кончился, но ещё N часов остаётся один сервер —
+        # Telegram и наша инфраструктура, чтобы клиент дошёл до бота и заплатил.
+        # Ни Wi-Fi, ни LTE. Статус и дата — тоже часть проекции: без ACTIVE и
+        # даты в будущем панель погасит аккаунт сама. DISABLED в наборе полей —
+        # блокировка владельца или подписки, окна там нет.
+        window = payment_window(subscription, now=now)
+        if window is not None:
+            result.update(
+                status=UserStatus.ACTIVE,
+                active_internal_squads=[window.squad_uuid],
+                expire_at=window.until,
+            )
     return result
 
 
@@ -1474,10 +1489,18 @@ async def reconcile_subscription(db, subscription, api, *, user=None, heartbeat=
     )
     if user is not None and user.status != 'active':
         kwargs.update(status=UserStatus.DISABLED, active_internal_squads=[])
+        kwargs.pop('expire_at', None)  # заблокированному окна оплаты нет
+    # The payment window (`expire_at` in the projection) reopens an account the
+    # panel expired by the passed end date: that is exactly its job.
+    window_open = 'expire_at' in kwargs
+    panel_status = _value(getattr(panel_user, 'status', None))
     # Do not reactivate a panel administrator's disable; ordinary paid renewal
     # remains the authoritative path for a status change.
-    if _value(getattr(panel_user, 'status', None)) in ('DISABLED', 'EXPIRED'):
+    if panel_status == 'DISABLED' or (panel_status == 'EXPIRED' and not window_open):
         kwargs['active_internal_squads'] = []
+        if window_open:
+            kwargs.pop('status', None)
+            kwargs.pop('expire_at', None)
     elif (
         _value(getattr(panel_user, 'status', None)) == 'LIMITED'
         and subscription.status in ('active', 'trial')
@@ -1513,10 +1536,16 @@ async def _write_policy(api, payload):
     from app.services.panel_sync.writer import patch_panel_policy
 
     fields = dict(payload)
-    return await patch_panel_policy(api, user_id=fields.pop('user_id'), fields=fields)
+    user_id = fields.pop('user_id')
+    # Дату пишет только окно оплаты — отдельным аргументом, чтобы общий вход
+    # политики не стал лазейкой для произвольной даты.
+    window_until = fields.pop('expire_at', None)
+    return await patch_panel_policy(api, user_id=user_id, fields=fields, payment_window_until=window_until)
 
 
 def _panel_policy_matches(panel_user, payload):
+    from app.services.donbaton_payment_window import same_panel_date
+
     known_fields = {
         'user_id',
         'traffic_limit_bytes',
@@ -1524,6 +1553,7 @@ def _panel_policy_matches(panel_user, payload):
         'active_internal_squads',
         'status',
         'hwid_device_limit',
+        'expire_at',
     }
     if not set(payload) <= known_fields:
         return False
@@ -1532,6 +1562,10 @@ def _panel_policy_matches(panel_user, payload):
     for field in ('traffic_limit_bytes', 'traffic_limit_strategy', 'status', 'hwid_device_limit'):
         if field in payload and _value(payload[field]) != _value(getattr(panel_user, field, None)):
             return False
+    # Дата окна детерминирована (end_date + окно), поэтому совпавшая дата значит
+    # «уже записано» — без этого каждый проход переписывал бы аккаунт в окне.
+    if 'expire_at' in payload and not same_panel_date(payload['expire_at'], getattr(panel_user, 'expire_at', None)):
+        return False
     if 'active_internal_squads' in payload:
         current = getattr(panel_user, 'active_internal_squads', None)
         if not isinstance(current, list):
@@ -1631,6 +1665,19 @@ async def run_quota_cycle(subscription_service, bot=None):
 
     if not subscription_service.is_configured:
         return []
+    from app.services.donbaton_payment_window import cycle_candidates
+
+    selected_at = datetime.now(UTC)
+    reachable = [
+        LteQuota.panel_access_cleared_at.is_(None),
+        (Subscription.end_date > selected_at) & Subscription.status.in_(('active', 'trial', 'limited')),
+    ]
+    # Окно оплаты держит подписку в цикле и после снятия доступа: иначе её,
+    # истёкшую до включения окна, цикл уже не выбрал бы, а конец окна снять
+    # было бы некому.
+    window_clause = cycle_candidates(selected_at)
+    if window_clause is not None:
+        reachable.append(window_clause)
     # Also project WIFI-only when an operator disables an already-used feature.
     async with AsyncSessionLocal() as db:
         ids = list(
@@ -1640,11 +1687,7 @@ async def run_quota_cycle(subscription_service, bot=None):
                     .outerjoin(LteQuota, LteQuota.subscription_id == Subscription.id)
                     .where(
                         Subscription.network_category.in_(NETWORK_CATEGORIES),
-                        or_(
-                            LteQuota.panel_access_cleared_at.is_(None),
-                            (Subscription.end_date > datetime.now(UTC))
-                            & Subscription.status.in_(('active', 'trial', 'limited')),
-                        ),
+                        or_(*reachable),
                     )
                 )
             )

@@ -922,6 +922,31 @@ class BotConfigurationService:
             'example': '📵 LTE закончился: вкладка LTE отключена, Wi-Fi по «{tariff}» работает до {end_date}.',
             'warning': 'Один текст для всех языков интерфейса. Ошибка в фигурных скобках — уйдёт текст из локали; текст с ошибкой в HTML Telegram не примет, и сообщение не дойдёт.',
         },
+        'DONBATON_PAYMENT_WINDOW_HOURS': {
+            'description': 'Окно оплаты: сколько часов после окончания подписки Wi-Fi/LTE в приложении клиента работает один сервер (сквад DONBATON_PAYMENT_WINDOW_SQUAD_UUID) — чтобы без VPN открыть Telegram, бота и оплатить. Остальные серверы в это время не работают. Считается от окончания подписки.',
+            'format': 'Целое число часов от 0 до 168; 0 — окна нет, доступ снимается сразу, как раньше.',
+            'example': '48',
+            'warning': 'Включайте, когда в панели готовы сквад, inbound и хост окна, а хост уже есть в подписке у клиентов. Окно получают и подписки, истёкшие раньше включения, — на остаток часов.',
+            'dependencies': 'DONBATON_PAYMENT_WINDOW_SQUAD_UUID, DONBATON_PAYMENT_WINDOW_TRIAL_ENABLED',
+        },
+        'DONBATON_PAYMENT_WINDOW_SQUAD_UUID': {
+            'description': 'UUID внутреннего сквада панели для окна оплаты: только он остаётся у истёкшей подписки на время окна. Его inbound должен пропускать лишь Telegram, наши домены и оплату.',
+            'format': 'Один UUID сквада панели; пусто — окна нет.',
+            'example': '00000000-0000-4000-8000-000000000000',
+            'warning': 'Не сквад Wi-Fi или LTE (иначе окно выключится с предупреждением в логе). Inbound окна — на ноде с множителем трафика 0 и не на LTE-ноде: иначе трафик окна спишется с LTE клиента.',
+            'dependencies': 'DONBATON_PAYMENT_WINDOW_HOURS, DONBATON_WIFI_SQUAD_UUIDS, DONBATON_LTE_SQUAD_UUIDS',
+        },
+        'DONBATON_PAYMENT_WINDOW_TRIAL_ENABLED': {
+            'description': 'Давать окно оплаты и пробным подпискам после их окончания (решение владельца 27.09.2026 — давать).',
+            'format': 'Булево значение.',
+            'example': 'true',
+            'dependencies': 'DONBATON_PAYMENT_WINDOW_HOURS',
+        },
+        'DONBATON_PAYMENT_WINDOW_SERVER_NAME': {
+            'description': 'Как сервер окна оплаты называется в приложении клиента. Подставляется в уведомление «⛔ Подписка истекла»: «48 часов в приложении работает сервер «…» — выберите его…». Сам сервер называется в панели (хост), бот его не переименовывает.',
+            'format': 'Короткий текст.',
+            'example': '💳 Оплата | Telegram',
+        },
         'SALES_MODE': {
             'description': (
                 'Режим продажи подписок. '
@@ -2381,7 +2406,23 @@ class BotConfigurationService:
                 readable = ', '.join(f'{option.label} ({cls.format_value(option.value)})' for option in choices)
                 raise ValueError(f'Доступные значения: {readable}')
 
-        return parsed_value
+        return cls.validate_value(key, parsed_value)
+
+    @classmethod
+    def validate_value(cls, key: str, value: Any) -> Any:
+        """Проверить и привести значение отдельных ключей перед сохранением.
+
+        Бот и кабинет применяют настройку присваиванием, валидаторы модели
+        ``Settings`` при этом не срабатывают. Ошибка — ``ValueError`` с текстом
+        для админа.
+        """
+        if key == 'DONBATON_PAYMENT_WINDOW_SQUAD_UUID':
+            from app.config import normalize_squad_uuid
+
+            return normalize_squad_uuid(value)
+        if key == 'DONBATON_PAYMENT_WINDOW_HOURS' and value is not None and not 0 <= int(value) <= 168:
+            raise ValueError('Окно оплаты — от 0 до 168 часов (0 — выключено)')
+        return value
 
     @classmethod
     async def set_value(
