@@ -426,7 +426,9 @@ class SubscriptionRenewalService:
         )
 
         try:
-            subscription_after = await extend_subscription(db, subscription_before, period_days)
+            # Оплаченное клиентом продление, а не бонусные дни: перенесённым правам
+            # ДонБатона это отметка покупки (см. extend_subscription).
+            subscription_after = await extend_subscription(db, subscription_before, period_days, client_purchase=True)
         except Exception:
             # Session may be in a failed state after a broken commit — rollback first
             await db.rollback()

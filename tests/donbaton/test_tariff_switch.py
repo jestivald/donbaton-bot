@@ -281,6 +281,8 @@ async def test_describe_switch_dates_the_allowance_inside_the_legacy_window(monk
 
 @pytest.mark.asyncio
 async def test_custom_terms_still_wait_for_the_paid_end(monkeypatch):
+    # Замок индивидуальных условий — поведение при выключенной ранней оплате.
+    monkeypatch.setattr(settings, 'DONBATON_LEGACY_EARLY_RENEWAL_ENABLED', False)
     async with memory_session(monkeypatch, TABLES) as db:
         sub, target, snapshot, _ = await legacy_seed(db, custom=True, devices=15)
         await activate(db, sub, target, snapshot)

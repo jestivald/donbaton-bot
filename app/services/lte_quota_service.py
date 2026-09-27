@@ -468,7 +468,17 @@ async def _topups(db, subscription_id):
     return list(result.scalars().all())
 
 
-def legacy_renewal_requires_expiry(quota, *, now=None):
+def legacy_early_renewal_enabled() -> bool:
+    """Индивидуальные условия можно оплатить заранее (``DONBATON_LEGACY_EARLY_RENEWAL_ENABLED``)."""
+    return bool(settings.DONBATON_LEGACY_EARLY_RENEWAL_ENABLED)
+
+
+def legacy_individual_terms_active(quota, *, now=None) -> bool:
+    """Действуют перенесённые индивидуальные условия (до ``original_paid_until``).
+
+    Само по себе это не запрет: при ``DONBATON_LEGACY_EARLY_RENEWAL_ENABLED`` клиент
+    платит заранее, а купленный тариф начинается после этой даты.
+    """
     state = getattr(quota, 'legacy_state', None)
     return bool(
         state
@@ -478,9 +488,33 @@ def legacy_renewal_requires_expiry(quota, *, now=None):
     )
 
 
+def legacy_renewal_requires_expiry(quota, *, now=None):
+    """Покупка запрещена до окончания индивидуальных условий (замок включён).
+
+    То же значение уходит кабинету полем ``renewal_requires_expiry``: по нему он
+    закрывает витрину. При ранней оплате — ``False``, а дату окончания прежних
+    условий кабинет берёт из ``legacy_compatibility_until``.
+    """
+    return legacy_individual_terms_active(quota, now=now) and not legacy_early_renewal_enabled()
+
+
+def _local_moment_text(moment) -> str:
+    """Дата и время в поясе бота для текстов клиенту: «28.09.2026 14:30 МСК»."""
+    from zoneinfo import ZoneInfo
+
+    try:
+        zone = ZoneInfo(settings.TIMEZONE)
+    except Exception:
+        zone = ZoneInfo('UTC')
+    local = _now(moment).astimezone(zone)
+    label = 'МСК' if getattr(zone, 'key', None) in ('Europe/Moscow', 'W-SU') else local.strftime('%Z')
+    return f'{local.strftime("%d.%m.%Y %H:%M")} {label}'
+
+
 #: Ключи runtime, которых нет в свежем ``build_legacy_state``: каждый появляется
-#: только когда клиент применил оплаченное решение. ``purchased_at`` ставит
-#: ``update_entitlement`` и никто не удаляет; остальные оставлены ради ledger'ов,
+#: только когда клиент применил оплаченное решение. ``purchased_at`` ставят
+#: ``update_entitlement`` и ``record_renewal_purchase``, и никто не удаляет;
+#: остальные оставлены ради ledger'ов,
 #: записанных до его появления (``pending_new_period`` живёт до активации,
 #: ``advance_period`` заменяет его на ``new_limit_bytes``).
 _LEGACY_PURCHASE_MARKERS = ('purchased_at', 'pending_new_period', 'new_limit_bytes', 'trial_converted_at')
@@ -539,9 +573,10 @@ async def validate_legacy_renewal(db, subscription, *, now=None):
         return
     quota = await _quota(db, subscription)
     if legacy_renewal_requires_expiry(quota, now=now):
+        until = _local_moment_text(legacy_compatibility_end(quota.legacy_state))
         raise LtePolicyError(
-            'Прежние индивидуальные условия действуют до окончания оплаченного срока. '
-            'Сейчас можно докупить LTE, а новый тариф выбрать после окончания подписки.'
+            f'Прежние индивидуальные условия действуют до {until}. '
+            'Сейчас можно докупить LTE, а новый тариф выбрать после окончания этого срока.'
         )
 
 
@@ -1094,6 +1129,87 @@ def _mark_legacy_purchase(quota, now):
     quota.legacy_state = state
 
 
+def _remember_target_devices(quota, device_limit):
+    """Лимит устройств купленного тарифа — после окончания прежних условий, один раз.
+
+    В окне ``original_paid_until`` панель держит больший из прежнего лимита и
+    этого (``apply_panel_policy``), и значение сохраняется в подписке — без
+    отложенной цели оно так и оставалось бы после окна. Первый проход политики
+    за границей применяет цель и помечает ``target_devices_applied_at``: дальше
+    лимит ведут новые покупки, и старая цель их не перебивает. Каждая покупка
+    ставит свою цель заново.
+    """
+    state = getattr(quota, 'legacy_state', None)
+    if not state:
+        return
+    state = deepcopy(state)  # legacy_state — обычный JSON без MutableDict
+    state['target_device_limit'] = device_limit or 0
+    state['runtime'].pop('target_devices_applied_at', None)
+    quota.legacy_state = state
+
+
+def _schedule_legacy_target(quota, tariff):
+    """Условия купленного тарифа вступают на границе прежних оплаченных условий.
+
+    LTE-пакет цели читает ``advance_period`` (первый период от границы),
+    устройства — ``apply_panel_policy``. Снимок миграции не меняется.
+    """
+    state = deepcopy(quota.legacy_state)
+    state['target_limit_bytes'] = (tariff.lte_traffic_limit_gb or 0) * GIB
+    state['target_tariff_id'] = tariff.id
+    quota.legacy_state = state
+    _remember_target_devices(quota, tariff.device_limit)
+
+
+def _legacy_window_device_limit(state) -> int:
+    """Лимит устройств в окне прежних условий: больший из прежнего и купленного.
+
+    ``0`` — прежний безлимит устройств (HWID-лимит панели ``null``): покупка
+    тарифа в окне его не урезает.
+    """
+    legacy = legacy_device_limit(state)
+    if legacy == 0:
+        return 0
+    return max(legacy, state.get('target_device_limit') or 0)
+
+
+async def record_renewal_purchase(db, subscription, tariff, *, now=None):
+    """Клиент оплатил продление ТЕКУЩЕГО сетевого тарифа (не бонусные дни).
+
+    Обычной подписке это прежний ``initialize_quota``: срок продлевает
+    ``extend_subscription``, условия квоты не меняются. Перенесённым правам
+    покупка ставит отметку (``legacy_purchase_recorded`` снимает запрет
+    автопродления) и планирует условия тарифа на окончание прежних:
+    устройства тарифа, а если целью импорта был другой тариф — и его LTE.
+    """
+    quota = await initialize_quota(db, subscription, tariff, now=now)
+    if not getattr(quota, 'legacy_state', None) or getattr(tariff, 'network_category', None) not in NETWORK_CATEGORIES:
+        return quota
+    _mark_legacy_purchase(quota, _now(now))
+    state = quota.legacy_state
+    if state['runtime']['base_ended']:
+        return quota  # условия тарифа уже действуют: срок продлевает extend_subscription
+    if state.get('target_tariff_id') != tariff.id:
+        _schedule_legacy_target(quota, tariff)
+    else:
+        # LTE цели импорта уже этот тариф; в окне устройства — max(прежний, тарифа).
+        _remember_target_devices(quota, tariff.device_limit)
+    return quota
+
+
+async def legacy_terms_keep_devices(db, subscription, *, now=None) -> bool:
+    """Покупка в окне прежних условий не сбрасывает HWID-устройства.
+
+    До ``original_paid_until`` панель держит больший из прежнего лимита и лимита
+    купленного тарифа, лимит не уменьшается — сброс только заставил бы клиента
+    заново подключать все устройства.
+    """
+    if not is_managed(subscription):
+        return False
+    state = getattr(await _quota(db, subscription), 'legacy_state', None)
+    return bool(state and _now(now) < legacy_compatibility_end(state))
+
+
 async def update_entitlement(db, subscription, tariff, *, now=None):
     validate_subscription_transition(subscription, tariff)
     validate_tariff_for_sale(tariff)
@@ -1134,6 +1250,9 @@ async def update_entitlement(db, subscription, tariff, *, now=None):
                 'limit_bytes': (tariff.lte_traffic_limit_gb or 0) * GIB,
             }
             quota.legacy_state = state
+            # Окно прежних условий могло ещё не закрыться (конверсия пробного,
+            # ручная правка срока): max() в нём не должен пережить границу.
+            _remember_target_devices(quota, tariff.device_limit)
             if quota.accounting_state not in ('identity_changed', 'epoch_mismatch', 'regressed'):
                 quota.accounting_state = 'pending'
             return quota
@@ -1165,14 +1284,14 @@ def _switch_entitlement(quota, subscription, tariff):
     if state and not state['runtime']['base_ended']:
         # Old terms are paid until original_paid_until: the new allowance takes
         # over at that boundary (advance_period reads target_limit_bytes), while
-        # devices change at once through apply_panel_policy's max() below.
-        # legacy_state is plain JSON without MutableDict — mutate a copy.
-        updated = deepcopy(state)
-        updated['target_limit_bytes'] = limit_bytes
-        updated['target_tariff_id'] = tariff.id
-        updated['target_device_limit'] = tariff.device_limit or 0
-        quota.legacy_state = updated
+        # devices change at once through apply_panel_policy's max() and settle
+        # on the plan's own limit at that same boundary.
+        _schedule_legacy_target(quota, tariff)
         return quota
+    if state:
+        # Окно уже закрыто: устройства тарифа действуют сразу, а новая цель не
+        # даёт ещё не применённой старой перебить эту покупку.
+        _remember_target_devices(quota, tariff.device_limit)
     quota.limit_bytes = limit_bytes
     quota.next_limit_bytes = limit_bytes
     return quota
@@ -1198,13 +1317,14 @@ async def describe_tariff_switch(db, subscription, tariff, *, now=None) -> dict:
     limit_gb = int(getattr(tariff, 'lte_traffic_limit_gb', None) or 0)
     device_limit = int(getattr(tariff, 'device_limit', None) or 0)
     if legacy_until is not None:
-        device_limit = max(device_limit, legacy_device_limit(state))
+        device_limit = _legacy_window_device_limit(dict(state, target_device_limit=device_limit))
     return {
         'mode': 'after_legacy' if legacy_until is not None else 'immediate',
         'current_category': getattr(subscription, 'network_category', None),
         'new_category': getattr(tariff, 'network_category', None),
         'device_limit_now': device_limit,
-        'devices_reset': should_reset_devices_on_switch(current, tariff),
+        # В окне прежних условий лимит не уменьшается — сбрасывать нечего.
+        'devices_reset': legacy_until is None and should_reset_devices_on_switch(current, tariff),
         'lte_limit_gb_now': None if legacy_until is not None else limit_gb,
         'lte_limit_gb_next': limit_gb,
         'lte_effective_at': legacy_until.isoformat() if legacy_until is not None else None,
@@ -1316,13 +1436,29 @@ async def apply_panel_policy(db, subscription, payload, *, panel_user=None, now=
             now=now,
             paid_until=subscription.end_date,
         )
-    if quota.legacy_state and now < legacy_compatibility_end(quota.legacy_state):
+    legacy = quota.legacy_state
+    if legacy and now < legacy_compatibility_end(legacy):
         # Inside the compatibility window the panel keeps the rights actually
         # paid for. A plan bought during that window raises devices at once and
         # never takes away what the old terms already granted.
-        target_devices = quota.legacy_state.get('target_device_limit') or 0
-        subscription.device_limit = max(legacy_device_limit(quota.legacy_state), target_devices)
+        subscription.device_limit = _legacy_window_device_limit(legacy)
         result['hwid_device_limit'] = subscription.device_limit
+    elif legacy and 'target_devices_applied_at' not in legacy['runtime']:
+        # Прежние условия закончились — дальше условия тарифа: лимит купленного
+        # тарифа, а без покупки — тарифа подписки (в том числе вместо прежних 8+
+        # или безлимита). Без этого max() из окна так и оставался бы в подписке.
+        # Один раз: дальше лимит ведут следующие покупки (_remember_target_devices).
+        # HWID не сбрасываем — панель проверяет лимит только при регистрации
+        # нового устройства.
+        devices = legacy.get('target_device_limit')
+        if devices is None and getattr(subscription, 'tariff_id', None):
+            devices = getattr(await db.get(Tariff, subscription.tariff_id), 'device_limit', None)
+        if devices is not None:
+            subscription.device_limit = devices
+            result['hwid_device_limit'] = devices
+        applied = deepcopy(legacy)
+        applied['runtime']['target_devices_applied_at'] = now.isoformat()
+        quota.legacy_state = applied
     status = await _with_telemetry_status(_status(quota, topups, now), now=now, heartbeat=heartbeat)
     subscription._lte_quota_status = status
     active = subscription.status in ('active', 'trial') and _now(subscription.end_date) > now

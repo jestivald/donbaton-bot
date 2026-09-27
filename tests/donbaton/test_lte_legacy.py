@@ -268,6 +268,8 @@ async def test_original_year_calendar_and_early_extension_do_not_change_paid_ter
 
 @pytest.mark.asyncio
 async def test_custom_devices_preserved_and_early_renewal_blocked_but_topup_allowed(monkeypatch):
+    # Замок индивидуальных условий — поведение при выключенной ранней оплате.
+    monkeypatch.setattr(settings, 'DONBATON_LEGACY_EARLY_RENEWAL_ENABLED', False)
     async with memory_session(monkeypatch, TABLES) as db:
         sub, target, snapshot, _ = await legacy_seed(db, devices=15, custom=True)
         await activate(db, sub, target, snapshot)

@@ -589,10 +589,22 @@ async def resolve_trial_conversion_candidate(
     return await _alive_trial_conversion_candidate(db, user_id, existing)
 
 
-async def _prepare_donbaton_subscription(db, subscription, tariff_id=None, *, new=False, converting_trial=False):
-    """Snapshot paid network terms before committing a creation or explicit switch."""
+async def _prepare_donbaton_subscription(
+    db, subscription, tariff_id=None, *, new=False, converting_trial=False, purchase=False
+):
+    """Snapshot paid network terms before committing a creation or explicit switch.
+
+    ``purchase`` — продление того же тарифа оплачено клиентом (а не бонусные
+    дни): перенесённым правам это отметка покупки и условия тарифа после
+    окончания прежних (``record_renewal_purchase``).
+    """
     from app.services.donbaton_catalog import network_category
-    from app.services.lte_quota_service import initialize_quota, update_entitlement, validate_legacy_renewal
+    from app.services.lte_quota_service import (
+        initialize_quota,
+        record_renewal_purchase,
+        update_entitlement,
+        validate_legacy_renewal,
+    )
 
     target_id = tariff_id if tariff_id is not None else subscription.tariff_id
     if not target_id:
@@ -607,6 +619,8 @@ async def _prepare_donbaton_subscription(db, subscription, tariff_id=None, *, ne
         await initialize_quota(db, subscription, tariff)
     elif expired or converting_trial or (tariff_id is not None and tariff_id != subscription.tariff_id):
         await update_entitlement(db, subscription, tariff)
+    elif purchase:
+        await record_renewal_purchase(db, subscription, tariff)
     else:
         await initialize_quota(db, subscription, tariff)
 
@@ -1214,6 +1228,7 @@ async def extend_subscription(
     convert_trial: bool = True,
     reset_used_traffic: bool | None = None,
     commit: bool = True,
+    client_purchase: bool = False,
 ) -> Subscription:
     """Продлевает подписку на указанное количество дней.
 
@@ -1235,6 +1250,12 @@ async def extend_subscription(
             сбрасывает (или нет) счётчик в панели — иначе бот показывает расход 0,
             а панель настоящий. ``None`` — прежнее правило: при смене тарифа по
             ``RESET_TRAFFIC_ON_TARIFF_SWITCH``, при продлении всегда.
+        client_purchase: продление оплачено клиентом, хотя ``tariff_id`` не
+            передан (кнопка «Продлить», ``SubscriptionRenewalService``). Покупкой
+            считается и продление с явным ``tariff_id`` при ``convert_trial``;
+            бонусные дни (промокод, реферальная награда, админ) — нет. Нужно
+            перенесённым правам ДонБатона: отметка покупки снимает запрет
+            автопродления, а условия тарифа начинаются после прежних.
     """
     current_time = datetime.now(UTC)
 
@@ -1248,6 +1269,7 @@ async def extend_subscription(
         subscription,
         tariff_id,
         converting_trial=subscription.is_trial and convert_trial and tariff_id is not None and days > 0,
+        purchase=days > 0 and (client_purchase or (tariff_id is not None and convert_trial)),
     )
 
     if days > 0:

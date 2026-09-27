@@ -494,17 +494,28 @@ async def test_explicit_new_purchase_unblocks_autopay(monkeypatch, plan):
 async def test_days_only_extension_of_an_expired_legacy_subscription_marks_the_purchase(monkeypatch):
     """Бонусные дни истёкшей legacy-подписке идут через update_entitlement.
 
-    Пока окно совместимости не закрылось, extend_subscription вообще не
-    пропускает управляемую подписку (validate_legacy_renewal в
-    _prepare_donbaton_subscription). А когда оно закрылось, срок уже истёк, и
-    ветка `expired` уводит в update_entitlement — отметка ставится.
+    Под замком (ранняя оплата выключена), пока окно совместимости не
+    закрылось, extend_subscription вообще не пропускает управляемую подписку
+    (validate_legacy_renewal в _prepare_donbaton_subscription). С ранней оплатой
+    бонусные дни проходят, но покупкой не считаются — отметки нет, автоплатёж
+    по-прежнему заблокирован. А когда окно закрылось, срок уже истёк, и ветка
+    `expired` уводит в update_entitlement — отметка ставится.
     """
     from app.database.crud.subscription import extend_subscription
 
+    monkeypatch.setattr(settings, 'DONBATON_LEGACY_EARLY_RENEWAL_ENABLED', False)
     async with memory_session(monkeypatch, TABLES) as db:
         sub, _, quota = await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(days=1))
         with pytest.raises(LtePolicyError, match='индивидуальные условия'):
             await extend_subscription(db, sub, 30)
+
+    monkeypatch.setattr(settings, 'DONBATON_LEGACY_EARLY_RENEWAL_ENABLED', True)
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, quota = await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(days=1))
+        end_before = sub.end_date
+        await extend_subscription(db, sub, 30)
+        assert sub.end_date == end_before + timedelta(days=30)
+        assert legacy_autopay_blocked(await db.get(LteQuota, 1)) is True
 
     async with memory_session(monkeypatch, TABLES) as db:
         sub, _, quota = await _seed_legacy(db, custom=True, paid_until=NOW - timedelta(minutes=30))
