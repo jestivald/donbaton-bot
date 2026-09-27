@@ -623,6 +623,8 @@ class MonitoringService:
         telegram_id, бот не поднят, уведомления выключены) иначе съела бы
         единственную попытку объясниться.
         """
+        from app.services.lte_quota_service import legacy_early_renewal_enabled
+
         cache_key = f'autopay_legacy_terms_notified:{subscription.user_id}:{subscription.id}'
         try:
             if await cache.exists(cache_key):
@@ -638,7 +640,18 @@ class MonitoringService:
             texts = get_texts(user.language)
             # Оплаченный срок мог уже закончиться (окно «недавно истёкших»):
             # обещать действие прежних условий в прошедшей дате нельзя.
-            if subscription.end_date > current_time:
+            if subscription.end_date > current_time and legacy_early_renewal_enabled():
+                # Замок снят: без VPN после окончания клиент до бота не доберётся,
+                # поэтому зовём оплатить заранее, а не «после окончания».
+                template = texts.t(
+                    'AUTOPAY_LEGACY_TERMS_SKIPPED_EARLY',
+                    'ℹ️ <b>Автосписание по подписке не выполняется</b>\n\n'
+                    'Прежние индивидуальные условия действуют до {end_date}, '
+                    'автоматических списаний за них нет.\n\n'
+                    'Продлите или выберите новый тариф заранее — он начнётся после {end_date}, '
+                    'а до этой даты действуют прежние условия. Сейчас можно и докупить LTE.',
+                )
+            elif subscription.end_date > current_time:
                 template = texts.t(
                     'AUTOPAY_LEGACY_TERMS_SKIPPED',
                     'ℹ️ <b>Автосписание по подписке не выполняется</b>\n\n'
@@ -2155,12 +2168,16 @@ class MonitoringService:
         legacy_terms: bool = False,
     ) -> bool:
         try:
+            from app.services.lte_quota_service import legacy_early_renewal_enabled
             from app.utils.formatters import format_days_declension
 
             texts = get_texts(user.language)
             days_text = format_days_declension(days, user.language)
             end_date = format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M')
 
+            # Замок индивидуальных условий: продлить и сменить тариф можно только
+            # после окончания срока, «Продлить» и «Пополнить» вели бы в отказ.
+            legacy_locked = legacy_terms and not legacy_early_renewal_enabled()
             if legacy_terms:
                 # Перенесённые индивидуальные условия автопродлением не оплачиваются:
                 # срок просто закончится, а тариф клиент выбирает сам.
@@ -2168,10 +2185,19 @@ class MonitoringService:
                     'AUTOPAY_STATUS_LEGACY_TERMS',
                     'ℹ️ Не применяется — действуют прежние индивидуальные условия',
                 )
-                action_text = texts.t(
-                    'AUTOPAY_ACTION_LEGACY_TERMS',
-                    '💡 Срок закончится {end_date}, после этого выберите тариф. Сейчас можно докупить LTE.',
-                ).format(end_date=end_date)
+                if legacy_locked:
+                    action_text = texts.t(
+                        'AUTOPAY_ACTION_LEGACY_TERMS',
+                        '💡 Срок закончится {end_date}, после этого выберите тариф. Сейчас можно докупить LTE.',
+                    ).format(end_date=end_date)
+                else:
+                    # Без VPN после окончания клиент не откроет ни бота, ни кабинет:
+                    # платить нужно заранее, новый тариф начнётся после этой даты.
+                    action_text = texts.t(
+                        'AUTOPAY_ACTION_LEGACY_TERMS_EARLY',
+                        '💡 Продлите или выберите новый тариф заранее — он начнётся после {end_date}, '
+                        'прежние условия действуют до этой даты. Сейчас можно и докупить LTE.',
+                    ).format(end_date=end_date)
             elif subscription.autopay_enabled and has_saved_card:
                 autopay_status = texts.t(
                     'AUTOPAY_STATUS_CARD_ACTIVE',
@@ -2250,6 +2276,12 @@ class MonitoringService:
                     [build_miniapp_or_callback_button(text=sub_btn_text, callback_data='menu_subscription')],
                 ]
             )
+            if legacy_locked:
+                from app.services.lte_quota_notifications import build_notice_keyboard
+
+                keyboard = build_notice_keyboard(
+                    texts, subscription.id, topup=getattr(subscription, 'network_category', None) == 'wifi_lte'
+                )
 
             await self._send_message_with_logo(
                 chat_id=user.telegram_id,
