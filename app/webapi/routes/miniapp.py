@@ -6162,7 +6162,7 @@ async def update_subscription_devices_endpoint(
             status.HTTP_400_BAD_REQUEST,
             detail={
                 'code': 'devices_fixed_by_tariff',
-                'message': 'Количество устройств задано тарифом. Другой тариф можно купить в разделе «Тариф».'
+                'message': 'Количество устройств закреплено за тарифом. Другой тариф можно купить в разделе «Тариф».'
                 if settings.DONBATON_TARIFF_SWITCH_ENABLED
                 else 'Количество устройств закреплено за тарифом. Другой тариф можно выбрать после окончания подписки.',
             },
