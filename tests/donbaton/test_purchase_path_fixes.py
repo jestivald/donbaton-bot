@@ -29,7 +29,7 @@ from app.cabinet.schemas.subscription import RenewalRequest
 from app.config import Settings, settings
 from app.database.crud import user as user_crud
 from app.database.models import Base, Subscription, Tariff, Transaction, TransactionType, User
-from app.handlers.subscription import tariff_purchase
+from app.handlers.subscription import devices as device_handlers, tariff_purchase
 from app.keyboards import inline as keyboards
 from app.services import subscription_auto_purchase_service as auto
 from app.services.lte_quota_service import (
@@ -617,3 +617,44 @@ async def test_successful_extension_is_charged_once(monkeypatch):
         await db.refresh(sub)
         assert user.balance_kopeks == 100000 - PRICE_30
         assert sub.end_date - end_before == timedelta(days=30)
+
+
+# --------------------------------------------------------------------------- #
+# 7. Тексты про устройства
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('switch_enabled', 'expected'),
+    [(True, 'купить в разделе «📦 Тариф»'), (False, 'после окончания подписки')],
+)
+async def test_device_refusal_text_follows_the_switch_rule(switch_enabled, expected, monkeypatch):
+    monkeypatch.setattr(settings, 'DONBATON_TARIFF_SWITCH_ENABLED', switch_enabled)
+    cb = callback('subscription_change_devices')
+    allowed = await device_handlers._device_slot_changes_allowed(cb, MagicMock(network_category='wifi_lte'))
+    assert allowed is False
+    assert expected in cb.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('devices', 'expected'),
+    # 8: в окне переноса лимит остаётся 8 (прежние права) — строки нет, а была «3 → 8».
+    # 2: фактически 2 устройства, после покупки 7 — было «3 → 7» по лимиту тарифа 9.
+    [(8, None), (2, '📱 Устройств: 2 → 7')],
+)
+async def test_switch_note_counts_devices_from_the_subscription_not_its_tariff(devices, expected, monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, _ = await migrated(db, devices=devices)
+        family = tariff(id=10, name='Семейный', device_limit=7, lte_traffic_limit_gb=120)
+        db.add(family)
+        await db.commit()
+
+        note = await tariff_purchase._tariff_switch_note(db, sub, family, tariff_purchase.get_texts('ru'))
+
+        assert 'Смена тарифа' in note
+        if expected is None:
+            assert 'Устройств' not in note
+        else:
+            assert expected in note

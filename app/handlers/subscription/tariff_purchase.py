@@ -376,11 +376,13 @@ async def _tariff_switch_note(
         )
     else:
         lines.append(texts.t('TARIFF_SWITCH_NOTE_CARRY', 'Остаток сохранится и добавится к новому сроку.\n'))
-    old_devices = getattr(current, 'device_limit', None) or 0
+    # Фактический лимит подписки, а не тарифа: у перенесённой подписки он свой
+    # (8 при тарифе на 3), и «Устройств: 7 → 8» при покупке на 7 было бы неправдой.
+    old_devices = getattr(subscription, 'device_limit', None) or 0
     if switch['device_limit_now'] != old_devices:
         lines.append(
             texts.t('TARIFF_SWITCH_NOTE_DEVICES', '📱 Устройств: {old} → {new} (сразу)\n').format(
-                old=old_devices, new=switch['device_limit_now']
+                old=Texts.format_device_limit(old_devices), new=Texts.format_device_limit(switch['device_limit_now'])
             )
         )
     lines.append(_tariff_switch_lte_line(switch, current, texts))
