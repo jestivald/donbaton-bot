@@ -36,7 +36,7 @@ from app.database.crud.user import add_user_balance, get_user_by_id, subtract_us
 from app.database.database import AsyncSessionLocal
 from app.database.models import PaymentMethod, Subscription, Tariff, Transaction, TransactionType, User
 from app.services.donbaton_catalog import network_category
-from app.services.lte_quota_service import LtePolicyError, is_paid_tariff_switch
+from app.services.lte_quota_service import LtePolicyError, is_paid_tariff_switch, legacy_terms_keep_devices
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
@@ -1250,7 +1250,12 @@ async def purchase_tariff(
                 action='create' if _should_create else 'update',
             )
 
-        if network_switch and should_reset_devices_on_switch(switch_from_tariff, tariff):
+        if (
+            network_switch
+            and should_reset_devices_on_switch(switch_from_tariff, tariff)
+            # В окне прежних условий лимит не уменьшается: max(прежний, нового тарифа).
+            and not await legacy_terms_keep_devices(db, subscription)
+        ):
             # Без сброса панель оставила бы за клиентом уже подключённые
             # устройства сверх нового, меньшего лимита.
             await _reset_switch_devices(user, subscription)

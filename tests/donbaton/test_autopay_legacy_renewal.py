@@ -227,9 +227,21 @@ async def test_lte_topup_stays_available_while_autopay_is_blocked(monkeypatch):
         assert legacy_autopay_blocked(await db.get(LteQuota, quota.subscription_id)) is True
 
 
+def _buttons(markup):
+    return [(button.text, button.callback_data) for row in markup.inline_keyboard for button in row]
+
+
 @pytest.mark.asyncio
-async def test_expiring_notice_does_not_promise_automatic_renewal(monkeypatch):
-    """Обещать «продлится автоматически» тому, у кого autopay заблокирован, нельзя."""
+@pytest.mark.parametrize('early', [False, True])
+async def test_expiring_notice_does_not_promise_automatic_renewal(monkeypatch, early):
+    """Обещать «продлится автоматически» тому, у кого autopay заблокирован, нельзя.
+
+    С ранней оплатой (DONBATON_LEGACY_EARLY_RENEWAL_ENABLED) уведомление зовёт
+    заплатить заранее и оставляет «Продлить» / «Пополнить»: после окончания без
+    VPN клиент до бота не доберётся. Под замком эти кнопки вели бы в отказ —
+    вместо них «Докупить LTE» и «Моя подписка».
+    """
+    monkeypatch.setattr(settings, 'DONBATON_LEGACY_EARLY_RENEWAL_ENABLED', early)
     async with memory_session(monkeypatch, TABLES) as db:
         sub, user, _ = await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(hours=20))
         import app.services.monitoring_service as monitoring_module
@@ -242,7 +254,15 @@ async def test_expiring_notice_does_not_promise_automatic_renewal(monkeypatch):
         text = sent.await_args.kwargs['text']
         assert 'продлится автоматически' not in text
         assert 'прежние индивидуальные условия' in text
-        assert 'выберите тариф' in text
+        callbacks = [callback for _, callback in _buttons(sent.await_args.kwargs['reply_markup'])]
+        if early:
+            assert 'выберите новый тариф заранее' in text
+            assert 'после этого выберите тариф' not in text
+            assert callbacks == ['subscription_extend', 'balance_topup', 'menu_subscription']
+        else:
+            assert 'выберите тариф' in text
+            assert 'заранее' not in text
+            assert callbacks == ['buy_traffic', 'menu_subscription']
 
         # И тот же признак реально доезжает из цикла проверки истекающих подписок.
         notify = AsyncMock(return_value=True)
@@ -289,8 +309,10 @@ async def test_silent_channel_does_not_burn_the_single_notification(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_disabled_autopay_gets_the_same_advice(monkeypatch):
+@pytest.mark.parametrize('early', [False, True])
+async def test_disabled_autopay_gets_the_same_advice(monkeypatch, early):
     """С выключенным автоплатежом «включите автоплатёж» тоже не сработает."""
+    monkeypatch.setattr(settings, 'DONBATON_LEGACY_EARLY_RENEWAL_ENABLED', early)
     async with memory_session(monkeypatch, TABLES) as db:
         sub, user, _ = await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(hours=20), autopay=False)
         import app.services.monitoring_service as monitoring_module
@@ -303,7 +325,7 @@ async def test_disabled_autopay_gets_the_same_advice(monkeypatch):
         text = sent.await_args.kwargs['text']
         assert 'Включите автоплатеж' not in text
         assert 'Продлите подписку вручную' not in text
-        assert 'выберите тариф' in text
+        assert ('выберите новый тариф заранее' if early else 'после этого выберите тариф') in text
 
         # Признак считается независимо от autopay_enabled, иначе до текста не дойдёт.
         notify = AsyncMock(return_value=True)
@@ -494,17 +516,28 @@ async def test_explicit_new_purchase_unblocks_autopay(monkeypatch, plan):
 async def test_days_only_extension_of_an_expired_legacy_subscription_marks_the_purchase(monkeypatch):
     """Бонусные дни истёкшей legacy-подписке идут через update_entitlement.
 
-    Пока окно совместимости не закрылось, extend_subscription вообще не
-    пропускает управляемую подписку (validate_legacy_renewal в
-    _prepare_donbaton_subscription). А когда оно закрылось, срок уже истёк, и
-    ветка `expired` уводит в update_entitlement — отметка ставится.
+    Под замком (ранняя оплата выключена), пока окно совместимости не
+    закрылось, extend_subscription вообще не пропускает управляемую подписку
+    (validate_legacy_renewal в _prepare_donbaton_subscription). С ранней оплатой
+    бонусные дни проходят, но покупкой не считаются — отметки нет, автоплатёж
+    по-прежнему заблокирован. А когда окно закрылось, срок уже истёк, и ветка
+    `expired` уводит в update_entitlement — отметка ставится.
     """
     from app.database.crud.subscription import extend_subscription
 
+    monkeypatch.setattr(settings, 'DONBATON_LEGACY_EARLY_RENEWAL_ENABLED', False)
     async with memory_session(monkeypatch, TABLES) as db:
         sub, _, quota = await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(days=1))
         with pytest.raises(LtePolicyError, match='индивидуальные условия'):
             await extend_subscription(db, sub, 30)
+
+    monkeypatch.setattr(settings, 'DONBATON_LEGACY_EARLY_RENEWAL_ENABLED', True)
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, quota = await _seed_legacy(db, custom=True, paid_until=NOW + timedelta(days=1))
+        end_before = sub.end_date
+        await extend_subscription(db, sub, 30)
+        assert sub.end_date == end_before + timedelta(days=30)
+        assert legacy_autopay_blocked(await db.get(LteQuota, 1)) is True
 
     async with memory_session(monkeypatch, TABLES) as db:
         sub, _, quota = await _seed_legacy(db, custom=True, paid_until=NOW - timedelta(minutes=30))

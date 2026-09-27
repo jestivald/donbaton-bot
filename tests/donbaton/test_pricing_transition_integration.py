@@ -58,6 +58,8 @@ async def test_expired_legacy_without_live_grants_can_quote_new_paid_term(monkey
 
 @pytest.mark.asyncio
 async def test_imported_custom_early_renewal_cannot_quote_through_purchase_entry(monkeypatch):
+    # Замок индивидуальных условий — поведение при выключенной ранней оплате.
+    monkeypatch.setattr(settings, 'DONBATON_LEGACY_EARLY_RENEWAL_ENABLED', False)
     async with memory_session(monkeypatch, TABLES) as db:
         sub, target, snapshot, _ = await legacy_seed(db, custom=True, devices=15)
         await activate(db, sub, target, snapshot)

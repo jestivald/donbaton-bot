@@ -729,13 +729,23 @@ class PricingEngine:
 
         Public method that delegates to _calculate_tariff_core.
         If device_limit is None, uses the tariff's included limit (no extra devices).
+        A Wi-Fi / Wi-Fi + LTE tariff always uses its own fixed limit.
 
         Existing callers pass session-bound ORM users. Resolve that same session
         so old callbacks also validate migrated rights before a price can reach
         balance charging. Anonymous catalog previews need no subscription lookup.
         """
+        from app.services.donbaton_catalog import network_category
+
         await self._validate_tariff_purchase_transition(tariff, db=db, subscription=subscription, user=user)
-        effective_device_limit = device_limit if device_limit is not None else (tariff.device_limit or 0)
+        if network_category(tariff):
+            # Устройства сетевого тарифа закреплены за ним и отдельно не продаются.
+            # Бот передаёт сюда лимит текущей подписки, а у перенесённых прав он
+            # нестандартный (4, 8, безлимит) — это не покупка устройств, и отказ
+            # «количество закреплено» не давал им продлить тот же тариф.
+            effective_device_limit = tariff.device_limit
+        else:
+            effective_device_limit = device_limit if device_limit is not None else (tariff.device_limit or 0)
         return await self._calculate_tariff_core(
             tariff,
             period_days,

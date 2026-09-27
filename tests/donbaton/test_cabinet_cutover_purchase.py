@@ -90,6 +90,8 @@ async def test_legacy_grant_refusal_is_http_400_before_debit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_active_custom_terms_refuse_renewal_without_charging_old_extra_devices(monkeypatch):
+    # Замок индивидуальных условий — поведение при выключенной ранней оплате.
+    monkeypatch.setattr(settings, 'DONBATON_LEGACY_EARLY_RENEWAL_ENABLED', False)
     async with memory_session(monkeypatch, TABLES) as db:
         sub, target, snapshot, _ = await legacy_seed(db, devices=15, custom=True)
         await activate(db, sub, target, snapshot)
