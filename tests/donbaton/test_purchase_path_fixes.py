@@ -544,6 +544,35 @@ async def test_cabinet_renewal_options_skip_a_refused_period_instead_of_500(monk
 
 
 # --------------------------------------------------------------------------- #
+# 5. Мини-апп: устройства сетевой подписки не продаются
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('switch_enabled', [True, False])
+async def test_miniapp_refuses_device_slots_for_a_network_subscription(switch_enabled, monkeypatch):
+    monkeypatch.setattr(settings, 'DONBATON_TARIFF_SWITCH_ENABLED', switch_enabled)
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, user = await migrated(db, devices=3)
+        await db.refresh(user, ['subscriptions'])
+        monkeypatch.setattr(miniapp, '_authorize_miniapp_user', AsyncMock(return_value=user))
+        charged = AsyncMock(return_value=True)
+        monkeypatch.setattr(miniapp, 'subtract_user_balance', charged)
+
+        payload = miniapp.MiniAppSubscriptionDevicesUpdateRequest(init_data='x', devices=5)
+        with pytest.raises(HTTPException) as error:
+            await miniapp.update_subscription_devices_endpoint(payload, db=db)
+
+        assert error.value.status_code == 400
+        assert error.value.detail['code'] == 'devices_fixed_by_tariff'
+        after_end = 'после окончания подписки' in error.value.detail['message']
+        assert after_end is (not switch_enabled)
+        charged.assert_not_awaited()
+        await db.refresh(sub)
+        assert sub.device_limit == 3
+
+
+# --------------------------------------------------------------------------- #
 # 6. Сбой продления после списания возвращает деньги
 # --------------------------------------------------------------------------- #
 

@@ -6152,6 +6152,22 @@ async def update_subscription_devices_endpoint(
     )
     _validate_subscription_id(payload.subscription_id, subscription)
 
+    # Сетевой тариф Wi-Fi / Wi-Fi + LTE — фиксированный лимит устройств, докупки и
+    # уменьшения нет (как кабинетный _require_mutable_device_slots и бот). Без
+    # этой проверки ручка брала PRICE_PER_DEVICE и списывала деньги.
+    from app.services.donbaton_catalog import network_category
+
+    if network_category(subscription):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'devices_fixed_by_tariff',
+                'message': 'Количество устройств задано тарифом. Другой тариф можно купить в разделе «Тариф».'
+                if settings.DONBATON_TARIFF_SWITCH_ENABLED
+                else 'Количество устройств закреплено за тарифом. Другой тариф можно выбрать после окончания подписки.',
+            },
+        )
+
     raw_value = payload.devices if payload.devices is not None else payload.device_limit
     if raw_value is None:
         raise HTTPException(
