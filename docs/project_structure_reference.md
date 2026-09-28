@@ -2610,6 +2610,7 @@
 - `docs/handoffs/handoff-2026-09-17-upstream-4.13.0.md` — файл
 - `docs/handoffs/handoff-2026-09-25-lte-partial-telemetry.md` — файл
 - `docs/handoffs/handoff-2026-09-25-upstream-4.15.0.md` — файл
+- `docs/handoffs/handoff-2026-09-28-lte-gate-off.md` — файл
 
 ## migrations
 
