@@ -10,6 +10,10 @@ What was announced is kept in Redis (`donbaton:lte:telemetry:<epoch>:alert-state
 so a restart neither repeats nor forgets an alert. A failed delivery is retried
 on the next cycle with that cycle's state, never as a stale message. Nothing
 here may break or stall the quota cycle.
+
+With the canary gate off (`DONBATON_LTE_TELEMETRY_GATE_ENABLED`, the default
+since 2026-09-28) there is nothing to watch: no messages, and the stored state
+is neither read nor written.
 """
 
 import asyncio
@@ -89,6 +93,8 @@ async def report_cycle(evidence, *, bot=None, now=None):
 
 
 async def _report(evidence, bot, now):
+    if not settings.DONBATON_LTE_TELEMETRY_GATE_ENABLED:
+        return
     if getattr(evidence, 'state', None) not in ('live', 'grace', 'closed') or not (
         settings.DONBATON_LTE_ENABLED and settings.DONBATON_LTE_ACCOUNTING_READY
     ):

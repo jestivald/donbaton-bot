@@ -62,6 +62,8 @@ class TelemetryEvidence:
     tells: the producer's code, or `unmonitored` for a route it does not check.
     `state` is the gate decision: `live` (enough routes proven), `grace` (none,
     but the last proof is recent; `grace_remaining` seconds left) or `closed`.
+    `disabled` means the gate is off (`DONBATON_LTE_TELEMETRY_GATE_ENABLED`):
+    nothing was read, and every consumer treats the cycle as live.
     """
 
     payload: object = None
@@ -279,6 +281,18 @@ def _lte_accounting_active():
     )
 
 
+def _telemetry_gate_enabled():
+    """Whether LTE still waits for the canary; off by default since 2026-09-28.
+
+    With the gate off the ledger alone decides: `ready` and not exhausted opens
+    LTE, as with a live lease. Nothing about the canary is read or written.
+    """
+    if settings.DONBATON_LTE_TELEMETRY_GATE_ENABLED:
+        return True
+    _warn_once('LTE telemetry gate disabled, canary lease is not consulted')
+    return False
+
+
 def _grace_remaining_seconds(last_valid, *, now):
     try:
         elapsed = (timestamp(now) - timestamp(last_valid['seen_at'])).total_seconds()
@@ -294,7 +308,10 @@ async def _resolve_telemetry_evidence(*, now=None):
     over hundreds of subscriptions still performs one Redis write, and the
     single warning below reports one outage instead of one per user. A partial
     v2 lease with enough proven routes is live telemetry like a complete one.
+    With the gate off there is nothing to resolve: no Redis read or write.
     """
+    if not _telemetry_gate_enabled():
+        return TelemetryEvidence(last_valid=None, state='disabled')
     now = _now(now)
     payload = await _read_telemetry_heartbeat(now=now)
     accepted, routes = _telemetry_routes(payload, now=now)
@@ -335,6 +352,8 @@ def _log_lte_closed(*, last_valid):
 
 
 async def _with_telemetry_status(status, *, now, heartbeat=_UNSET_HEARTBEAT):
+    if not _telemetry_gate_enabled():
+        return status  # the ledger's own state stands: nothing to confirm it against
     if heartbeat is _UNSET_HEARTBEAT:
         evidence = await _resolve_telemetry_evidence(now=now)
     elif isinstance(heartbeat, TelemetryEvidence):
@@ -368,7 +387,8 @@ def validate_tariff_for_sale(tariff) -> None:
         raise LtePolicyError('Новые тарифы пока не включены: ожидается проверка учёта и серверов')
     if not settings.DONBATON_LTE_ACCOUNTING_EPOCH:
         raise LtePolicyError('Не задана подтверждённая эпоха LTE-учёта')
-    _telemetry_node_ids()
+    if _telemetry_gate_enabled():
+        _telemetry_node_ids()  # the gate needs the nodes its canary proves
     wifi, lte = _squad_sets()
     if getattr(tariff, 'traffic_limit_gb', 0) != 0:
         raise LtePolicyError('Для новых тарифов общий трафик должен быть безлимитным')
@@ -1507,11 +1527,12 @@ def decide_lte_notice(
     (top-up, new period, manual credit) clears both, and any positive balance
     clears «exhausted», so the next exhaustion is announced again. New marks
     need confirmed accounting — ``ready`` on a live telemetry lease, never the
-    grace window — and a customer who really has LTE: finite and with a non-zero
-    capacity. Wi-Fi-only capacity is zero: it is always ``exhausted`` in the
-    ledger and must never be told so. The mark is set before sending, so a
-    message goes out at most once per crossing; «exhausted» also sets «low»,
-    because the low line was crossed on the way.
+    grace window (with the canary gate off, ``ready`` alone) — and a customer
+    who really has LTE: finite and with a non-zero capacity. Wi-Fi-only
+    capacity is zero: it is always ``exhausted`` in the ledger and must never
+    be told so. The mark is set before sending, so a message goes out at most
+    once per crossing; «exhausted» also sets «low», because the low line was
+    crossed on the way.
     """
     if status is None or status.get('is_unlimited'):
         return LteNoticeMarks(low_sent_at, exhausted_sent_at)
@@ -1565,8 +1586,12 @@ def _lease_is_live(heartbeat, now) -> bool:
     """The cycle's own live lease, re-checked for age; the grace memory never counts.
 
     Grace keeps LTE open on an unconfirmed ledger for a while; a message about
-    the balance must not rest on that. No evidence at all means not live.
+    the balance must not rest on that. No evidence at all means not live. With
+    the canary gate off there is no lease to wait for: the ledger's ``ready`` is
+    the confirmation, exactly as it is for LTE access itself.
     """
+    if not _telemetry_gate_enabled():
+        return True
     if heartbeat is _UNSET_HEARTBEAT:
         return False
     payload = heartbeat.payload if isinstance(heartbeat, TelemetryEvidence) else heartbeat
@@ -1793,9 +1818,10 @@ async def run_quota_cycle(subscription_service, bot=None):
     """One independent polling pass; no payment or email effects.
 
     Telegram only in two bounded, non-raising ways: the owner's telemetry-route
-    alerts (``lte_telemetry_alerts.report_cycle``, sent here once per pass) and the
-    customers' LTE notice candidates, which are only returned — the caller sends
-    them after the pass (``MonitoringService._send_lte_notices``).
+    alerts (``lte_telemetry_alerts.report_cycle``, sent here once per pass, and
+    only with the canary gate on) and the customers' LTE notice candidates, which
+    are only returned — the caller sends them after the pass
+    (``MonitoringService._send_lte_notices``).
     """
     from app.database.database import AsyncSessionLocal
 

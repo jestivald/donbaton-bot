@@ -1521,6 +1521,23 @@ class BotConfigurationService:
             ),
             'dependencies': 'REMNAWAVE_WEBHOOK_ENABLED, ADMIN_NOTIFICATIONS_ENABLED',
         },
+        'DONBATON_LTE_TELEMETRY_GATE_ENABLED': {
+            'description': (
+                'Гейт канарейки: LTE открыт, только пока канарейка donbaton-lte-telemetry подтверждает учёт '
+                'на обходах. Выключен (по умолчанию с 28.09.2026, решение владельца) — LTE зависит только '
+                'от подписки и остатка пакета, списание по счётчику панели идёт как раньше.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'false',
+            'warning': (
+                'Включать только вместе с работающей канарейкой: без её подтверждения бот через grace снимет '
+                'LTE у всех. Выключенный гейт учёт не проверяет — сломанный множитель ноды обхода никто не заметит.'
+            ),
+            'dependencies': (
+                'DONBATON_LTE_NODE_UUIDS, DONBATON_LTE_TELEMETRY_GRACE_SECONDS, DONBATON_LTE_TELEMETRY_MIN_ROUTES, '
+                'DONBATON_LTE_ROUTE_ALERT_DELAY_SECONDS'
+            ),
+        },
         'DONBATON_LTE_NODE_UUIDS': {
             'description': (
                 'LTE-ноды (обходы), учёт которых подтверждает канарейка. LTE открыт, пока подтверждено '
@@ -1532,7 +1549,10 @@ class BotConfigurationService:
                 'Новую ноду сначала добавьте сюда, потом в канарейку. Старая канарейка (lease v1) '
                 'подтверждает только полный набор: лишняя нода здесь закроет LTE после grace.'
             ),
-            'dependencies': 'DONBATON_LTE_TELEMETRY_MIN_ROUTES, DONBATON_LTE_TELEMETRY_GRACE_SECONDS',
+            'dependencies': (
+                'DONBATON_LTE_TELEMETRY_GATE_ENABLED, DONBATON_LTE_TELEMETRY_MIN_ROUTES, '
+                'DONBATON_LTE_TELEMETRY_GRACE_SECONDS'
+            ),
         },
         'DONBATON_LTE_TELEMETRY_MIN_ROUTES': {
             'description': 'Сколько LTE-маршрутов канарейка должна подтвердить, чтобы LTE оставался открытым у всех.',
@@ -1542,7 +1562,7 @@ class BotConfigurationService:
                 'Больше числа нод — ограничивается числом нод с предупреждением в логе. 1 — LTE держится, '
                 'пока жив хотя бы один обход; неподтверждённый обход в это время работает без проверки учёта.'
             ),
-            'dependencies': 'DONBATON_LTE_NODE_UUIDS',
+            'dependencies': 'DONBATON_LTE_TELEMETRY_GATE_ENABLED, DONBATON_LTE_NODE_UUIDS',
         },
         'DONBATON_LTE_ROUTE_ALERT_DELAY_SECONDS': {
             'description': (
@@ -1552,14 +1572,17 @@ class BotConfigurationService:
             'format': 'Секунды, целое число от 0.',
             'example': '300',
             'warning': 'Короткие сбои (например, перезапуск канарейки) не сообщаются. Снятие LTE у всех — сразу.',
-            'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED, ADMIN_NOTIFICATIONS_INFRASTRUCTURE_TOPIC_ID',
+            'dependencies': (
+                'DONBATON_LTE_TELEMETRY_GATE_ENABLED, ADMIN_NOTIFICATIONS_ENABLED, '
+                'ADMIN_NOTIFICATIONS_INFRASTRUCTURE_TOPIC_ID'
+            ),
         },
         'DONBATON_LTE_ROUTE_ALERT_REMIND_SECONDS': {
             'description': 'Как часто напоминать администраторам, пока LTE-маршрут или весь LTE не восстановлен.',
             'format': 'Секунды, целое число; 0 — без напоминаний.',
             'example': '21600',
             'warning': 'Отсчёт идёт от последнего отправленного сообщения об LTE.',
-            'dependencies': 'DONBATON_LTE_ROUTE_ALERT_DELAY_SECONDS',
+            'dependencies': 'DONBATON_LTE_TELEMETRY_GATE_ENABLED, DONBATON_LTE_ROUTE_ALERT_DELAY_SECONDS',
         },
         'WEBHOOK_NOTIFY_USER_ENABLED': {
             'description': (

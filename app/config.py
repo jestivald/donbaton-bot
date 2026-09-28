@@ -108,6 +108,12 @@ class Settings(BaseSettings):
     DONBATON_LTE_SQUAD_UUIDS: str = ''
     DONBATON_LTE_POLL_SECONDS: int = Field(30, ge=10, le=300)
     DONBATON_LTE_MAX_SAMPLE_AGE_SECONDS: int = Field(180, ge=30, le=1800)
+    # The canary gate. Off by default (owner's decision 2026-09-28, the canary is
+    # retired): the LTE squad follows the subscription and the remaining package
+    # only, quotas are still charged by the panel counter as before; the lease and
+    # its grace anchor are not read and no route alerts are sent. True restores
+    # the gate below (grace, minimum routes, alerts) — only with a working canary.
+    DONBATON_LTE_TELEMETRY_GATE_ENABLED: bool = False
     # Lease v2 keeps the canary publishing while any route is proven; the window
     # covers a canary that proves nothing at all (dead, stopped, every route down).
     # 0 keeps the strict behaviour; a positive window trusts the last valid

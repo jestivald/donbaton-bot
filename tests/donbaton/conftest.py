@@ -2,6 +2,11 @@
 
 Heartbeat tests explicitly restore the production reader and exercise missing,
 stale and malformed proofs against an in-memory Redis stub.
+
+The domain tests were written against the canary gate, so it stays on here even
+though production runs with it off since 2026-09-28
+(`DONBATON_LTE_TELEMETRY_GATE_ENABLED`); `test_lte_gate_off.py` switches it off
+explicitly.
 """
 
 from datetime import UTC, datetime
@@ -20,6 +25,7 @@ TEST_LTE_NODES = [
 
 @pytest.fixture(autouse=True)
 def synthetic_telemetry(monkeypatch):
+    monkeypatch.setattr(settings, 'DONBATON_LTE_TELEMETRY_GATE_ENABLED', True)
     monkeypatch.setattr(settings, 'DONBATON_LTE_ACCOUNTING_EPOCH', 'synthetic-accounting-epoch')
     monkeypatch.setattr(settings, 'DONBATON_LTE_NODE_UUIDS', ','.join(TEST_LTE_NODES))
 
