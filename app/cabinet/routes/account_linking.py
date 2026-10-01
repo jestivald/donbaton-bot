@@ -30,11 +30,13 @@ from app.database.crud.user import (
 )
 from app.database.models import User
 from app.services.account_merge_service import (
+    MergeForbiddenError,
     compute_auth_methods,
     execute_merge,
     flush_remnawave_deletions,
     get_merge_preview,
 )
+from app.services.donbaton_admin_guards import admin_merge_refusal
 from app.utils.cache import RateLimitCache, TokenReplayCache
 
 from ..auth.merge_service import (
@@ -228,6 +230,19 @@ def _count_auth_methods(user: User) -> int:
     return len(compute_auth_methods(user))
 
 
+async def _refuse_admin_merge(db: AsyncSession, secondary: User, *, primary_user_id: int, provider: str) -> None:
+    """403 вместо токена слияния, если поглощаемый аккаунт — администратор (аудит 01.10.2026 §2.2-B)."""
+    refusal = await admin_merge_refusal(db, secondary)
+    if refusal:
+        logger.warning(
+            'Account merge refused: the account to be absorbed belongs to an administrator',
+            primary_user_id=primary_user_id,
+            secondary_user_id=secondary.id,
+            provider=provider,
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=refusal)
+
+
 async def _exchange_and_link_oauth(
     *,
     db: AsyncSession,
@@ -323,6 +338,7 @@ async def _exchange_and_link_oauth(
             current_user_id=user.id,
             existing_user_id=existing_user.id,
         )
+        await _refuse_admin_merge(db, existing_user, primary_user_id=user.id, provider=provider)
         merge_token = await create_merge_token(
             primary_user_id=user.id,
             secondary_user_id=existing_user.id,
@@ -667,6 +683,7 @@ async def link_telegram(
             current_user_id=user.id,
             existing_user_id=existing_user.id,
         )
+        await _refuse_admin_merge(db, existing_user, primary_user_id=user.id, provider='telegram')
         merge_token = await create_merge_token(
             primary_user_id=user.id,
             secondary_user_id=existing_user.id,
@@ -973,6 +990,10 @@ async def execute_merge_endpoint(
             status_code=status.HTTP_409_CONFLICT,
             detail='Account merge is temporarily blocked until grace access is finished.',
         ) from exc
+    except MergeForbiddenError as exc:
+        # Запрет, а не сбой: токен не восстанавливаем — повтор дал бы тот же отказ.
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
         await db.rollback()
         await restore_merge_token(merge_token, consumed)

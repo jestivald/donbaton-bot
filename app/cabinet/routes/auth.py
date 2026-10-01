@@ -41,6 +41,7 @@ from app.database.models import CabinetRefreshToken, User, UserStatus
 from app.services import legal_consent_service
 from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
+from app.services.donbaton_admin_guards import admin_merge_refusal
 from app.services.panel_sync import (
     ADMIN_PULL,
     GRACE_MARKER_FIELDS,
@@ -1316,6 +1317,16 @@ async def register_email(
         # /email/merge/verify, and only then is a merge token minted. Without
         # this, anyone who merely knows a victim's email could take over their
         # account. Works for password-less (OAuth-only) accounts too.
+        # Аккаунт администратора не поглощается слиянием (аудит 01.10.2026 §2.2-B) —
+        # отказываем до письма с кодом, токен слияния не появится.
+        admin_refusal = await admin_merge_refusal(db, existing_email_user)
+        if admin_refusal:
+            logger.warning(
+                'Email merge refused: the account to be absorbed belongs to an administrator',
+                current_user_id=user.id,
+                existing_user_id=existing_email_user.id,
+            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=admin_refusal)
         if not email_service.is_configured():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1478,6 +1489,15 @@ async def verify_email_merge(
         )
 
     await clear_email_merge_otp(user.id)
+    # Код мог быть выслан до запрета слияния с администратором (аудит 01.10.2026 §2.2-B).
+    admin_refusal = await admin_merge_refusal(db, secondary)
+    if admin_refusal:
+        logger.warning(
+            'Email merge refused: the account to be absorbed belongs to an administrator',
+            current_user_id=user.id,
+            existing_user_id=secondary_user_id,
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=admin_refusal)
     merge_token = await create_merge_token(
         primary_user_id=user.id,
         secondary_user_id=secondary_user_id,

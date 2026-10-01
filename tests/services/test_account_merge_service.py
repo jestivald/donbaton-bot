@@ -29,6 +29,13 @@ def _stub_grace_delete_guard(monkeypatch):
     return guard
 
 
+@pytest.fixture(autouse=True)
+def _stub_admin_role_lookup(monkeypatch):
+    """Болванка БД здесь не отвечает на запрос ролей RBAC; сторож «secondary — админ»
+    (аудит 01.10.2026 §2.2-B) проверяется в tests/donbaton/test_admin_merge_guard.py."""
+    monkeypatch.setattr('app.services.donbaton_admin_guards.has_cabinet_role', AsyncMock(return_value=False))
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

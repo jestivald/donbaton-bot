@@ -701,6 +701,10 @@ async def _handle_subscription_merge(
         )
 
 
+class MergeForbiddenError(ValueError):
+    """Слияние запрещено правилом (например, поглощаемый аккаунт — администратор)."""
+
+
 async def execute_merge(
     db: AsyncSession,
     primary_user_id: int,
@@ -745,6 +749,20 @@ async def execute_merge(
         raise ValueError(f'Вторичный пользователь (id={secondary_user_id}) не найден')
     if secondary.status == UserStatus.DELETED.value:
         raise ValueError(f'Вторичный пользователь (id={secondary_user_id}) уже удалён')
+
+    # Повторная проверка для токенов, выданных до запрета (аудит 01.10.2026 §2.2-B):
+    # администратор не поглощается ни через какой путь выдачи токена.
+    from app.services.donbaton_admin_guards import admin_merge_refusal
+
+    refusal = await admin_merge_refusal(db, secondary)
+    if refusal:
+        logger.warning(
+            'Мерж отклонён: поглощаемый аккаунт — администратор',
+            primary_id=primary.id,
+            secondary_id=secondary.id,
+            provider=provider,
+        )
+        raise MergeForbiddenError(refusal)
 
     logger.info(
         'Начинаем мерж аккаунтов',

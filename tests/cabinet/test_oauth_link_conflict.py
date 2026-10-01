@@ -22,6 +22,13 @@ from fastapi import HTTPException, status
 from app.cabinet.routes.account_linking import _exchange_and_link_oauth
 
 
+@pytest.fixture(autouse=True)
+def _stub_admin_role_lookup(monkeypatch):
+    """Болванка БД здесь не отвечает на запрос ролей RBAC; сторож «secondary — админ»
+    (аудит 01.10.2026 §2.2-B) проверяется в tests/donbaton/test_admin_merge_guard.py."""
+    monkeypatch.setattr('app.services.donbaton_admin_guards.has_cabinet_role', AsyncMock(return_value=False))
+
+
 def _provider_returning(provider_id: str) -> MagicMock:
     """A fake OAuth provider that exchanges a code and yields ``provider_id``."""
     prov = MagicMock()

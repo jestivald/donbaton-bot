@@ -53,6 +53,13 @@ def _email_auth_enabled(monkeypatch):
     monkeypatch.setattr(email_auth_gate.settings, 'CABINET_EMAIL_AUTH_ENABLED', True)
 
 
+@pytest.fixture(autouse=True)
+def _stub_admin_role_lookup(monkeypatch):
+    """Болванка БД здесь не отвечает на запрос ролей RBAC; сторож «secondary — админ»
+    (аудит 01.10.2026 §2.2-B) проверяется в tests/donbaton/test_admin_merge_guard.py."""
+    monkeypatch.setattr('app.services.donbaton_admin_guards.has_cabinet_role', AsyncMock(return_value=False))
+
+
 @pytest.mark.asyncio
 async def test_email_conflict_sends_code_not_token() -> None:
     """Knowing the victim's email mails a code to THEM — no merge token is issued."""
