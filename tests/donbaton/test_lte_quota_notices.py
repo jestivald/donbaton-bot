@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+import types
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -495,6 +496,17 @@ async def add_customer(db, plan, index, *, limit_bytes):
     return sub
 
 
+class _SerialCycleAsyncio(types.ModuleType):
+    """``asyncio`` для run_quota_cycle с шириной семафора 1; остальное — настоящий модуль."""
+
+    def __getattr__(self, name):
+        return getattr(asyncio, name)
+
+    @staticmethod
+    def Semaphore(_value=1):
+        return asyncio.Semaphore(1)
+
+
 @asynccontextmanager
 async def cycle_lab(monkeypatch, db):
     from app.database import database
@@ -502,6 +514,12 @@ async def cycle_lab(monkeypatch, db):
     maker = async_sessionmaker(db.bind, expire_on_commit=False, autoflush=False)
     monkeypatch.setattr(database, 'AsyncSessionLocal', maker)
     monkeypatch.setattr(notify, 'AsyncSessionLocal', maker)
+    # SQLite :memory: (StaticPool) отдаёт всем сессиям ОДНО соединение, и параллельные
+    # сессии цикла делят одну транзакцию — на SQLAlchemy 2.1 это теряет отметку одной из
+    # подписок. В проде у каждой сессии своё соединение PostgreSQL; тот же сценарий с
+    # параллельностью 10 проверен на PG 15 и 18 (handoff 2026-10-01 §8.2). Здесь цикл идёт
+    # по одной подписке за раз: так лаборатория моделирует независимые транзакции.
+    monkeypatch.setattr(lte_quota_service, 'asyncio', _SerialCycleAsyncio('asyncio'))
 
     def panel_user(panel_id):
         return panel(0, panel_id=panel_id, username=f'client_{panel_id}')
