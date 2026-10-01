@@ -3954,6 +3954,9 @@
 - `tests/donbaton/test_catalog_document.py` — Python-модуль
   Классы: нет
   Функции: `test_catalog_has_four_offers_with_the_standard_periods`, `test_longer_periods_are_cheaper_per_day_but_dearer_in_total`, `test_every_offer_passes_the_catalog_policy_and_renders_month_labels`
+- `tests/donbaton/test_cryptobot_signature_log.py` — Python-модуль
+  Классы: нет
+  Функции: `expected_signatures`, `test_bad_signature_log_has_no_expected_hmac_or_token`, `test_valid_signature_still_accepted`
 - `tests/donbaton/test_cutover_purchase_guards.py` — Python-модуль
   Классы: нет
   Функции: `launch_tariff`, `test_unlisted_or_malformed_period_has_no_price`, `test_approved_thirty_days_keeps_approved_price`, `test_bad_stored_price_cannot_issue_a_free_period`, `test_migrated_subscription_without_loaded_tariff_cannot_use_classic_pricing`, `test_generic_housekeeping_preserves_imported_purchase_archive`, `test_legacy_no_reset_text_does_not_promise_an_unpaid_refill`

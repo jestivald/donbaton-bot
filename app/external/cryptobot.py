@@ -152,14 +152,13 @@ class CryptoBotService:
                 logger.info('CryptoBot webhook подпись валидна (ascii-escaped)')
                 return True
 
+            # Ожидаемые HMAC и начало токена в лог не пишем: это оракул подписи для любого,
+            # кто читает payments.log (аудит 01.10.2026 §3.2). Для разбора хватает начала
+            # присланной подписи и длины тела.
             logger.error(
                 'Неверная подпись CryptoBot webhook',
-                received_signature=signature,
-                expected_raw=expected,
-                expected_reserialized=expected_reserialized,
+                received_signature=(signature or '')[:8],
                 body_length=len(body),
-                token_length=len(token),
-                token_prefix=token[:4] + '...',
             )
             return False
 
