@@ -39,6 +39,24 @@ class YooKassaPaymentMixin:
         except (InvalidOperation, ValueError, TypeError):
             return str(value)
 
+    @staticmethod
+    def _remote_payment_method(remote_data: dict[str, Any]) -> dict[str, Any]:
+        """``payment_method`` в форме вебхука, собранный только из ответа API (get_payment_info)."""
+        method: dict[str, Any] = {}
+        if remote_data.get('payment_method_type'):
+            method['type'] = remote_data['payment_method_type']
+        if remote_data.get('payment_method_id'):
+            method['id'] = remote_data['payment_method_id']
+            method['saved'] = bool(remote_data.get('payment_method_saved'))
+        card = remote_data.get('payment_method_card')
+        if isinstance(card, dict) and card:
+            method['card'] = dict(card)
+        for field in ('title', 'account_number', 'phone'):
+            value = remote_data.get(f'payment_method_{field}')
+            if value:
+                method[field] = value
+        return method
+
     @classmethod
     def _merge_remote_yookassa_payload(
         cls,
@@ -59,11 +77,16 @@ class YooKassaPaymentMixin:
         if 'refundable' in remote_data:
             merged['refundable'] = bool(remote_data.get('refundable'))
 
-        payment_method_type = remote_data.get('payment_method_type')
-        if payment_method_type:
-            payment_method = dict(merged.get('payment_method') or {})
-            payment_method['type'] = payment_method_type
-            merged['payment_method'] = payment_method
+        # Метод оплаты — из подтверждения API: тело вебхука не подписано, а из
+        # payment_method берётся привязка для автоплатежей (id/saved/card/реквизиты).
+        # Подменённый id сохранил бы клиенту чужую привязку (аудит 01.10.2026 §3.1).
+        # Нет метода в ответе API — нет и id: сохранять нечего. Из тела остаётся только
+        # тип (справочное поле платежа), если API его не назвал.
+        payment_method = cls._remote_payment_method(remote_data)
+        body_type = (merged.get('payment_method') or {}).get('type')
+        if body_type and 'type' not in payment_method:
+            payment_method['type'] = body_type
+        merged['payment_method'] = payment_method
 
         amount_value = remote_data.get('amount_value')
         amount_currency = remote_data.get('amount_currency')

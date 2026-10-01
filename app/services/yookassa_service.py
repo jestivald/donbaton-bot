@@ -457,6 +457,10 @@ class YooKassaService:
                     and payment_info_yk.payment_method.card
                     else None,
                     'test_mode': payment_info_yk.test if hasattr(payment_info_yk, 'test') else None,
+                    # Реквизиты для подписи сохранённого метода — тоже из API, не из тела вебхука.
+                    'payment_method_title': getattr(payment_info_yk.payment_method, 'title', None),
+                    'payment_method_account_number': getattr(payment_info_yk.payment_method, 'account_number', None),
+                    'payment_method_phone': getattr(payment_info_yk.payment_method, 'phone', None),
                 }
             logger.warning('Платеж не найден в YooKassa', payment_id_in_yookassa=payment_id_in_yookassa)
             return None

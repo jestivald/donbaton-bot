@@ -2133,7 +2133,7 @@
   Классы: `WataPaymentMixin` (4 методов)
   Функции: нет
 - `app/services/payment/yookassa.py` — Python-модуль
-  Классы: `YooKassaPaymentMixin` (15 методов)
+  Классы: `YooKassaPaymentMixin` (16 методов)
   Функции: нет
 
 #### app/services/reachability
@@ -4044,6 +4044,9 @@
 - `tests/donbaton/test_tariff_switch.py` — Python-модуль
   Классы: нет
   Функции: `switching_enabled`, `plan`, `seed` — Живая подписка на сетевом тарифе с обычным (не legacy) учётом., `test_switch_applies_new_allowance_to_the_running_cycle`, `test_downgrade_cuts_the_allowance_without_forgiving_spent_bytes`, `test_switch_to_wifi_only_drops_lte_at_once`, `test_legacy_window_moves_devices_now_and_the_allowance_at_the_paid_boundary`, `test_legacy_window_never_takes_away_devices_already_paid_for`, `test_describe_switch_tells_each_surface_the_same_story`, `test_describe_switch_dates_the_allowance_inside_the_legacy_window`, `test_custom_terms_still_wait_for_the_paid_end`, `test_live_old_subscription_cannot_buy_a_network_plan`, `test_network_subscription_cannot_walk_back_to_old_accounting`, `test_disabled_flag_keeps_the_previous_refusal`, `test_only_a_live_paid_subscription_switches`, `test_bot_checkout_quotes_the_full_period_price_for_another_plan` — Все замки на пути `tariff_select:` → период → `tariff_confirm:` сняты разом., `test_live_network_subscription_gets_the_catalogue_button`, `test_purchase_of_another_plan_keeps_the_remaining_days`, `test_network_devices_reset_only_when_the_limit_shrinks`, `test_legacy_pairs_keep_the_upstream_unconditional_reset`, `test_cabinet_switch_sends_network_plans_to_the_purchase_flow`, `test_miniapp_switch_sends_network_plans_to_the_purchase_flow`, `test_cabinet_purchase_of_another_network_plan_goes_through`, `test_cabinet_purchase_of_a_smaller_network_plan_clears_devices`
+- `tests/donbaton/test_yookassa_payment_method_from_api.py` — Python-модуль
+  Классы: нет
+  Функции: `api_answer`, `test_merge_takes_payment_method_only_from_api`, `test_merge_without_api_method_keeps_no_binding`, `saved_methods`, `run_webhook` — Настоящий process_yookassa_webhook до передачи объекта в обработку успешного платежа., `test_webhook_with_forged_method_saves_the_api_binding`, `test_webhook_without_api_method_saves_nothing`, `test_body_saved_flag_cannot_force_saving`, `test_wallet_title_comes_from_api_account`, `test_get_payment_info_returns_wallet_requisites`
 
 ### tests/external
 
