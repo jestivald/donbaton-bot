@@ -3960,6 +3960,9 @@
 - `tests/donbaton/test_cutover_purchase_guards.py` — Python-модуль
   Классы: нет
   Функции: `launch_tariff`, `test_unlisted_or_malformed_period_has_no_price`, `test_approved_thirty_days_keeps_approved_price`, `test_bad_stored_price_cannot_issue_a_free_period`, `test_migrated_subscription_without_loaded_tariff_cannot_use_classic_pricing`, `test_generic_housekeeping_preserves_imported_purchase_archive`, `test_legacy_no_reset_text_does_not_promise_an_unpaid_refill`
+- `tests/donbaton/test_dependency_security_floor.py` — Python-модуль
+  Классы: нет
+  Функции: `locked_versions`, `test_lock_meets_security_floor`
 - `tests/donbaton/test_fixed_device_guards.py` — Python-модуль
   Классы: нет
   Функции: `seed`, `boundaries`, `assert_unchanged`, `test_cabinet_mutations_reject_before_debit_or_replacing_original_devices`, `test_cabinet_quotes_do_not_offer_purchase_or_reduce_for_imported_unlimited_device_terms`, `test_saved_telegram_callbacks_cannot_charge_managed_device_slots`, `test_saved_add_devices_cart_after_payment_is_discarded_without_spending_credited_balance`, `test_shared_crud_rejects_managed_but_still_updates_ordinary_legacy_subscription`, `test_ordinary_legacy_cabinet_purchase_still_reaches_debit`
