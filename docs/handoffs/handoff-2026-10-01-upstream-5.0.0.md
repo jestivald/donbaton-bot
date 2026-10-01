@@ -7,22 +7,29 @@
 **Ветка:** `codex/upstream-5.0.0`
 **База:** `d394b293` = `codex/lte-gate-off` (боевой образ `donbaton/bedolaga:u4150-d394b293-20260928`,
 Alembic `0130` — леджер `STATE.md`, баннер 28.09).
-**Собирать из `3cb5f0df`** — последний коммит с кодом и тестами. Прод-образ тот же, что из `f6eadc93`
-(`3cb5f0df` меняет только `tests/`, а `tests/` и `docs/` исключены `.dockerignore`). Всё после
-`3cb5f0df` — этот документ.
+**Собирать из `4943e3b6`** (обновлено 01.10 вечером — §15, патчи безопасности) — последний коммит с
+кодом, тестами и `uv.lock`. Всё после `4943e3b6` — только этот документ (`docs/` исключён
+`.dockerignore`). Прежняя точка сборки `3cb5f0df` — без патчей §15.
 **Ничего не запушено, SSH не было, серверы и панель не тронуты, образ не собирался.**
 
 Апстрим: `v4.15.0 877690a7 → v4.16.0 e31831f5 → v5.0.0 5bda3c56`, 74 коммита, линейно
 (`merge-base(d394b293, v5.0.0)` = `v4.15.0`); **261 файл, +26 415/−2 362**. Конфликтов — **11 файлов**
 (4 с кодом, 7 мест; 5 локалей; `uv.lock`; справочник структуры). Миграций — **четыре**, все
-переномерованы. Правок форка после слияния — **две** (§8.2, §8.4).
+переномерованы. Правок форка после слияния — **две** (§8.2, §8.4) и **пять патчей безопасности** по
+аудиту C (§15).
 
 ---
 
 ## 1. Что сделано
 
 ```
-<этот документ> docs(handoff): передача по слиянию с upstream v5.0.0
+<этот коммит> docs(handoff): патчи безопасности 01.10 и новая точка сборки
+4943e3b6 fix(security): urllib3 2.8.0 — закрыты три бюллетеня 2.7.0
+ac4f1a3c fix(security): привязка автоплатежа ЮKassa — из подтверждения API, не из тела вебхука
+18360d61 fix(security): лог неверной подписи CryptoBot без ожидаемых HMAC и начала токена
+990c2886 fix(security): аудит-лог админки не хранит секреты из тел запросов
+704e0000 fix(security): аккаунт администратора не поглощается слиянием
+373f211a docs(handoff): передача по слиянию с upstream v5.0.0
 3cb5f0df test(donbaton): цикл LTE в SQLite-лаборатории идёт по одной подписке
 f6eadc93 fix(donbaton): автопродление Cashera не оформляется для Wi-Fi/LTE — как Platega и Lava
 98f4dfec Merge upstream bedolaga bot v5.0.0 into codex/upstream-5.0.0
@@ -417,8 +424,8 @@ PostgreSQL — одноразовые кластеры Homebrew `postgresql@15` 
 SSH к ядру — только обёрткой с одним ControlMaster-сокетом (`dbcore_ssh_cm.sh`). `mcp__remnawave__*` —
 чужая панель.
 
-1. **Сборка:** `git archive 3cb5f0df` → бокс; `chown -R 1000:1000` дерева; `bot-full-build.sh`
-   (`TAG_PROD=donbaton/bedolaga:u500-3cb5f0df-2026MMDD`, `TAG_TEST=…-test-…`). Нужен `python:3.14-slim`.
+1. **Сборка:** `git archive 4943e3b6` → бокс; `chown -R 1000:1000` дерева; `bot-full-build.sh`
+   (`TAG_PROD=donbaton/bedolaga:u500-4943e3b6-2026MMDD`, `TAG_TEST=…-test-…`). Нужен `python:3.14-slim`.
 2. **Тесты на ядре** — `run_tests_full.py` (одноразовый PG 15 боевой версии); ожидаемые падения —
    известные 5 класса 17.09/27.09 (боевые `DONBATON_*` в окружении раннера, нет git в образе).
 3. **Репетиция на копии боевой БД** (`pg_dump -Fc` → `postgres:15-alpine` во internal-сети, бот против
@@ -464,6 +471,8 @@ SSH к ядру — только обёрткой с одним ControlMaster-с
    получают данные (платежи; ключи подписок; `telegram_id`).
 7. **PostgreSQL 15** — поддержка до ноября 2027; апстрим дальше может начать требовать 18.
 8. **Следующее слияние снова упрётся в номера миграций** — сдвиг теперь +3.
+9. 🟡 **Слияние, где поглощается админ, теперь 403** (§15): объединять админский аккаунт с другим — только
+   с админского (он primary) или вручную; для клиентов ничего не меняется.
 
 ---
 
@@ -484,3 +493,41 @@ SSH к ядру — только обёрткой с одним ControlMaster-с
 * Живое поведение новых функций (Cashera, DPI, живое меню, антифрод) — выключены и не включались.
 * Кабинетная сторона Cashera для Wi-Fi/LTE во фронте 1.80 — бэкенд отвечает 400, как это покажет
   фронт, не смотрелось.
+
+---
+
+## 15. Патчи безопасности 01.10.2026 (по аудиту C)
+
+Источник — `local-ops/_claude/tools/donbaton-u500-20261001/security/bot-code.md` (§2.2, §2.7, §3.1, §3.2,
+§5). Каждый пункт — отдельный коммит `fix(security): …` с тестами; каждая правка по очереди снималась
+(мутация) — тесты падали. Поведение для обычных клиентов не меняется.
+
+| Коммит | Что | Где | Тесты (мутации) |
+|---|---|---|---|
+| `704e0000` | **Аккаунт администратора не поглощается слиянием** (§2.2-B). Админ = Telegram ID из `ADMIN_IDS`, почта из `ADMIN_EMAILS` или любая активная роль кабинета (`user_roles`). Токен слияния не выдаётся ни на одном пути — соцсеть (`/link/{provider}/callback`, `/link/server-complete`), Telegram (`/link/telegram`: initData/OIDC/виджет), почта (`/email/register` — до письма с кодом, `/email/merge/verify` — для кода, высланного раньше): **403** `ADMIN_MERGE_REFUSAL`. `execute_merge` перепроверяет (`MergeForbiddenError`, до любых изменений) — `/auth/merge/{token}` отвечает 403 и токен не восстанавливает. Админ поглощает обычный аккаунт — как раньше | `services/donbaton_admin_guards.py` (`admin_merge_refusal`, `has_cabinet_role`), `cabinet/routes/account_linking.py`, `cabinet/routes/auth.py`, `services/account_merge_service.py` | `tests/donbaton/test_admin_merge_guard.py` — 15 (роль — и на PG 15); 8 мутаций, падают 8/3/2/1/1/1/1/1 |
+| `990c2886` | **Аудит-лог админки без секретов** (§2.7): `redact_audit_payload` перед записью `admin_audit_log.details` — всё тело, если в пути секретная настройка (`PUT /admin/settings/{key}`, `is_secret_key`); рекурсивно поля с password/secret/token/api_key/apikey/private и имена секретных настроек; пара `{"key": <секретная>, "value"}`; `query_params`. Маска `***` | `cabinet/dependencies.py` | `tests/donbaton/test_audit_log_redaction.py` — 8 (через настоящий `require_permission`); 5 мутаций |
+| `18360d61` | **Лог неверной подписи CryptoBot** (§3.2): без `expected_raw`/`expected_reserialized`/`token_length`/`token_prefix`; `received_signature` — первые 8 символов, `body_length` | `external/cryptobot.py` | `tests/donbaton/test_cryptobot_signature_log.py` — 2 (`capture_logs`: ни одной из трёх ожидаемых подписей и их префиксов); 3 мутации |
+| `ac4f1a3c` | **Привязка автоплатежа ЮKassa — из API** (§3.1): `payment_method` (id/saved/card/title/account_number/phone) — из `get_payment_info`; нет метода в API — ничего не сохраняется; `saved=true` в теле не заставит сохранить; из тела остаётся только справочный тип, если API его не назвал. `get_payment_info` отдаёт ещё `payment_method_title/_account_number/_phone` | `services/payment/yookassa.py`, `services/yookassa_service.py` | `tests/donbaton/test_yookassa_payment_method_from_api.py` — 7 (настоящий `process_yookassa_webhook` с подменённым id); 6 мутаций; все 523 теста модулей про ЮKassa зелёные |
+| `4943e3b6` | **urllib3 2.7.0 → 2.8.0** (§5; GHSA-8988-9cw3-xx77, GHSA-gh4c-6fx4-qh6g, GHSA-vxq7-64xx-v4gw). `uv lock --upgrade-package urllib3`: дифф `uv.lock` — только блок urllib3 | `uv.lock` | `tests/donbaton/test_dependency_security_floor.py` — urllib3 ≥ 2.8.0 и pyjwt ≥ 2.15.1 по `uv.lock`; мутация «2.7.0 в lock» — падает |
+
+**Правки существующих тестов (только в §15-1):** в трёх модулях апстрима с «болванкой» БД
+(`tests/services/test_account_merge_service.py`, `tests/cabinet/test_oauth_link_conflict.py`,
+`tests/cabinet/test_email_merge_otp_flow.py`) — автозаглушка `has_cabinet_role` (болванка не отвечает
+на запрос ролей), как их же `_stub_grace_delete_guard`; проверка `ADMIN_IDS/ADMIN_EMAILS` там идёт.
+
+**Наблюдение по §15-1:** почту из `ADMIN_EMAILS` апстрим и раньше не давал привязать (свой 403 в
+`/email/register`); новый сторож закрывает случай «у админа обычная почта, а админ он по Telegram ID или
+роли».
+
+**Проверки после патчей (HEAD `4943e3b6` + этот документ):**
+
+| Проверка | Результат |
+|---|---|
+| `uv run pytest -q` (без PG, Python 3.14.7) | **10641 passed, 329 skipped, 0 failed** (exit 0) |
+| `pytest -m postgres`, PG 15.19 (локальный, одноразовый) | **314 passed, 10656 deselected, 0 failed** (exit 0) |
+| `ruff check .` / `ruff format --check .` | All checks passed / 1553 files already formatted |
+| `uv lock --check`, справочник структуры, `alembic heads` | проходит / актуален / `0134` |
+
+**Не сделано в §15** (вне задания; аудит C §8 — «после», отдельной задачей): одноразовость и короткий
+max_age initData (§2.2-A), deep-link (§2.3), правый недоверенный хоп в `get_client_ip` (§2.4), роль
+Marketer (§2.5 — решение владельца), секрет вебхука Telegram и JWT (§2.1, §2.6 — настройки на ядре).
