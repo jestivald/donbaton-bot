@@ -385,6 +385,47 @@ async def get_current_admin_user(
     )
 
 
+# Аудит-лог админки (admin_audit_log.details) читают роли с audit_log:read и он
+# уезжает в дампы БД — секреты из тел запросов туда не пишем (аудит 01.10.2026 §2.7).
+AUDIT_SECRET_MASK = '***'
+_AUDIT_SECRET_MARKERS = ('password', 'secret', 'token', 'api_key', 'apikey', 'private')
+
+
+def _is_secret_setting_name(name: object) -> bool:
+    """Имя настройки бота (UPPER_CASE), значение которой секретно."""
+    if not isinstance(name, str) or not name.isupper():
+        return False
+    from app.services.system_settings_service import BotConfigurationService
+
+    return BotConfigurationService.is_secret_key(name)
+
+
+def _is_secret_field(name: object) -> bool:
+    lowered = str(name).lower()
+    return any(marker in lowered for marker in _AUDIT_SECRET_MARKERS) or _is_secret_setting_name(name)
+
+
+def redact_audit_payload(value, *, secret: bool = False):
+    """Копия тела запроса для аудит-лога: значения секретных полей заменены маской.
+
+    Секретно поле, имя которого содержит password/secret/token/api_key/apikey/private,
+    или имя настройки, для которой ``is_secret_key``; в паре ``{"key": <секретная
+    настройка>, "value": …}`` маскируется ``value``. С ``secret=True`` маскируется всё
+    (тело ``PUT /admin/settings/{key}`` секретной настройки — ключ там в пути).
+    """
+    if isinstance(value, dict):
+        pair_secret = _is_secret_setting_name(value.get('key'))
+        return {
+            key: AUDIT_SECRET_MASK
+            if secret or _is_secret_field(key) or (pair_secret and key == 'value')
+            else redact_audit_payload(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_audit_payload(item, secret=secret) for item in value]
+    return AUDIT_SECRET_MASK if secret else value
+
+
 def require_permission(*permissions: str):
     """
     FastAPI dependency factory for RBAC permission checks.
@@ -455,14 +496,16 @@ def require_permission(*permissions: str):
         }
         query_params = dict(request.query_params)
         if query_params:
-            details['query_params'] = query_params
+            details['query_params'] = redact_audit_payload(query_params)
         if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
             try:
                 body = await request.body()
                 if body:
                     import json
 
-                    details['request_body'] = json.loads(body)
+                    path_params = getattr(request, 'path_params', None) or {}
+                    secret_path = any(_is_secret_setting_name(param) for param in path_params.values())
+                    details['request_body'] = redact_audit_payload(json.loads(body), secret=secret_path)
             except Exception:
                 pass
 
