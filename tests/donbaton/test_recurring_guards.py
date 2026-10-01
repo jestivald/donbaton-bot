@@ -27,14 +27,23 @@ PROVIDERS = [
         'create_lava_recurrent_subscription',
         '_LavaRecurrentAgent',
     ),
+    (
+        'cashera',
+        'purchase_tariff_with_cashera_recurring',
+        'enable_cashera_recurring',
+        'CasheraPaymentMixin',
+        'create_cashera_recurrent_subscription',
+        '_CasheraRecurrentAgent',
+    ),
 ]
 
 
 @pytest.fixture(autouse=True)
 def recurrent_enabled(monkeypatch):
-    # The managed guard must work even when both provider integrations are on.
+    # The managed guard must work even when every provider integration is on.
     monkeypatch.setattr(type(settings), 'is_platega_recurrent_enabled', lambda self: True)
     monkeypatch.setattr(type(settings), 'is_lava_recurrent_enabled', lambda self: True)
+    monkeypatch.setattr(type(settings), 'is_cashera_recurrent_enabled', lambda self: True)
 
 
 @pytest.mark.asyncio
@@ -119,7 +128,11 @@ async def test_legacy_enable_keeps_existing_provider_contract(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     'callback_prefix,handler_name',
-    [('tariff_sbp', 'purchase_tariff_with_sbp'), ('tariff_lava', 'purchase_tariff_with_lava')],
+    [
+        ('tariff_sbp', 'purchase_tariff_with_sbp'),
+        ('tariff_lava', 'purchase_tariff_with_lava'),
+        ('tariff_cashera', 'purchase_tariff_with_cashera'),
+    ],
 )
 async def test_old_telegram_callback_gets_clear_rejection(monkeypatch, callback_prefix, handler_name):
     from app.handlers.subscription import tariff_purchase
@@ -134,7 +147,7 @@ async def test_old_telegram_callback_gets_clear_rejection(monkeypatch, callback_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('provider', ['platega', 'lava'])
+@pytest.mark.parametrize('provider', ['platega', 'lava', 'cashera'])
 async def test_raw_cabinet_purchase_rejects_disabled_managed_sales(monkeypatch, provider):
     module = import_module(f'app.cabinet.routes.subscription_modules.{provider}_recurrent')
     monkeypatch.setattr(settings, 'DONBATON_LTE_ENABLED', False)

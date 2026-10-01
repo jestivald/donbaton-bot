@@ -117,6 +117,10 @@ async def _cashera_recurring_rows(db: AsyncSession, subscription, texts) -> list
                 )
             ]
         ]
+    # Wi-Fi / Wi-Fi + LTE: новую внешнюю автооплату не предлагаем (как СБП в _sbp_autopay_rows),
+    # живую привязку выше по-прежнему можно отключить.
+    if _managed_subscription(subscription):
+        return []
     if settings.is_cashera_recurrent_enabled() and not getattr(subscription, 'is_trial', False):
         return [
             [
@@ -875,6 +879,10 @@ async def handle_cashera_recurring_enable(
         await db.refresh(subscription, ['tariff'])
     except Exception as refresh_error:
         logger.warning('Не удалось подгрузить тариф подписки', subscription_id=subscription.id, error=refresh_error)
+
+    if _managed_subscription(subscription):
+        await callback.answer(_managed_recurring_unavailable(texts), show_alert=True)
+        return
 
     from app.services.payment.cashera import enable_cashera_recurring
 

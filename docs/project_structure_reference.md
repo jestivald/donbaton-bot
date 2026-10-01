@@ -4025,6 +4025,9 @@
 - `tests/donbaton/test_recurring_ui.py` — Python-модуль
   Классы: нет
   Функции: `callbacks`, `recurring_enabled`, `test_managed_purchase_surfaces_exclude_external_authorization`, `test_managed_direct_balance_topup_remains_available_without_recurring`, `test_legacy_default_preserves_both_recurring_providers`, `test_all_checkout_and_cart_restore_calls_supply_explicit_category` — An omitted call-site argument silently falls back to legacy provider buttons., `handler_context`, `test_managed_autopay_menu_has_no_sbp_entry_without_existing_binding`, `test_existing_managed_binding_can_be_cancelled_even_if_feature_disabled`, `test_direct_managed_menu_does_not_offer_creation_but_keeps_existing_cancel`, `test_forged_managed_enable_callback_never_reaches_payment_service`, `test_enable_explains_business_rejection_and_keeps_provider_failure_generic`
+- `tests/donbaton/test_recurring_ui_cashera.py` — Python-модуль
+  Классы: нет
+  Функции: `callbacks`, `cashera_enabled`, `test_managed_purchase_surfaces_have_no_cashera_button`, `test_legacy_confirm_keeps_cashera_button`, `handler_context`, `test_managed_autopay_menu_has_no_cashera_enable`, `test_existing_managed_cashera_binding_stays_cancellable`, `test_legacy_autopay_menu_keeps_cashera_enable`, `test_forged_managed_cashera_enable_never_reaches_payment_service`
 - `tests/donbaton/test_referral_link_handoff.py` — Python-модуль
   Классы: `TestExtractReferralCode` (3 методов), `TestDeepLinkTokenCarriesReferral` (3 методов), `TestWebAuthDeadEnd` (4 методов)
   Функции: нет

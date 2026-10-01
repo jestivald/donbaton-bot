@@ -15,8 +15,20 @@ from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
 from app.services import cashera_recurring_cancel as cashera_cancel
 from app.services.cashera_service import cashera_service, normalize_payment_url
+from app.services.donbaton_catalog import network_category
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
+
+
+def _ensure_legacy_recurring(tariff: Any, subscription: Any = None) -> None:
+    # ДонБатон: как у Platega и Lava — независимо от флага сетевых продаж; старые кнопки,
+    # прямые вызовы API кабинета и миксина тоже не должны оформить внешнюю автооплату
+    # тарифа Wi-Fi / Wi-Fi + LTE (их продление идёт через баланс и леджер LTE).
+    if network_category(tariff) or network_category(subscription):
+        raise ValueError(
+            'Тарифы Wi-Fi и Wi-Fi + LTE оплачиваются с баланса. '
+            'Пополните баланс и подтвердите покупку; внешняя автооплата пока недоступна.'
+        )
 
 
 # Логгеры платёжных модулей (app.payments) не доходят до админ-чата — возвраты и
@@ -697,6 +709,8 @@ class CasheraPaymentMixin:
         рублей (Cashera принимает только целые рубли). Первое подтверждение по
         ``redirect_url`` — до него запись PENDING.
         """
+        _ensure_legacy_recurring(tariff, subscription)
+
         from app.database.crud import cashera_subscription as sub_crud
         from app.services import cashera_recurrent as cr
         from app.services.autopay_period import resolve_autopay_period_candidate
@@ -1115,6 +1129,7 @@ async def enable_cashera_recurring(
 
     Пробрасывает ValueError (нет цены и т. п.), чтобы UI показал причину. Гейт на фичу.
     """
+    _ensure_legacy_recurring(tariff, subscription)
     if not settings.is_cashera_recurrent_enabled():
         raise RuntimeError('Cashera recurrent is disabled')
     if getattr(subscription, 'is_trial', False):
@@ -1131,6 +1146,7 @@ async def purchase_tariff_with_cashera_recurring(db: AsyncSession, *, user: Any,
     первое списание её продлит и создаст panel-юзера. Отказы (ValueError): триал,
     DISABLED/PENDING, в single-режиме — подписка другого тарифа.
     """
+    _ensure_legacy_recurring(tariff)
     if not settings.is_cashera_recurrent_enabled():
         raise RuntimeError('Cashera recurrent is disabled')
 
