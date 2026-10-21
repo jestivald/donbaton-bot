@@ -1337,6 +1337,13 @@ class Settings(BaseSettings):
     # `none` (а также off/no/false/disabled/-) — rich-меню БЕЗ логотипа: пустая
     # строка занята под авто-режим, поэтому при своём LOGO_FILE шапку иначе не убрать.
     MAIN_MENU_RICH_LOGO_URL: str = ''
+    # ДонБатон (патч №9 ВнеПлены): премиум-эмодзи во ВСЕХ сообщениях бота — пары
+    # «эмодзи=custom_emoji_id» через запятую. Меняются эмодзи в HTML-текстах, подписях и
+    # rich-сообщениях (вне <a>, <code>, <pre> и готовых <tg-emoji>); у inline-кнопок ведущий
+    # эмодзи становится иконкой, если PREMIUM_EMOJI_BUTTONS. Пусто — без замены.
+    # Меняется из админки без рестарта (app/middlewares/premium_emoji.py).
+    PREMIUM_EMOJI_MAP: str = ''
+    PREMIUM_EMOJI_BUTTONS: bool = True
 
     # Лог действий пользователя (нажатия кнопок в боте + мутационные запросы в
     # кабинете) в button_click_logs — источник таймлайна «Активность» в карточке

@@ -436,6 +436,8 @@ class BotConfigurationService:
         'MAIN_MENU_RICH_ENABLED': 'INTERFACE',
         'MAIN_MENU_RICH_EFFECT_ID': 'INTERFACE',
         'MAIN_MENU_RICH_LOGO_URL': 'INTERFACE',
+        'PREMIUM_EMOJI_MAP': 'INTERFACE',
+        'PREMIUM_EMOJI_BUTTONS': 'INTERFACE',
         'MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE': 'INTERFACE',
         'MAIN_MENU_RICH_INLINE_BUTTONS': 'INTERFACE',
         'MAIN_MENU_LIVE_ENABLED': 'INTERFACE',
@@ -1059,6 +1061,29 @@ class BotConfigurationService:
                 'бот один раз повторит отправку без логотипа и отключит его до рестарта.'
             ),
             'dependencies': 'MAIN_MENU_RICH_ENABLED, WEBHOOK_URL, LOGO_FILE',
+        },
+        'PREMIUM_EMOJI_MAP': {
+            'description': (
+                'Замена обычных эмодзи на премиум во всех сообщениях бота: уведомления, ответы, рассылки, '
+                'rich-сообщения; у inline-кнопок ведущий эмодзи становится иконкой. Ссылки, код и готовые '
+                'премиум-эмодзи не меняются.'
+            ),
+            'format': 'Пары «эмодзи=custom_emoji_id» через запятую или пустая строка (выключено).',
+            'example': '✅=4956530750804460107,💳=6030410254276106984',
+            'warning': (
+                'Работает, пока у владельца бота есть Telegram Premium; иначе клиент видит обычный эмодзи. '
+                'Если Telegram отвергнет сообщение со значками, бот отправит его без них.'
+            ),
+            'dependencies': 'PREMIUM_EMOJI_BUTTONS',
+        },
+        'PREMIUM_EMOJI_BUTTONS': {
+            'description': (
+                'Иконки inline-кнопок по карте PREMIUM_EMOJI_MAP: ведущий эмодзи текста кнопки уходит в '
+                'icon_custom_emoji_id. Кнопки с уже заданной иконкой (стили кнопок меню) не меняются.'
+            ),
+            'format': 'true / false.',
+            'example': 'true',
+            'dependencies': 'PREMIUM_EMOJI_MAP',
         },
         'ADMIN_NOTIFICATIONS_RICH_ENABLED': {
             'description': (

@@ -1438,6 +1438,9 @@
 - `app/middlewares/maintenance.py` — Python-модуль
   Классы: `MaintenanceMiddleware` (1 методов)
   Функции: нет
+- `app/middlewares/premium_emoji.py` — Python-модуль
+  Классы: `PremiumEmojiMiddleware` (1 методов)
+  Функции: `apply_premium_emoji_html` — Эмодзи из карты в тексте между тегами → <tg-emoji>; запасной эмодзи — внутри тега., `apply_premium_emoji_markup` — Копия inline-клавиатуры с иконками вместо ведущих эмодзи; исходная — если менять нечего.
 - `app/middlewares/stale_callback_answer.py` — Python-модуль
   Классы: `StaleCallbackAnswerMiddleware` (1 методов)
   Функции: нет
@@ -4510,6 +4513,9 @@
 - `tests/middlewares/test_maintenance_expected_errors.py` — Python-модуль
   Классы: нет
   Функции: `test_stale_callback_logged_quietly`, `test_blocked_bot_logged_quietly`, `test_unexpected_bad_request_stays_error`
+- `tests/middlewares/test_premium_emoji.py` — Python-модуль
+  Классы: нет
+  Функции: `emoji_map`, `bot`, `tg`, `test_map_skips_broken_pairs_and_strips_vs16`, `test_payment_notification_gets_premium_emoji`, `test_vs16_stays_in_fallback_emoji`, `test_links_code_and_ready_tg_emoji_are_left_alone`, `test_nested_tags_inside_link`, `test_rich_self_closing_tags_and_rich_buttons`, `test_zwj_sequences_and_skin_tones_are_left_alone`, `test_replacements_are_capped_per_message`, `test_text_without_mapped_emoji_is_unchanged`, `test_buttons_get_icons_from_leading_emoji`, `test_markup_without_changes_is_the_same_object`, `test_send_message_with_default_html_parse_mode`, `test_plain_text_entities_and_markdown_are_left_alone`, `test_edit_text_and_photo_caption`, `test_callback_answer_is_left_alone`, `test_send_rich_message`, `test_buttons_switch_off_separately`, `test_empty_map_switches_everything_off`, `test_middleware_sends_request_with_icons`, `test_middleware_retries_without_icons_when_telegram_rejects_them`, `test_middleware_does_not_retry_other_errors`, `test_middleware_passes_untouched_request_through`, `test_create_bot_registers_middleware`
 - `tests/middlewares/test_rich_error_report.py` — Python-модуль
   Классы: нет
   Функции: `test_rich_error_report_structure`, `test_rich_error_report_none_when_oversized`, `test_send_error_uses_rich_and_clears_buffer`, `test_send_error_falls_back_to_document_when_rich_unavailable`, `test_rich_error_report_renders_a_plain_note_without_code_block` — Запись без трейса (например, «сообщение некуда доставить») — обычный абзац,
