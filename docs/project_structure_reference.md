@@ -2728,6 +2728,7 @@
 - `docs/handoffs/handoff-2026-09-25-upstream-4.15.0.md` — файл
 - `docs/handoffs/handoff-2026-09-28-lte-gate-off.md` — файл
 - `docs/handoffs/handoff-2026-10-01-upstream-5.0.0.md` — файл
+- `docs/handoffs/handoff-2026-10-21-premium-emoji.md` — файл
 
 ## migrations
 
