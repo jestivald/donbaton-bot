@@ -231,6 +231,17 @@ class Settings(BaseSettings):
     SUPPORT_TICKET_SLA_MINUTES: int = 60
     SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS: int = 300
     SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES: int = 30
+    # ДонБатон 08.11 (решение владельца): одна сводка вместо сообщения на каждый тикет, тихие часы, утренняя сводка с сутью от ИИ,
+    # автозакрытие отвеченных, напоминание клиенту, ночной автоответ, закрытие клиентом и ИИ. Время — по TIMEZONE.
+    SUPPORT_TICKET_SLA_DIGEST_ENABLED: bool = True
+    SUPPORT_TICKET_SLA_DIGEST_INTERVAL_MINUTES: int = 180
+    SUPPORT_QUIET_HOURS: str = '23:00-09:00'
+    SUPPORT_MORNING_DIGEST_ENABLED: bool = True
+    SUPPORT_TICKET_AUTOCLOSE_HOURS: int = 72
+    SUPPORT_TICKET_CLIENT_REMINDER_HOURS: int = 24
+    SUPPORT_NIGHT_AUTOREPLY_ENABLED: bool = True
+    SUPPORT_CLIENT_CAN_CLOSE_TICKETS: bool = True
+    AI_SUPPORT_CAN_CLOSE_TICKETS: bool = True
     # Настройки поддержки из админки бота и кабинета. Хранятся в базе (system_settings), а не в файле.
     SUPPORT_ADMIN_TICKET_NOTIFICATIONS_ENABLED: bool = True
     SUPPORT_USER_TICKET_NOTIFICATIONS_ENABLED: bool = True
