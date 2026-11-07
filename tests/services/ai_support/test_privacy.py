@@ -123,3 +123,17 @@ def test_plain_text_and_sentence_limit():
 def test_subscription_domain_with_trailing_dot_or_bare_host(url):
     assert redact(url) == '[ссылка подписки]'
     assert guard(url) is None
+
+
+def test_url_paths_and_private_telegram_links_are_redacted():
+    text = redact(
+        'сброс https://example.org/reset/abcdefghijklmnop0123456789 и t.me/private_user, бот t.me/donbatonvpn_bot'
+    )
+    assert 'abcdefghijklmnop0123456789' not in text
+    assert 'private_user' not in text
+    assert 't.me/donbatonvpn_bot' in text
+
+
+def test_guard_rejects_percent_encoded_internal_host():
+    assert guard('Откройте https://admin%2edonbaton.tech/ в браузере') is None
+    assert guard('Откройте https://admin.donbaton.tech/') is None

@@ -3224,7 +3224,7 @@
   Функции: `evaluate`, `main`
 - `scripts/ai_support_seed_kb.py` — Python-модуль
   Классы: нет
-  Функции: `inline`, `to_html`, `parse_markdown`, `seed`, `main`
+  Функции: `inline`, `to_html` — Абзацы и списки: «1.» — нумерованный (<ol>), «-»/«*» — маркированный (<ul>)., `parse_markdown`, `seed`, `main`
 - `scripts/backfill_remnawave_ids.py` — Python-модуль
   Классы: нет
   Функции: `main`
@@ -4554,7 +4554,7 @@
 
 - `tests/handlers/ai_support/test_chat.py` — Python-модуль
   Классы: `HandoffDb` (5 методов)
-  Функции: `user`, `message`, `contract`, `test_disabled_preserves_original_unknown_response`, `test_unimplemented_settings_do_not_break_fallback`, `test_private_text_and_state_filters`, `test_answer_escaped_disclosed_and_remembered`, `test_history_excludes_duplicate_disclosure`, `test_redis_failure_uses_empty_history`, `test_unavailable_outcomes_offer_support`, `test_model_exception_degrades_safely`, `test_cabinet_mode_links_to_existing_support`, `test_handoff_outcome_calls_ticket_transfer`, `test_handoff_one_ticket_or_contact`, `test_operator_callback_checks_owner`, `test_feedback_ownership_and_operator_offer`, `test_admin_status_masks_secret_and_shows_stats`
+  Функции: `user`, `message`, `contract`, `test_disabled_preserves_original_unknown_response`, `test_unimplemented_settings_do_not_break_fallback`, `test_private_text_and_state_filters`, `test_answer_escaped_disclosed_and_remembered`, `test_history_excludes_duplicate_disclosure`, `test_redis_failure_uses_empty_history`, `test_unavailable_outcomes_offer_support`, `test_model_exception_degrades_safely`, `test_cabinet_mode_links_to_existing_support`, `test_handoff_outcome_calls_ticket_transfer`, `test_handoff_one_ticket_or_contact`, `test_operator_callback_checks_owner`, `test_feedback_ownership_and_operator_offer`, `test_admin_status_masks_secret_and_shows_stats`, `test_handler_returns_before_model_finishes` — Хендлер не ждёт модель: транзакция AuthMiddleware завершается, соединение БД свободно., `test_inflight_limit_degrades_to_support`, `test_handoff_appends_to_active_ticket_once`
 
 ### tests/integration
 
@@ -5286,19 +5286,19 @@
   Функции: `subscription`, `test_account_overview_has_only_allowed_fields`, `test_devices_uses_existing_api_and_discards_hwid`, `test_account_error_and_permission_gates`
 - `tests/services/ai_support/test_knowledge_settings.py` — Python-модуль
   Классы: нет
-  Функции: `page`, `test_kb_selection_order_language_and_html`, `test_cache_reload_and_db_fallback`, `test_settings_category_masks_and_textarea`, `test_normalization_and_prompt_order`, `test_prompt_merges_consecutive_roles_and_keeps_owner_contacts`
+  Функции: `page`, `test_kb_selection_order_language_and_html`, `test_cache_reload_and_db_fallback`, `test_settings_category_masks_and_textarea`, `test_normalization_and_prompt_order`, `test_prompt_merges_consecutive_roles_and_keeps_owner_contacts`, `test_html_text_numbers_ordered_lists`, `test_long_question_keeps_latest_clarification`
 - `tests/services/ai_support/test_migration.py` — Python-модуль
   Классы: нет
   Функции: `migration`, `run`, `snapshot`, `test_sqlite_schema_parity_unique_and_downgrade`, `test_postgres_upgrade_parity_downgrade`
 - `tests/services/ai_support/test_privacy.py` — Python-модуль
   Классы: нет
-  Функции: `test_redaction`, `test_connection_schemes`, `test_public_text_and_urls_unchanged`, `test_filtered`, `test_allowed_output_links`, `test_plain_text_and_sentence_limit`, `test_subscription_domain_with_trailing_dot_or_bare_host`
+  Функции: `test_redaction`, `test_connection_schemes`, `test_public_text_and_urls_unchanged`, `test_filtered`, `test_allowed_output_links`, `test_plain_text_and_sentence_limit`, `test_subscription_domain_with_trailing_dot_or_bare_host`, `test_url_paths_and_private_telegram_links_are_redacted`, `test_guard_rejects_percent_encoded_internal_host`
 - `tests/services/ai_support/test_provider.py` — Python-модуль
   Классы: нет
   Функции: `test_body_and_usage`, `test_retries`, `test_network_retry_and_retry_after_deadline`, `test_deadline`, `test_empty_truncated`, `test_peak_and_cost`
 - `tests/services/ai_support/test_scripts_lifecycle.py` — Python-модуль
   Классы: нет
-  Функции: `test_markdown_to_hidden_faq`, `test_lifecycle_idempotent_and_closes`, `test_eval_restores_model_and_disables_account_tools`
+  Функции: `test_markdown_to_hidden_faq`, `test_lifecycle_idempotent_and_closes`, `test_eval_restores_model_and_disables_account_tools`, `test_seed_markdown_keeps_numbered_steps`
 - `tests/services/ai_support/test_service.py` — Python-модуль
   Классы: нет
   Функции: `kb`, `response`, `call`, `ctx`, `test_answer_journal_feedback_stats_and_retention`, `test_duplicate_and_human_request`, `test_human_detector`, `test_human_false_positives`, `test_handoff_model_and_thinking_roundtrip`, `test_tool_round_limit`, `test_account_tools_only_context_user`, `test_limits_budget_and_concurrency`, `test_error_alerts_and_guard`, `test_disabled_and_db_errors`, `test_log_texts_off`, `test_handoff_empty_final_uses_template`, `test_total_deadline_including_tools`, `test_global_concurrency_four`, `test_budget_cache_invalidates_after_write`, `test_journal_failure_blocks_publish`, `test_total_deadline_bounds_alert_and_finalization`
@@ -5307,7 +5307,7 @@
 
 - `tests/services/ai_support_integ/test_drafts_and_hooks.py` — Python-модуль
   Классы: `CreateDb` (4 методов)
-  Функции: `request_record`, `draft`, `test_draft_rights_and_idempotency`, `test_invalid_draft_cannot_be_published`, `test_stale_draft_not_attached`, `test_crud_created_event_contains_first_message_id`, `test_rest_created_payload_and_registration_order`, `test_mobile_ws_enqueues_after_commit_only_for_customer`, `test_notice_escapes_inserts_and_uses_existing_ticket_delivery`, `test_notice_respects_ai_toggle`, `test_drafts_and_core_alerts_use_support_toggles_even_if_copies_disabled`
+  Функции: `request_record`, `draft`, `test_draft_rights_and_idempotency`, `test_invalid_draft_cannot_be_published`, `test_stale_draft_not_attached`, `test_crud_created_event_contains_first_message_id`, `test_rest_created_payload_and_registration_order`, `test_mobile_ws_enqueues_after_commit_only_for_customer`, `test_notice_escapes_inserts_and_uses_existing_ticket_delivery`, `test_notice_respects_ai_toggle`, `test_drafts_and_core_alerts_use_support_toggles_even_if_copies_disabled`, `test_handoff_draft_has_no_send_button`
 - `tests/services/ai_support_integ/test_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_concurrent_publish_rechecks_trigger_under_row_lock`, `test_chat_handoff_survives_restart_and_creates_one_ticket`
@@ -5316,7 +5316,7 @@
   Функции: `ticket`, `delivery`, `test_publish_status_and_exactly_one_event`, `test_publish_ai_rechecks_before_commit`, `test_ai_author_is_existing_admin_account` — Синтетического автора не создаём: автор ответа ИИ — найденный в базе админ из ADMIN_IDS., `test_ai_reply_skipped_without_admin_author`, `test_human_draft_is_audited_as_human`, `test_delivery_all_channels_with_independent_toggles`, `test_delivery_failure_does_not_skip_cabinet`
 - `tests/services/ai_support_integ/test_ticket_worker.py` — Python-модуль
   Классы: `SnapshotDb` (2 методов)
-  Функции: `msg`, `ticket`, `contract`, `loaded`, `test_auto_answer_once_and_no_recursive_admin_event`, `test_event_listener_returns_before_model`, `test_auto_guards_never_invoke_model`, `test_real_snapshot_guards`, `test_handoff_publishes_open_then_marks_and_notifies`, `test_non_answers_never_publish`, `test_generation_loses_race_and_does_not_publish`, `test_draft_helps_after_human_reply_and_never_sends_to_client`, `test_draft_limit_ten`, `test_question_includes_all_customer_messages_since_support`, `test_queue_full_does_not_raise`
+  Функции: `msg`, `ticket`, `contract`, `loaded`, `test_auto_answer_once_and_no_recursive_admin_event`, `test_event_listener_returns_before_model`, `test_auto_guards_never_invoke_model`, `test_real_snapshot_guards`, `test_handoff_publishes_open_then_marks_and_notifies`, `test_non_answers_never_publish`, `test_generation_loses_race_and_does_not_publish`, `test_draft_helps_after_human_reply_and_never_sends_to_client`, `test_draft_limit_ten`, `test_question_includes_all_customer_messages_since_support`, `test_queue_full_does_not_raise`, `test_stale_handoff_still_notifies_admins_without_client_message` — Новое сообщение клиента во время генерации: решение «передать» выполняется для админов, клиенту не пишем., `test_stale_answer_is_dropped_silently`, `test_handoff_reply_has_no_operator_footer`, `test_chat_handoff_messages_are_not_answered_by_ai`
 
 #### tests/services/dpichecker
 

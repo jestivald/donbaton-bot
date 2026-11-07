@@ -60,7 +60,10 @@ def messages(question, history, ctx, knowledge, config):
     for turn in history[-count:] if count else []:
         if turn.role in ('user', 'assistant') and (turn.text or '').strip():
             turns.append([turn.role, redact(turn.text)[:1000]])
-    question_text = redact(question)[:2000]
+    question_text = redact(question)
+    if len(question_text) > 2000:
+        # Склейка нескольких сообщений: последние уточнения важнее середины — оставляем начало и хвост.
+        question_text = question_text[:500] + '\n…\n' + question_text[-1450:]
     if ctx.ticket_title:
         question_text = 'Тема обращения: ' + redact(ctx.ticket_title)[:300] + '\n\n' + question_text
     turns.append(['user', question_text])

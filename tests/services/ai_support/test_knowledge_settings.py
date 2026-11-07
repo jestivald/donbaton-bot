@@ -132,3 +132,13 @@ def test_prompt_merges_consecutive_roles_and_keeps_owner_contacts(monkeypatch):
 def test_html_text_numbers_ordered_lists():
     text = knowledge.html_text('<p>Шаги:</p><ol><li>Раз</li><li>Два</li></ol><ul><li>пункт</li></ul>')
     assert '1. Раз' in text and '2. Два' in text and '- пункт' in text
+
+
+def test_long_question_keeps_latest_clarification():
+    config = settings_view.snapshot()
+    ctx = api.AiRequestContext(api.AiChannel.TICKET, 1)
+    kb = knowledge.build([page('ai-test')], 'ru')
+    question = 'Длинное описание. ' * 200 + 'Уточняю: проблема на Android, на iPhone работает'
+    messages = prompts.messages(question, [], ctx, kb, config)
+    assert messages[-1]['content'].endswith('Уточняю: проблема на Android, на iPhone работает')
+    assert len(messages[-1]['content']) < 2100

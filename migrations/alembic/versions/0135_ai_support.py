@@ -51,6 +51,7 @@ def upgrade() -> None:
         sa.Column('prompt_version', sa.String(16), nullable=False, server_default=''),
         sa.Column('feedback', sa.String(16), nullable=True),
         sa.Column('feedback_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('handoff_done_at', sa.DateTime(timezone=True), nullable=True),
     )
     for name in ('created_at', 'user_id', 'ticket_id'):
         op.create_index(f'ix_ai_support_requests_{name}', 'ai_support_requests', [name])

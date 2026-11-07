@@ -237,3 +237,52 @@ async def test_queue_full_does_not_raise():
     service._queue = asyncio.Queue(maxsize=1)
     assert service.enqueue(1, 1)
     assert not service.enqueue(2, 2)
+
+
+async def test_stale_handoff_still_notifies_admins_without_client_message(monkeypatch, ticket):
+    """Новое сообщение клиента во время генерации: решение «передать» выполняется для админов, клиенту не пишем."""
+    monkeypatch.setattr(
+        api,
+        'answer',
+        AsyncMock(
+            return_value=api.AiAnswer(
+                api.AiOutcome.HANDOFF, 'Передаю', handoff_reason=api.HandoffReason.REFUND, request_id=21
+            )
+        ),
+    )
+    snapshot = AsyncMock(side_effect=[(ticket, ticket.messages), None])
+    monkeypatch.setattr(worker, 'load_conversation', snapshot)
+    monkeypatch.setattr(worker, '_ticket_open', AsyncMock(return_value=True))
+    await worker.AiTicketService().process(worker.TicketJob(3, 10))
+    worker.publish_support_reply.assert_not_awaited()
+    api.mark_handoff_done.assert_awaited_once_with(21, 3)
+    worker.notify_ticket_answer.assert_awaited_once()
+
+
+async def test_stale_answer_is_dropped_silently(monkeypatch, ticket):
+    snapshot = AsyncMock(side_effect=[(ticket, ticket.messages), None])
+    monkeypatch.setattr(worker, 'load_conversation', snapshot)
+    monkeypatch.setattr(worker, '_ticket_open', AsyncMock(return_value=True))
+    await worker.AiTicketService().process(worker.TicketJob(3, 10))
+    worker.publish_support_reply.assert_not_awaited()
+    api.mark_handoff_done.assert_not_awaited()
+    worker.notify_ticket_answer.assert_not_awaited()
+
+
+async def test_handoff_reply_has_no_operator_footer(loaded, monkeypatch):
+    monkeypatch.setattr(
+        api,
+        'answer',
+        AsyncMock(return_value=api.AiAnswer(api.AiOutcome.HANDOFF, 'Передаю оператору', request_id=22)),
+    )
+    await worker.AiTicketService().process(worker.TicketJob(3, 10))
+    kwargs = worker.publish_support_reply.call_args.kwargs
+    assert kwargs['mark_answered'] is False
+    assert 'Позовите оператора' not in kwargs['text']
+
+
+async def test_chat_handoff_messages_are_not_answered_by_ai(monkeypatch, ticket):
+    ticket.messages = [msg(9, 'Обычный вопрос'), msg(10, 'Обращение из чата ИИ №5\n\nКлиент: оператор')]
+    monkeypatch.setattr(worker, 'load_conversation', AsyncMock(return_value=(ticket, ticket.messages)))
+    await worker.AiTicketService().process(worker.TicketJob(3, 10))
+    api.answer.assert_not_awaited()

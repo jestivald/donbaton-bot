@@ -42,7 +42,11 @@ def private_url(value: str) -> bool:
     try:
         parts = urlsplit(value if '://' in value else 'https://' + value)
         host = unquote(parts.hostname or '').lower().rstrip('.')
-        if host == 'sub.donbaton.tech' or host == 'donbaton.xyz' or host.endswith('.donbaton.xyz'):
+        if (
+            host in ('sub.donbaton.tech', 'admin.donbaton.tech')
+            or host == 'donbaton.xyz'
+            or host.endswith('.donbaton.xyz')
+        ):
             return True
         if host == 'lk.donbaton.tech':
             # Корень и обычные разделы кабинета публичны. Произвольный путь или query — нет.
@@ -127,4 +131,18 @@ def redact_url(value: str) -> str:
         return '[токен]'
     if not public_app and (TOKEN_RE.search(query) or re.search(r'(?:^|&)id=\d{7,}', query)):
         return '[токен]'
+    host = (parts.hostname or '').lower()
+    path = unquote(parts.path or '')
+    if host in ('t.me', 'telegram.me', 'www.t.me') and path.strip('/').split('/')[0].lower() not in PUBLIC_TG:
+        return '[ник]'
+    # Сегмент-секрет: длинный, без дефисов (не «читаемый» слаг статьи), и с буквами, и с цифрами.
+    for segment in path.split('/'):
+        if len(segment) >= 20 and '-' not in segment and re.search(r'\d', segment) and re.search(r'[A-Za-z]', segment):
+            return '[токен]'
+    if re.search(r'(?<![\w-])\d{7,}(?![\w-])', path):
+        return '[токен]'
     return value
+
+
+# Публичные Telegram-адреса ДонБатона — не персональные данные.
+PUBLIC_TG = {'donbatonvpn_bot', 'batonsupport', ''}

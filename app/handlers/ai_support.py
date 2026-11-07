@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import html
 from collections import OrderedDict
+from datetime import UTC, datetime
 from time import monotonic
 
 import structlog
@@ -12,11 +13,11 @@ from aiogram.filters import StateFilter
 from sqlalchemy import select, text as sql_text
 
 from app.config import settings
-from app.database.crud.ticket import TicketCRUD
+from app.database.crud.ticket import TicketCRUD, TicketMessageCRUD
 from app.database.database import AsyncSessionLocal
 from app.database.models import Ticket, TicketMessage, User
 from app.handlers.common import handle_unknown_message
-from app.handlers.tickets import notify_admins_about_new_ticket
+from app.handlers.tickets import notify_admins_about_new_ticket, notify_admins_about_ticket_reply
 from app.localization.texts import get_texts
 from app.services.ai_support import api
 from app.services.support_settings_service import SupportSettingsService
@@ -126,6 +127,13 @@ async def _unavailable(message: types.Message, language: str) -> None:
     )
 
 
+# Ответы ИИ ждут модель до AI_SUPPORT_TIMEOUT_SECONDS. Хендлер не должен ждать её сам: AuthMiddleware держит
+# транзакцию (соединение пула БД) до конца хендлера, и всплеск вопросов при сбое исчерпал бы пул — встали бы
+# меню и платежи. Поэтому генерация — в фоновой задаче, а одновременно ждущих ответов не больше MAX_INFLIGHT.
+MAX_INFLIGHT = 12
+_inflight: set[asyncio.Task] = set()
+
+
 async def handle_ai_message(message: types.Message, db_user: User | None = None) -> None:
     language = db_user.language if db_user else 'ru'
     try:
@@ -135,68 +143,122 @@ async def handle_ai_message(message: types.Message, db_user: User | None = None)
     if not enabled or db_user is None:
         await handle_unknown_message(message, db_user)
         return
-    async with _chat_locks[db_user.id % len(_chat_locks)]:
-        typing = asyncio.create_task(_typing(message))
-        try:
-            history = await _read_history(db_user.id)
-            result = await api.answer(
-                message.text, history, api.AiRequestContext(api.AiChannel.BOT_CHAT, db_user.id, language=language)
-            )
-        except Exception:
-            logger.exception('Сбой ИИ в личном чате', user_id=db_user.id)
+    if len(_inflight) >= MAX_INFLIGHT:
+        await _unavailable(message, language)
+        return
+    task = asyncio.create_task(_process_chat(message, db_user.id, language), name=f'ai-chat-{db_user.id}')
+    _inflight.add(task)
+    task.add_done_callback(_inflight.discard)
+
+
+async def _process_chat(message: types.Message, user_id: int, language: str) -> None:
+    try:
+        async with _chat_locks[user_id % len(_chat_locks)]:
+            await _answer_chat(message, user_id, language)
+    except Exception:
+        logger.exception('Сбой ИИ в личном чате', user_id=user_id)
+        with contextlib.suppress(Exception):
             await _unavailable(message, language)
-            return
-        finally:
-            typing.cancel()
-            await asyncio.gather(typing, return_exceptions=True)
-        turns = [*history, api.ChatTurn('user', message.text)]
-        if result.reply_text and result.outcome in {api.AiOutcome.ANSWERED, api.AiOutcome.HANDOFF}:
-            turns.append(api.ChatTurn('assistant', result.reply_text))
-        if result.request_id is not None:
-            await _remember(result.request_id, db_user.id, turns)
-        if result.outcome == api.AiOutcome.HANDOFF and result.request_id is not None:
-            await handoff_to_operator(
-                message, db_user, result.request_id, turns, result.handoff_reason, explanation=result.reply_text
+
+
+async def _answer_chat(message: types.Message, user_id: int, language: str) -> None:
+    typing = asyncio.create_task(_typing(message))
+    try:
+        history = await _read_history(user_id)
+        result = await api.answer(
+            message.text, history, api.AiRequestContext(api.AiChannel.BOT_CHAT, user_id, language=language)
+        )
+    finally:
+        typing.cancel()
+        await asyncio.gather(typing, return_exceptions=True)
+    turns = [*history, api.ChatTurn('user', message.text)]
+    if result.reply_text and result.outcome in {api.AiOutcome.ANSWERED, api.AiOutcome.HANDOFF}:
+        turns.append(api.ChatTurn('assistant', result.reply_text))
+    if result.request_id is not None:
+        await _remember(result.request_id, user_id, turns)
+    if result.outcome == api.AiOutcome.HANDOFF and result.request_id is not None:
+        await handoff_to_operator(
+            message,
+            user_id,
+            language,
+            result.request_id,
+            turns,
+            result.handoff_reason,
+            explanation=result.reply_text,
+        )
+    elif result.outcome == api.AiOutcome.ANSWERED and result.reply_text:
+        texts = get_texts(language)
+        disclosure = texts.t(
+            'AI_SUPPORT_DISCLOSURE',
+            'Я ИИ-помощник ДонБатона. Оператора можно позвать в любой момент.',
+        )
+        text = (f'{disclosure}\n\n' if not history else '') + result.reply_text
+        keyboard = answer_keyboard(result.request_id, language) if result.request_id is not None else None
+        # Режем исходный текст, затем экранируем: сущности HTML не разрываются.
+        for offset in range(0, len(text), 3500):
+            await message.answer(
+                html.escape(text[offset : offset + 3500]),
+                parse_mode='HTML',
+                reply_markup=keyboard if offset + 3500 >= len(text) else None,
             )
-        elif result.outcome == api.AiOutcome.ANSWERED and result.reply_text:
-            texts = get_texts(language)
-            disclosure = texts.t(
-                'AI_SUPPORT_DISCLOSURE',
-                'Я ИИ-помощник ДонБатона. Оператора можно позвать в любой момент.',
-            )
-            text = (f'{disclosure}\n\n' if not history else '') + result.reply_text
-            keyboard = answer_keyboard(result.request_id, language) if result.request_id is not None else None
-            # Режем исходный текст, затем экранируем: сущности HTML не разрываются.
-            for offset in range(0, len(text), 3500):
-                await message.answer(
-                    html.escape(text[offset : offset + 3500]),
-                    parse_mode='HTML',
-                    reply_markup=keyboard if offset + 3500 >= len(text) else None,
-                )
-        elif result.outcome != api.AiOutcome.DUPLICATE:
-            await _unavailable(message, language)
+    elif result.outcome != api.AiOutcome.DUPLICATE:
+        await _unavailable(message, language)
+
+
+HANDOFF_MARKER = 'Обращение из чата ИИ №'
+HANDOFF_REPEAT_SECONDS = 600
 
 
 async def _get_or_create_handoff(user_id: int, request_id: int, turns: list[api.ChatTurn], reason: str | None):
-    """Маркер в первом сообщении делает создание устойчивым к сбою до mark_handoff_done."""
-    marker = f'Обращение из чата ИИ №{request_id}\n'
+    """Передача из чата: тот же запрос → тот же тикет; есть открытый тикет — переписка дописывается туда.
+
+    Блокировка на клиента (а не на запрос) не даёт двум «оператор» подряд создать два тикета. Маркер в тексте
+    делает повтор после сбоя идемпотентным; ИИ в тикетах такие сообщения не обрабатывает.
+    """
+    marker = f'{HANDOFF_MARKER}{request_id}\n'
     async with AsyncSessionLocal() as db:
-        # CRUD делает commit; к этому моменту маркер уже сохранён и виден следующему вызову.
-        await db.execute(sql_text('SELECT pg_advisory_xact_lock(714202, :request_id)'), {'request_id': request_id})
+        await db.execute(sql_text('SELECT pg_advisory_xact_lock(714202, :user_id)'), {'user_id': user_id})
         existing = await db.scalar(
-            select(Ticket)
-            .join(TicketMessage, TicketMessage.ticket_id == Ticket.id)
+            select(TicketMessage.ticket_id)
+            .join(Ticket, TicketMessage.ticket_id == Ticket.id)
             .where(Ticket.user_id == user_id, TicketMessage.message_text.startswith(marker, autoescape=True))
             .limit(1)
         )
         if existing is not None:
-            return existing.id
+            return existing
         if not SupportSettingsService.is_tickets_enabled() or await TicketCRUD.is_user_globally_blocked(db, user_id):
             return None
         questions = [turn.text for turn in turns if turn.role == 'user']
-        title = f'Вопрос из чата с ИИ: {questions[-1] if questions else "Нужен оператор"}'[:255]
         transcript = '\n\n'.join(f'{"Клиент" if turn.role == "user" else "ИИ"}: {turn.text}' for turn in turns)
         body = f'{marker}\n{transcript}\n\nПричина передачи: {reason or api.HandoffReason.CLIENT_REQUEST}'
+        active = await db.scalar(
+            select(Ticket)
+            .where(Ticket.user_id == user_id, Ticket.status.in_(['open', 'answered', 'pending']))
+            .order_by(Ticket.updated_at.desc(), Ticket.id.desc())
+            .limit(1)
+        )
+        if active is not None:
+            last = await db.scalar(
+                select(TicketMessage)
+                .where(TicketMessage.ticket_id == active.id)
+                .order_by(TicketMessage.id.desc())
+                .limit(1)
+            )
+            created = last.created_at if last is not None else None
+            if created is not None and created.tzinfo is None:
+                created = created.replace(tzinfo=UTC)
+            recent_handoff = (
+                last is not None
+                and not last.is_from_admin
+                and (last.message_text or '').startswith(HANDOFF_MARKER)
+                and created is not None
+                and (datetime.now(UTC) - created).total_seconds() < HANDOFF_REPEAT_SECONDS
+            )
+            if not recent_handoff:
+                await TicketMessageCRUD.add_message(db, active.id, user_id, body, is_from_admin=False)
+                await notify_admins_about_ticket_reply(active, body, db)
+            return active.id
+        title = f'Вопрос из чата с ИИ: {questions[-1] if questions else "Нужен оператор"}'[:255]
         ticket = await TicketCRUD.create_ticket(db, user_id, title, body)
         await notify_admins_about_new_ticket(ticket, db)
         return ticket.id
@@ -214,22 +276,23 @@ def _explanation_prefix(explanation: str | None) -> str:
 
 async def handoff_to_operator(
     message: types.Message,
-    db_user: User,
+    user_id: int,
+    language: str,
     request_id: int,
     turns: list[api.ChatTurn],
     reason: str | None = None,
     *,
     explanation: str | None = None,
 ) -> None:
-    texts = get_texts(db_user.language)
+    texts = get_texts(language)
     try:
-        ticket_id = await _get_or_create_handoff(db_user.id, request_id, turns, reason)
+        ticket_id = await _get_or_create_handoff(user_id, request_id, turns, reason)
         if ticket_id is None:
             await message.answer(
                 _explanation_prefix(explanation)
                 + html.escape(texts.t('AI_SUPPORT_CONTACT_ONLY', 'Свяжитесь с оператором по кнопке поддержки.')),
                 parse_mode='HTML',
-                reply_markup=support_keyboard(db_user.language, contact_only=True),
+                reply_markup=support_keyboard(language, contact_only=True),
             )
             return
         await api.mark_handoff_done(request_id, ticket_id)
@@ -240,7 +303,7 @@ async def handoff_to_operator(
         await message.answer(_explanation_prefix(explanation) + html.escape(confirmation), parse_mode='HTML')
     except Exception:
         logger.exception('Не удалось передать чат ИИ оператору', request_id=request_id)
-        await _unavailable(message, db_user.language)
+        await _unavailable(message, language)
 
 
 async def handle_feedback(callback: types.CallbackQuery, db_user: User) -> None:
@@ -272,7 +335,7 @@ async def handle_operator(callback: types.CallbackQuery, db_user: User) -> None:
         turns = await _request_turns(request_id, db_user.id)
         if not turns:
             turns = [api.ChatTurn('assistant', record.answer_text or record.operator_summary or 'Нужен оператор')]
-        await handoff_to_operator(callback.message, db_user, request_id, turns)
+        await handoff_to_operator(callback.message, db_user.id, db_user.language, request_id, turns)
     except Exception:
         logger.exception('Сбой кнопки оператора ИИ')
         await _unavailable(callback.message, db_user.language)

@@ -153,7 +153,8 @@ async def send_draft(callback: types.CallbackQuery, db_user: User) -> None:
                 or record.channel != api.AiChannel.TICKET
                 or record.ticket_id is None
                 or record.trigger_message_id is None
-                or record.outcome not in {api.AiOutcome.ANSWERED, api.AiOutcome.HANDOFF}
+                # Черновик-передача («вопрос передан оператору») не отправляется: иначе answered выключил бы SLA.
+                or record.outcome != api.AiOutcome.ANSWERED
                 or not record.answer_text
                 or record.reply_message_id is not None
             ):

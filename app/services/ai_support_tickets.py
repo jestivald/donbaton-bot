@@ -98,6 +98,12 @@ async def _reserve_draft(ticket_id: int, request_id: int) -> bool:
         return True
 
 
+async def _ticket_open(ticket_id: int) -> bool:
+    async with AsyncSessionLocal() as db:
+        status = await db.scalar(select(Ticket.status).where(Ticket.id == ticket_id))
+    return status is not None and status != 'closed'
+
+
 class AiTicketService:
     def __init__(self) -> None:
         self._queue: asyncio.Queue[TicketJob] = asyncio.Queue(maxsize=1000)
@@ -173,7 +179,7 @@ class AiTicketService:
         if conversation is None:
             return
         ticket, messages = conversation
-        if (messages[0].message_text or '').startswith('Обращение из чата ИИ №'):
+        if any((m.message_text or '').startswith('Обращение из чата ИИ №') for m in (messages[0], messages[-1])):
             return
         if mode == 'auto':
             ai_ids = await api.ai_reply_message_ids(ticket.id)
@@ -215,6 +221,11 @@ class AiTicketService:
             return
         # Модель могла отвечать долго: черновик и автоответ не должны обгонять клиента.
         if api.ticket_mode() != mode or await load_conversation(job) is None:
+            # Решение «передать человеку» верно и после нового сообщения клиента: админов уведомляем, ИИ в тикете
+            # дальше молчит. Клиенту не пишем — его новое сообщение и так ждёт оператора.
+            if mode == 'auto' and result.outcome == api.AiOutcome.HANDOFF and await _ticket_open(ticket.id):
+                await api.mark_handoff_done(result.request_id, ticket.id)
+                await notify_ticket_answer(ticket.id, result)
             return
         if mode == 'draft':
             if result.reply_text and await _reserve_draft(ticket.id, result.request_id):

@@ -14,6 +14,9 @@ from app.handlers.admin import ai_support as admin
 from app.services.ai_support import api
 
 
+ORIGINAL_HANDLE = chat.handle_ai_message
+
+
 @pytest.fixture
 def user():
     return SimpleNamespace(id=7, language='ru')
@@ -41,6 +44,14 @@ def contract(monkeypatch):
     monkeypatch.setattr(chat.cache, 'set', AsyncMock(return_value=True))
     monkeypatch.setattr(api, 'mark_handoff_done', AsyncMock())
     chat._request_memory.clear()
+    # Генерация идёт в фоновой задаче; в тестах дожидаемся её, чтобы проверять отправленные сообщения.
+    original = chat.handle_ai_message
+
+    async def handle_and_wait(message, db_user=None):
+        await original(message, db_user)
+        await asyncio.gather(*list(chat._inflight), return_exceptions=True)
+
+    monkeypatch.setattr(chat, 'handle_ai_message', handle_and_wait)
 
 
 async def test_disabled_preserves_original_unknown_response(monkeypatch, message, user):
@@ -157,8 +168,9 @@ async def test_handoff_outcome_calls_ticket_transfer(monkeypatch, message, user)
     transfer = AsyncMock()
     monkeypatch.setattr(chat, 'handoff_to_operator', transfer)
     await chat.handle_ai_message(message, user)
-    assert transfer.call_args.args[2] == 123
-    assert transfer.call_args.args[3][-2:] == [
+    assert transfer.call_args.args[1:4] == (user.id, user.language, 123)
+    assert transfer.call_args.kwargs['explanation'] == 'Зову человека'
+    assert transfer.call_args.args[4][-2:] == [
         api.ChatTurn('user', message.text),
         api.ChatTurn('assistant', 'Зову человека'),
     ]
@@ -167,6 +179,8 @@ async def test_handoff_outcome_calls_ticket_transfer(monkeypatch, message, user)
 class HandoffDb:
     def __init__(self):
         self.ticket = None
+        self.active = None
+        self.last = None
         self.lock = asyncio.Lock()
         self.statements = []
 
@@ -182,7 +196,14 @@ class HandoffDb:
         await self.lock.acquire()
 
     async def scalar(self, query):
-        self.statements.append(str(query))
+        sql = str(query)
+        self.statements.append(sql)
+        if sql.startswith('SELECT ticket_messages.ticket_id'):  # поиск по маркеру запроса
+            return self.ticket.id if self.ticket is not None else None
+        if 'tickets.status IN' in sql:  # активный тикет клиента
+            return self.active
+        if 'ORDER BY ticket_messages.id DESC' in sql:  # последнее сообщение активного тикета
+            return self.last
         return self.ticket
 
 
@@ -203,7 +224,7 @@ async def test_handoff_one_ticket_or_contact(monkeypatch, message, user, blocked
     create_ticket = AsyncMock(side_effect=create)
     monkeypatch.setattr(chat.TicketCRUD, 'create_ticket', create_ticket)
     turns = [api.ChatTurn('user', 'Не помогло'), api.ChatTurn('assistant', 'Приглашаю оператора')]
-    await asyncio.gather(*(chat.handoff_to_operator(message, user, 123, turns) for _ in range(2)))
+    await asyncio.gather(*(chat.handoff_to_operator(message, user.id, user.language, 123, turns) for _ in range(2)))
     if blocked or not enabled:
         create_ticket.assert_not_awaited()
         assert message.answer.call_args.kwargs['reply_markup'].inline_keyboard[0][0].url == 'https://t.me/helpdesk'
@@ -265,3 +286,59 @@ async def test_admin_status_masks_secret_and_shows_stats(monkeypatch, user):
     assert 'api_key: задан' in body
     assert api.get_stats.call_count == 2
     assert 'страниц 2' in body
+
+
+async def test_handler_returns_before_model_finishes(monkeypatch, message, user):
+    """Хендлер не ждёт модель: транзакция AuthMiddleware завершается, соединение БД свободно."""
+    release = asyncio.Event()
+
+    async def slow_answer(*args):
+        await release.wait()
+        return api.AiAnswer(api.AiOutcome.ANSWERED, 'Готово', request_id=5)
+
+    monkeypatch.setattr(api, 'answer', slow_answer)
+    await asyncio.wait_for(ORIGINAL_HANDLE(message, user), timeout=1)
+    assert chat._inflight, 'ответ должен готовиться в фоне'
+    message.answer.assert_not_awaited()
+    release.set()
+    await asyncio.gather(*list(chat._inflight))
+    assert 'Готово' in message.answer.call_args.args[0]
+
+
+async def test_inflight_limit_degrades_to_support(monkeypatch, message, user):
+    blockers = [asyncio.get_running_loop().create_future() for _ in range(chat.MAX_INFLIGHT)]
+    tasks = {asyncio.ensure_future(blocker) for blocker in blockers}
+    monkeypatch.setattr(chat, '_inflight', tasks)
+    await asyncio.wait_for(ORIGINAL_HANDLE(message, user), timeout=1)
+    api.answer.assert_not_awaited()
+    assert 'Сейчас не могу' in message.answer.call_args.args[0]
+    for blocker in blockers:
+        blocker.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_handoff_appends_to_active_ticket_once(monkeypatch, message, user):
+    db = HandoffDb()
+    db.active = SimpleNamespace(id=55, user_id=user.id)
+    monkeypatch.setattr(chat, 'AsyncSessionLocal', lambda: db)
+    monkeypatch.setattr(chat.SupportSettingsService, 'is_tickets_enabled', lambda: True)
+    monkeypatch.setattr(chat.TicketCRUD, 'is_user_globally_blocked', AsyncMock(return_value=None))
+    create_ticket = AsyncMock()
+    monkeypatch.setattr(chat.TicketCRUD, 'create_ticket', create_ticket)
+    added = []
+
+    async def add_message(db_, ticket_id, user_id, text, is_from_admin=False):
+        added.append((ticket_id, text))
+        db.last = SimpleNamespace(is_from_admin=False, message_text=text, created_at=datetime.now(UTC))
+
+    monkeypatch.setattr(chat.TicketMessageCRUD, 'add_message', add_message)
+    reply_notify = AsyncMock()
+    monkeypatch.setattr(chat, 'notify_admins_about_ticket_reply', reply_notify)
+    turns = [api.ChatTurn('user', 'оператор')]
+    await chat.handoff_to_operator(message, user.id, user.language, 201, turns)
+    await chat.handoff_to_operator(message, user.id, user.language, 202, turns)
+    create_ticket.assert_not_awaited()
+    assert [ticket_id for ticket_id, _ in added] == [55], 'повтор в течение 10 минут не дописывает второй раз'
+    assert added[0][1].startswith('Обращение из чата ИИ №201')
+    reply_notify.assert_awaited_once()
+    assert '№55' in message.answer.call_args.args[0]

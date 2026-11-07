@@ -2,6 +2,7 @@
 
 import re
 from html import unescape
+from urllib.parse import unquote
 
 from app.services.ai_support.redaction import KEY_RE, URL_RE, contains_ip, private_url
 
@@ -15,8 +16,12 @@ INTERNAL_RE = re.compile(
 
 
 def guard(text: str) -> str | None:
-    # Проверяем до очистки разметки, чтобы скрытая Markdown-ссылка не обошла фильтр.
-    if INTERNAL_RE.search(text) or KEY_RE.search(text) or contains_ip(text):
+    # Проверяем до очистки разметки, чтобы скрытая Markdown-ссылка не обошла фильтр; percent-кодирование
+    # (admin%2edonbaton.tech) раскрываем заранее.
+    decoded = unquote(text)
+    if any(INTERNAL_RE.search(value) or KEY_RE.search(value) or contains_ip(value) for value in (text, decoded)):
+        return None
+    if any(private_url(match.group()) for match in URL_RE.finditer(decoded)):
         return None
     if any(private_url(match.group()) for match in URL_RE.finditer(text)):
         return None

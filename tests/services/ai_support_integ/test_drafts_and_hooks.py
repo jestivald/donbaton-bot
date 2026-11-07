@@ -227,3 +227,13 @@ async def test_drafts_and_core_alerts_use_support_toggles_even_if_copies_disable
     await notice.notify_ticket_answer(3, api.AiAnswer(api.AiOutcome.ANSWERED, 'Черновик', request_id=123), draft=True)
     await notice.admin_alert('balance', 'Пополните баланс провайдера')
     assert send.await_count == 2
+
+
+async def test_handoff_draft_has_no_send_button(monkeypatch):
+    from app.services import ai_support_notify as notify
+
+    sent = AsyncMock(return_value=True)
+    monkeypatch.setattr(notify, 'send_notice', sent)
+    result = api.AiAnswer(api.AiOutcome.HANDOFF, 'Передано', handoff_reason=api.HandoffReason.MONEY, request_id=31)
+    await notify.notify_ticket_answer(5, result, draft=True)
+    assert sent.call_args.kwargs['request_id'] is None

@@ -5565,5 +5565,7 @@ class AiSupportRequest(Base):
     prompt_version = Column(String(16), nullable=False, default='', server_default='')
     feedback = Column(String(16), nullable=True)
     feedback_at = Column(AwareDateTime(), nullable=True)
+    # Передача человеку ВЫПОЛНЕНА (тикет создан / админы уведомлены); решение модели — в outcome.
+    handoff_done_at = Column(AwareDateTime(), nullable=True)
 
     __table_args__ = (Index('ix_ai_support_requests_created_at', 'created_at'),)

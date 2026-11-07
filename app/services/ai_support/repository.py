@@ -121,7 +121,7 @@ async def attach_reply_message(request_id: int, reply_message_id: int) -> None:
 
 @fallback(lambda: None)
 async def mark_handoff_done(request_id: int, ticket_id: int | None) -> None:
-    values = {'outcome': 'handoff'}
+    values = {'outcome': 'handoff', 'handoff_done_at': datetime.now(UTC)}
     if ticket_id is not None:
         values['ticket_id'] = ticket_id
     await update_request(request_id, **values)
@@ -168,7 +168,8 @@ async def ticket_has_handoff(ticket_id: int) -> bool:
                 select(AiSupportRequest.id)
                 .where(
                     AiSupportRequest.ticket_id == ticket_id,
-                    AiSupportRequest.outcome == 'handoff',
+                    # Только выполненная передача: решение модели без публикации ИИ не выключает.
+                    AiSupportRequest.handoff_done_at.is_not(None),
                 )
                 .limit(1)
             )

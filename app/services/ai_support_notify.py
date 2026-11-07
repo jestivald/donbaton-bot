@@ -62,6 +62,7 @@ async def notify_ticket_answer(ticket_id: int, result: api.AiAnswer, *, draft: b
         title,
         '\n\n'.join(parts),
         ticket_id=ticket_id,
-        request_id=result.request_id if draft else None,
+        # Черновик «передать человеку» клиенту не отправляем: оператор отвечает сам, тикет остаётся open (SLA).
+        request_id=result.request_id if draft and result.outcome != api.AiOutcome.HANDOFF else None,
         respect_ai_toggle=not draft,
     )
