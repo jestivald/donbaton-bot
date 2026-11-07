@@ -130,6 +130,7 @@ class BotConfigurationService:
 
     CATEGORY_TITLES: dict[str, str] = {
         'CORE': '🤖 Основные настройки',
+        'AI_SUPPORT': '🤖 ИИ-помощник',
         'SUPPORT': '💬 Поддержка и тикеты',
         'REGISTRATION_ACCESS': '🔐 Регистрация и доступ',
         'LOCALIZATION': '🌍 Языки интерфейса',
@@ -212,6 +213,7 @@ class BotConfigurationService:
 
     CATEGORY_DESCRIPTIONS: dict[str, str] = {
         'CORE': 'Базовые параметры работы бота и обязательные ссылки.',
+        'AI_SUPPORT': 'ИИ-помощник поддержки: провайдер, бюджет, безопасность и инструкции.',
         'SUPPORT': 'Контакты поддержки, SLA и режимы обработки обращений.',
         'REGISTRATION_ACCESS': 'Закрытая регистрация и допустимые способы приглашения новых пользователей.',
         'LOCALIZATION': 'Доступные языки, локализация интерфейса и выбор языка.',
@@ -478,6 +480,7 @@ class BotConfigurationService:
     }
 
     CATEGORY_PREFIX_OVERRIDES: dict[str, str] = {
+        'AI_SUPPORT_': 'AI_SUPPORT',
         'SUPPORT_': 'SUPPORT',
         'ADMIN_NOTIFICATIONS': 'ADMIN_NOTIFICATIONS',
         'ADMIN_REPORTS': 'ADMIN_REPORTS',
@@ -549,6 +552,15 @@ class BotConfigurationService:
     }
 
     CHOICES: dict[str, list[ChoiceOption]] = {
+        'AI_SUPPORT_TICKET_MODE': [
+            ChoiceOption('off', 'Выключен'),
+            ChoiceOption('draft', 'Черновик для оператора'),
+            ChoiceOption('auto', 'Автоматический ответ'),
+        ],
+        'AI_SUPPORT_PROVIDER': [
+            ChoiceOption('deepseek', 'DeepSeek'),
+            ChoiceOption('openai_compatible', 'OpenAI-совместимый API'),
+        ],
         'GRACE_ACCESS_MODE': [
             ChoiceOption('false', '⛔️ Выключен', 'Grace-сессии не выдаются и не завершаются'),
             ChoiceOption('observe', '👀 Наблюдение', 'Кандидаты только логируются, панель не меняется'),
@@ -715,6 +727,49 @@ class BotConfigurationService:
     }
 
     SETTING_HINTS: dict[str, dict[str, str]] = {
+        'AI_SUPPORT_ENABLED': {'description': 'Общий выключатель ИИ. Для работы нужен ключ API.'},
+        'AI_SUPPORT_BOT_CHAT_ENABLED': {'description': 'Отвечать на свободный текст в личке бота.'},
+        'AI_SUPPORT_TICKET_MODE': {
+            'description': 'off — выключено, draft — черновик админам, auto — первый ответ клиенту.'
+        },
+        'AI_SUPPORT_PROVIDER': {'description': 'DeepSeek или провайдер с совместимым Chat Completions API.'},
+        'AI_SUPPORT_BASE_URL': {'description': 'Базовый адрес API без /chat/completions.'},
+        'AI_SUPPORT_API_KEY': {'description': 'Секретный ключ API. В интерфейсах отображается только маска.'},
+        'AI_SUPPORT_MODEL': {'description': 'Имя модели: deepseek-flash или deepseek-v4-pro; можно указать другую.'},
+        'AI_SUPPORT_THINKING_ENABLED': {'description': 'Размышления DeepSeek; обычно для поддержки выключены.'},
+        'AI_SUPPORT_TEMPERATURE': {'description': 'Температура генерации; по умолчанию 0.2.'},
+        'AI_SUPPORT_MAX_OUTPUT_TOKENS': {'description': 'Максимум выходных токенов, включая размышления.'},
+        'AI_SUPPORT_TIMEOUT_SECONDS': {'description': 'Общий дедлайн ответа в секундах, включая повтор и инструменты.'},
+        'AI_SUPPORT_DAILY_BUDGET_USD': {'description': 'Бюджет в долларах за сутки МСК; 0 — без ограничения.'},
+        'AI_SUPPORT_USER_DAILY_LIMIT': {'description': 'Число запросов клиента за сутки МСК по всем каналам.'},
+        'AI_SUPPORT_TICKET_MAX_AI_REPLIES': {'description': 'Максимум автоответов в одном тикете.'},
+        'AI_SUPPORT_SHARE_ACCOUNT_DATA': {
+            'description': 'Разрешить инструменты чтения обезличенных данных текущего клиента.'
+        },
+        'AI_SUPPORT_NOTIFY_ADMINS': {'description': 'Копировать ответы ИИ и передачи человеку администраторам.'},
+        'AI_SUPPORT_HISTORY_TURNS': {'description': 'Число последних реплик, передаваемых в модель.'},
+        'AI_SUPPORT_CHAT_MEMORY_MINUTES': {'description': 'Срок памяти диалога в личке бота, в минутах.'},
+        'AI_SUPPORT_LOG_TEXTS': {'description': 'Хранить обезличенные вопросы в журнале.'},
+        'AI_SUPPORT_LOG_RETENTION_DAYS': {
+            'description': 'Через сколько дней очищать тексты вопросов и ответов, включая черновики.'
+        },
+        'AI_SUPPORT_PROXY_URL': {'description': 'Необязательный HTTP/SOCKS прокси для API провайдера.'},
+        'AI_SUPPORT_PRICE_INPUT_HIT_PER_1M': {
+            'description': 'Цена миллиона токенов кэшированного входа для неизвестной модели, в долларах.'
+        },
+        'AI_SUPPORT_PRICE_INPUT_MISS_PER_1M': {
+            'description': 'Цена миллиона токенов нового входа для неизвестной модели, в долларах.'
+        },
+        'AI_SUPPORT_PRICE_OUTPUT_PER_1M': {
+            'description': 'Цена миллиона выходных токенов для неизвестной модели, в долларах.'
+        },
+        'AI_SUPPORT_OWNER_INSTRUCTIONS_TEMPLATE': {
+            'description': 'Дополнительные инструкции владельца (многострочный текст).'
+        },
+        'AI_SUPPORT_STATUS_NOTE_TEMPLATE': {
+            'description': 'Текущие известные сбои и статус сервиса (многострочный текст).'
+        },
+        'AI_SUPPORT_REPLY_FOOTER_TEMPLATE': {'description': 'Подпись под ответом ИИ в тикете: как вызвать оператора.'},
         'SUPPORT_ADMIN_TICKET_NOTIFICATIONS_ENABLED': {
             'description': 'Сообщать администраторам в Telegram о новых тикетах и ответах пользователей.',
             'format': 'Булево значение (да/нет).',
@@ -1790,6 +1845,8 @@ class BotConfigurationService:
         if isinstance(value, bool):
             return None
         upper_key = key.upper()
+        if upper_key.startswith('AI_SUPPORT_') and ('PRICE_' in upper_key or upper_key.endswith('_USD')):
+            return f'${value:g}'
         # Денежные ключи содержат PRICE или оканчиваются на _KOPEKS; голое AMOUNT
         # не признак цены (DEVICES_SELECTION_DISABLED_AMOUNT — количество устройств).
         if any(suffix in upper_key for suffix in ('PRICE', '_KOPEKS')):

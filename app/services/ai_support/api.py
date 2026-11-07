@@ -135,41 +135,57 @@ class KbStatus:
 
 def is_enabled() -> bool:
     """Общий выключатель И задан ключ API."""
-    raise NotImplementedError
+    from app.services.ai_support import settings_view
+
+    return settings_view.is_enabled()
 
 
 def bot_chat_enabled() -> bool:
     """Отвечать ли на свободный текст в личке бота (учитывает is_enabled())."""
-    raise NotImplementedError
+    from app.services.ai_support import settings_view
+
+    return settings_view.bot_chat_enabled()
 
 
 def ticket_mode() -> TicketMode:
     """Режим в тикетах: off / draft / auto ('off', если is_enabled() ложно)."""
-    raise NotImplementedError
+    from app.services.ai_support import settings_view
+
+    return settings_view.ticket_mode()
 
 
 def max_ai_replies_per_ticket() -> int:
-    raise NotImplementedError
+    from app.services.ai_support import settings_view
+
+    return settings_view.max_ai_replies_per_ticket()
 
 
 def notify_admins_enabled() -> bool:
     """Слать ли админам в топик тикетов копии ответов ИИ и передачи человеку."""
-    raise NotImplementedError
+    from app.services.ai_support import settings_view
+
+    return settings_view.notify_admins_enabled()
 
 
 def history_turns() -> int:
     """Сколько последних реплик диалога передавать модели."""
-    raise NotImplementedError
+    from app.services.ai_support import settings_view
+
+    return settings_view.history_turns()
 
 
 def chat_memory_ttl_seconds() -> int:
     """Сколько хранить память диалога свободного текста в боте."""
-    raise NotImplementedError
+    from app.services.ai_support import settings_view
+
+    return settings_view.chat_memory_ttl_seconds()
 
 
 def reply_footer_text() -> str:
     """Подпись под ответом ИИ в тикете (как позвать человека)."""
-    raise NotImplementedError
+    from app.services.ai_support import settings_view
+
+    return settings_view.reply_footer_text()
 
 
 # ---------------------------------------------------------------- основное
@@ -184,72 +200,102 @@ async def answer(question: str, history: list[ChatTurn], ctx: AiRequestContext) 
     Решение «передать человеку» возвращается как HANDOFF (reply_text — что сказать клиенту),
     саму передачу (тикет, уведомление админам) выполняет вызывающий код.
     """
-    raise NotImplementedError
+    from app.services.ai_support import service
+
+    return await service.answer(question, history, ctx)
 
 
 def is_human_request(text: str) -> bool:
     """Быстрый детектор «позовите оператора/человека» без вызова модели."""
-    raise NotImplementedError
+    from app.services.ai_support import service
+
+    return service.is_human_request(text)
 
 
 async def get_request(request_id: int) -> AiRequestRecord | None:
-    raise NotImplementedError
+    from app.services.ai_support import repository
+
+    return await repository.get_request(request_id)
 
 
 async def record_feedback(request_id: int, user_id: int, helpful: bool) -> bool:
     """Отзыв клиента; True — записано (только владелец запроса, повтор перезаписывает)."""
-    raise NotImplementedError
+    from app.services.ai_support import repository
+
+    return await repository.record_feedback(request_id, user_id, helpful)
 
 
 async def attach_reply_message(request_id: int, reply_message_id: int) -> None:
     """Связать запрос с опубликованным сообщением тикета (ответ ИИ, его отправка из черновика или передача)."""
-    raise NotImplementedError
+    from app.services.ai_support import repository
+
+    return await repository.attach_reply_message(request_id, reply_message_id)
 
 
 async def mark_handoff_done(request_id: int, ticket_id: int | None) -> None:
     """Отметить, что передача человеку выполнена (тикет создан/админы уведомлены)."""
-    raise NotImplementedError
+    from app.services.ai_support import repository
+
+    return await repository.mark_handoff_done(request_id, ticket_id)
 
 
 async def ai_reply_message_ids(ticket_id: int) -> set[int]:
     """ID сообщений тикета, опубликованных ИИ-помощником (чтобы отличать их от ответов людей)."""
-    raise NotImplementedError
+    from app.services.ai_support import repository
+
+    return await repository.ai_reply_message_ids(ticket_id)
 
 
 async def count_ai_replies_in_ticket(ticket_id: int) -> int:
-    raise NotImplementedError
+    from app.services.ai_support import repository
+
+    return await repository.count_ai_replies_in_ticket(ticket_id)
 
 
 async def ticket_has_handoff(ticket_id: int) -> bool:
     """Была ли в тикете передача человеку (после неё ИИ в этом тикете молчит)."""
-    raise NotImplementedError
+    from app.services.ai_support import repository
+
+    return await repository.ticket_has_handoff(ticket_id)
 
 
 async def get_stats(days: int) -> AiStats:
-    raise NotImplementedError
+    from app.services.ai_support import repository
+
+    return await repository.get_stats(days)
 
 
 async def kb_status() -> KbStatus:
-    raise NotImplementedError
+    from app.services.ai_support import knowledge
+
+    return await knowledge.kb_status()
 
 
 def invalidate_kb_cache() -> None:
-    raise NotImplementedError
+    from app.services.ai_support import knowledge
+
+    return knowledge.invalidate_kb_cache()
 
 
 async def startup() -> None:
     """Запуск при старте бота (после загрузки настроек): HTTP-клиент, фоновая чистка журнала."""
-    raise NotImplementedError
+    from app.services.ai_support import retention
+
+    return await retention.startup()
 
 
 async def shutdown() -> None:
     """Остановка: закрыть HTTP-клиент, отменить фоновые задачи."""
-    raise NotImplementedError
+    from app.services.ai_support import retention
+
+    return await retention.shutdown()
 
 
 def describe_settings() -> dict[str, Any]:
     """Сводка настроек для экрана админки (без значения ключа: только «задан/не задан»)."""
-    raise NotImplementedError
+    from app.services.ai_support import settings_view
+
+    return settings_view.describe_settings()
 
 
 # kind: 'auth' (401/403 — неверный ключ), 'balance' (402 — кончился баланс), 'budget' (дневной бюджет),
@@ -259,4 +305,6 @@ AdminAlertHandler = Callable[[str, str], Awaitable[None]]
 
 def set_admin_alert_handler(handler: AdminAlertHandler | None) -> None:
     """Интеграция регистрирует отправку тревог админам; ядро зовёт её не чаще раза в час на каждый kind."""
-    raise NotImplementedError
+    from app.services.ai_support import service
+
+    return service.set_admin_alert_handler(handler)

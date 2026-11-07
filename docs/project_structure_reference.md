@@ -642,7 +642,7 @@
   Классы: нет
   Функции: `run_alembic_upgrade` — Run ``alembic upgrade head``, handling fresh and legacy databases., `stamp_alembic_head` — Stamp the DB as being at head without running migrations (for existing DBs).
 - `app/database/models.py` — Python-модуль
-  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CasheraSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `CasheraPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (21 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `LteQuota`, `LteOrphanQuota`, `LteTopup`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`, `DpiCheckerAction`, `UserReminder` (1 методов), `UserReminderState`
+  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CasheraSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `CasheraPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (21 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `LteQuota`, `LteOrphanQuota`, `LteTopup`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`, `DpiCheckerAction`, `UserReminder` (1 методов), `UserReminderState`, `AiSupportRequest`
   Функции: нет
 
 #### app/database/crud
@@ -1465,6 +1465,7 @@
 - `app/services/admin_notification_service.py` — Python-модуль
   Классы: `NotificationCategory`, `AdminNotificationService` (50 методов)
   Функции: нет
+- `app/services/ai_support/`
 - `app/services/antilopay_service.py` — Python-модуль
   Классы: `AntilopayAPIError` (1 методов), `AntilopayService` (12 методов)
   Функции: нет
@@ -1934,6 +1935,51 @@
 - `app/services/yookassa_service.py` — Python-модуль
   Классы: `YooKassaService` (5 методов)
   Функции: нет
+
+#### app/services/ai_support
+
+- `app/services/ai_support/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `app/services/ai_support/api.py` — Python-модуль
+  Классы: `AiChannel`, `AiOutcome`, `HandoffReason`, `ChatTurn`, `AiRequestContext`, `AiAnswer`, `AiRequestRecord`, `AiStats`, `KbStatus`
+  Функции: `is_enabled` — Общий выключатель И задан ключ API., `bot_chat_enabled` — Отвечать ли на свободный текст в личке бота (учитывает is_enabled())., `ticket_mode` — Режим в тикетах: off / draft / auto ('off', если is_enabled() ложно)., `max_ai_replies_per_ticket`, `notify_admins_enabled` — Слать ли админам в топик тикетов копии ответов ИИ и передачи человеку., `history_turns` — Сколько последних реплик диалога передавать модели., `chat_memory_ttl_seconds` — Сколько хранить память диалога свободного текста в боте., `reply_footer_text` — Подпись под ответом ИИ в тикете (как позвать человека)., `answer` — Сгенерировать ответ клиенту., `is_human_request` — Быстрый детектор «позовите оператора/человека» без вызова модели., `get_request`, `record_feedback` — Отзыв клиента; True — записано (только владелец запроса, повтор перезаписывает)., `attach_reply_message` — Связать запрос с опубликованным сообщением тикета (ответ ИИ, его отправка из черновика или передача)., `mark_handoff_done` — Отметить, что передача человеку выполнена (тикет создан/админы уведомлены)., `ai_reply_message_ids` — ID сообщений тикета, опубликованных ИИ-помощником (чтобы отличать их от ответов людей)., `count_ai_replies_in_ticket`, `ticket_has_handoff` — Была ли в тикете передача человеку (после неё ИИ в этом тикете молчит)., `get_stats`, `kb_status`, `invalidate_kb_cache`, `startup` — Запуск при старте бота (после загрузки настроек): HTTP-клиент, фоновая чистка журнала., `shutdown` — Остановка: закрыть HTTP-клиент, отменить фоновые задачи., `describe_settings` — Сводка настроек для экрана админки (без значения ключа: только «задан/не задан»)., `set_admin_alert_handler` — Интеграция регистрирует отправку тревог админам; ядро зовёт её не чаще раза в час на каждый kind.
+- `app/services/ai_support/knowledge.py` — Python-модуль
+  Классы: `TextParser` (4 методов), `Knowledge`
+  Функции: `html_text`, `localized`, `build`, `load`, `invalidate_kb_cache`, `kb_status`
+- `app/services/ai_support/limits.py` — Python-модуль
+  Классы: нет
+  Функции: `day_start`, `acquire_user`, `release_user`, `invalidate_budget`, `spent_today`, `user_requests_today`
+- `app/services/ai_support/output_guard.py` — Python-модуль
+  Классы: нет
+  Функции: `guard`
+- `app/services/ai_support/pricing.py` — Python-модуль
+  Классы: нет
+  Функции: `is_peak`, `cost`
+- `app/services/ai_support/prompts.py` — Python-модуль
+  Классы: нет
+  Функции: `messages`
+- `app/services/ai_support/provider.py` — Python-модуль
+  Классы: `Usage` (1 методов), `Completion`, `ProviderError` (1 методов)
+  Функции: `startup`, `get_client`, `shutdown`, `parse_usage`, `retry_delay`, `parse_response`, `complete`
+- `app/services/ai_support/redaction.py` — Python-модуль
+  Классы: нет
+  Функции: `luhn`, `private_url`, `contains_ip`, `redact`, `redact_url`
+- `app/services/ai_support/repository.py` — Python-модуль
+  Классы: нет
+  Функции: `fallback` — Контракт чтения/обратной связи безопасен при недоступной БД., `claim`, `update_request`, `finish`, `get_request`, `record_feedback`, `attach_reply_message`, `mark_handoff_done`, `ai_reply_message_ids`, `count_ai_replies_in_ticket`, `ticket_has_handoff`, `get_stats`
+- `app/services/ai_support/retention.py` — Python-модуль
+  Классы: нет
+  Функции: `cleanup`, `run`, `startup`, `shutdown`
+- `app/services/ai_support/service.py` — Python-модуль
+  Классы: `Run`
+  Функции: `set_admin_alert_handler`, `alert`, `is_human_request`, `generate`, `check_limits`, `answer`
+- `app/services/ai_support/settings_view.py` — Python-модуль
+  Классы: `Config`
+  Функции: `number`, `is_enabled`, `bot_chat_enabled`, `ticket_mode`, `max_ai_replies_per_ticket`, `notify_admins_enabled`, `history_turns`, `chat_memory_ttl_seconds`, `reply_footer_text`, `snapshot`, `describe_settings`
+- `app/services/ai_support/tools.py` — Python-модуль
+  Классы: `ToolState`
+  Функции: `date_text`, `schema`, `definitions`, `category`, `subscriptions_for`, `account_overview`, `devices`, `execute`
 
 #### app/services/contests
 
@@ -3146,12 +3192,21 @@
 - `migrations/alembic/versions/0134_add_cashera_subscriptions.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0135_ai_support.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 
 ## scripts
 
 - `scripts/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `scripts/ai_support_eval.py` — Python-модуль
+  Классы: нет
+  Функции: `evaluate`, `main`
+- `scripts/ai_support_seed_kb.py` — Python-модуль
+  Классы: нет
+  Функции: `inline`, `to_html`, `parse_markdown`, `seed`, `main`
 - `scripts/backfill_remnawave_ids.py` — Python-модуль
   Классы: нет
   Функции: `main`
@@ -4541,6 +4596,7 @@
 - `tests/services/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/services/ai_support/`
 - `tests/services/dpichecker/`
 - `tests/services/panel_sync/`
 - `tests/services/reachability/`
@@ -5181,6 +5237,33 @@
   Классы: нет
   Функции: `test_apiclient_patch_helper_exists_and_runs_at_import` — Source-level pin: ``_patch_yookassa_timeout`` must be DEFINED, `test_patched_execute_passes_timeout_to_session_request` — Negative-control against upstream regression: the patched, `test_patch_idempotency_guard_exists` — The patch helper must check ``ApiClient._timeout_patched`` to, `test_patch_respects_settings_overrides` — An operator who sets YOOKASSA_HTTP_CONNECT_TIMEOUT or, `test_dedicated_executor_exists_with_bounded_max_workers` — The bug-report's "обязательное" fix #2: dedicated executor with, `test_max_workers_resolver_respects_setting` — REGRESSION: ``YOOKASSA_MAX_CONCURRENT_REQUESTS`` env var must flow, `test_max_workers_resolver_floors_at_one` — A misconfigured ``YOOKASSA_MAX_CONCURRENT_REQUESTS=0`` must NOT, `test_dedicated_executor_thread_name_prefix` — Threads in the YK executor must be identifiable in py-spy /, `test_all_run_in_executor_callsites_use_dedicated_pool` — Source-level pin: every ``run_in_executor`` in, `test_webhook_uses_wait_for_with_tight_budget` — ``process_yookassa_webhook`` confirmation of payment status must, `test_webhook_timeout_is_caught_and_refuses_without_confirmation` — When the API confirmation times out, the handler must NOT raise
 - `tests/services/user_reminders/`
+
+#### tests/services/ai_support
+
+- `tests/services/ai_support/conftest.py` — Python-модуль
+  Классы: нет
+  Функции: `defaults`, `journal`, `transport`
+- `tests/services/ai_support/test_account_tools.py` — Python-модуль
+  Классы: `DB` (5 методов)
+  Функции: `subscription`, `test_account_overview_has_only_allowed_fields`, `test_devices_uses_existing_api_and_discards_hwid`, `test_account_error_and_permission_gates`
+- `tests/services/ai_support/test_knowledge_settings.py` — Python-модуль
+  Классы: нет
+  Функции: `page`, `test_kb_selection_order_language_and_html`, `test_cache_reload_and_db_fallback`, `test_settings_category_masks_and_textarea`, `test_normalization_and_prompt_order`
+- `tests/services/ai_support/test_migration.py` — Python-модуль
+  Классы: нет
+  Функции: `migration`, `run`, `snapshot`, `test_sqlite_schema_parity_unique_and_downgrade`, `test_postgres_upgrade_parity_downgrade`
+- `tests/services/ai_support/test_privacy.py` — Python-модуль
+  Классы: нет
+  Функции: `test_redaction`, `test_connection_schemes`, `test_public_text_and_urls_unchanged`, `test_filtered`, `test_allowed_output_links`, `test_plain_text_and_sentence_limit`, `test_subscription_domain_with_trailing_dot_or_bare_host`
+- `tests/services/ai_support/test_provider.py` — Python-модуль
+  Классы: нет
+  Функции: `test_body_and_usage`, `test_retries`, `test_network_retry_and_retry_after_deadline`, `test_deadline`, `test_empty_truncated`, `test_peak_and_cost`
+- `tests/services/ai_support/test_scripts_lifecycle.py` — Python-модуль
+  Классы: нет
+  Функции: `test_markdown_to_hidden_faq`, `test_lifecycle_idempotent_and_closes`, `test_eval_restores_model_and_disables_account_tools`
+- `tests/services/ai_support/test_service.py` — Python-модуль
+  Классы: нет
+  Функции: `kb`, `response`, `call`, `ctx`, `test_answer_journal_feedback_stats_and_retention`, `test_duplicate_and_human_request`, `test_human_detector`, `test_human_false_positives`, `test_handoff_model_and_thinking_roundtrip`, `test_tool_round_limit`, `test_account_tools_only_context_user`, `test_limits_budget_and_concurrency`, `test_error_alerts_and_guard`, `test_disabled_and_db_errors`, `test_log_texts_off`, `test_handoff_empty_final_uses_template`, `test_total_deadline_including_tools`, `test_global_concurrency_four`, `test_budget_cache_invalidates_after_write`, `test_journal_failure_blocks_publish`, `test_total_deadline_bounds_alert_and_finalization`
 
 #### tests/services/dpichecker
 

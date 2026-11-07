@@ -181,6 +181,36 @@ class Settings(BaseSettings):
     TEST_EMAIL: str = ''  # e.g., test@example.com
     TEST_EMAIL_PASSWORD: str = ''  # Password for test account
 
+    # ИИ-помощник: значения по умолчанию не закрепляем в .env — правятся в админке.
+    AI_SUPPORT_ENABLED: bool = False
+    AI_SUPPORT_BOT_CHAT_ENABLED: bool = True
+    AI_SUPPORT_TICKET_MODE: str = 'draft'
+    AI_SUPPORT_PROVIDER: str = 'deepseek'
+    AI_SUPPORT_BASE_URL: str = 'https://api.deepseek.com'
+    AI_SUPPORT_API_KEY: str | None = None
+    AI_SUPPORT_MODEL: str = 'deepseek-flash'
+    AI_SUPPORT_THINKING_ENABLED: bool = False
+    AI_SUPPORT_TEMPERATURE: float = 0.2
+    AI_SUPPORT_MAX_OUTPUT_TOKENS: int = 1200
+    AI_SUPPORT_TIMEOUT_SECONDS: int = 45
+    AI_SUPPORT_DAILY_BUDGET_USD: float = 1.0
+    AI_SUPPORT_USER_DAILY_LIMIT: int = 20
+    AI_SUPPORT_TICKET_MAX_AI_REPLIES: int = 2
+    AI_SUPPORT_SHARE_ACCOUNT_DATA: bool = False
+    AI_SUPPORT_NOTIFY_ADMINS: bool = True
+    AI_SUPPORT_HISTORY_TURNS: int = 6
+    AI_SUPPORT_CHAT_MEMORY_MINUTES: int = 30
+    AI_SUPPORT_LOG_TEXTS: bool = True
+    AI_SUPPORT_LOG_RETENTION_DAYS: int = 30
+    AI_SUPPORT_PROXY_URL: str = ''
+    AI_SUPPORT_PRICE_INPUT_HIT_PER_1M: float = 0.0
+    AI_SUPPORT_PRICE_INPUT_MISS_PER_1M: float = 0.0
+    AI_SUPPORT_PRICE_OUTPUT_PER_1M: float = 0.0
+    # Суффикс TEMPLATE включает textarea в существующем редакторе кабинета.
+    AI_SUPPORT_OWNER_INSTRUCTIONS_TEMPLATE: str = ''
+    AI_SUPPORT_STATUS_NOTE_TEMPLATE: str = ''
+    AI_SUPPORT_REPLY_FOOTER_TEMPLATE: str = 'Если ответ не помог — напишите «оператор», и вопрос перейдёт сотруднику.'
+
     SUPPORT_USERNAME: str = '@support'
     # Публичные контакты сервиса, которые кабинет отдаёт в GET /info/service.
     # До этого хендлер читал SUPPORT_EMAIL и WEBSITE_URL через getattr, но таких

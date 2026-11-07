@@ -5529,3 +5529,41 @@ class UserReminderState(Base):
     # Последний успех — по нему общий лимит «одно напоминание в сутки».
     last_success_at = Column(AwareDateTime(), nullable=True)
     dismissed_at = Column(AwareDateTime(), nullable=True)
+
+
+class AiSupportRequest(Base):
+    """Журнал ИИ-помощника и атомарная заявка на обработку сообщения тикета."""
+
+    __tablename__ = 'ai_support_requests'
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(AwareDateTime(), nullable=False, server_default=func.now())
+    updated_at = Column(AwareDateTime(), nullable=False, server_default=func.now(), onupdate=func.now())
+    channel = Column(String(20), nullable=False)
+    outcome = Column(String(20), nullable=False, default='pending', server_default='pending')
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    ticket_id = Column(Integer, ForeignKey('tickets.id', ondelete='SET NULL'), nullable=True, index=True)
+    trigger_message_id = Column(Integer, nullable=True, unique=True)
+    reply_message_id = Column(Integer, nullable=True)
+    model = Column(String(200), nullable=False)
+    provider = Column(String(40), nullable=False)
+    thinking = Column(Boolean, nullable=False, default=False, server_default='false')
+    prompt_tokens = Column(Integer, nullable=False, default=0, server_default='0')
+    cache_hit_tokens = Column(Integer, nullable=False, default=0, server_default='0')
+    cache_miss_tokens = Column(Integer, nullable=False, default=0, server_default='0')
+    completion_tokens = Column(Integer, nullable=False, default=0, server_default='0')
+    reasoning_tokens = Column(Integer, nullable=False, default=0, server_default='0')
+    cost_usd = Column(Numeric(12, 6), nullable=False, default=0, server_default='0')
+    latency_ms = Column(Integer, nullable=False, default=0, server_default='0')
+    tool_calls = Column(Integer, nullable=False, default=0, server_default='0')
+    handoff_reason = Column(String(30), nullable=True)
+    operator_summary = Column(Text, nullable=True)
+    question_text = Column(Text, nullable=True)
+    answer_text = Column(Text, nullable=True)
+    error_code = Column(String(40), nullable=True)
+    kb_version = Column(String(16), nullable=False, default='', server_default='')
+    prompt_version = Column(String(16), nullable=False, default='', server_default='')
+    feedback = Column(String(16), nullable=True)
+    feedback_at = Column(AwareDateTime(), nullable=True)
+
+    __table_args__ = (Index('ix_ai_support_requests_created_at', 'created_at'),)
