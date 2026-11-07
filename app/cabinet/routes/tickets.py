@@ -269,7 +269,7 @@ async def create_ticket(
         created_at=ticket.created_at,
         updated_at=ticket.updated_at,
         closed_at=ticket.closed_at,
-        is_reply_blocked=ticket.is_reply_blocked if hasattr(ticket, 'is_reply_blocked') else False,
+        is_reply_blocked=ticket.is_user_reply_blocked,
         messages=messages,
     )
 
@@ -307,7 +307,7 @@ async def get_ticket(
         created_at=ticket.created_at,
         updated_at=ticket.updated_at or ticket.created_at,
         closed_at=ticket.closed_at,
-        is_reply_blocked=ticket.is_reply_blocked if hasattr(ticket, 'is_reply_blocked') else False,
+        is_reply_blocked=ticket.is_user_reply_blocked,
         messages=messages_response,
     )
 
@@ -342,7 +342,7 @@ async def add_ticket_message(
         )
 
     # Check if replies are blocked
-    if hasattr(ticket, 'is_reply_blocked') and ticket.is_reply_blocked:
+    if ticket.is_user_reply_blocked:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='Replies to this ticket are blocked',
@@ -376,9 +376,9 @@ async def add_ticket_message(
     )
     db.add(message)
 
-    # Update ticket status and timestamp
-    if ticket.status == 'answered':
-        ticket.status = 'pending'
+    # Новый ответ клиента возвращает тикет в очередь поддержки и обновляет отсчёт SLA.
+    ticket.status = 'open'
+    ticket.last_sla_reminder_at = None
     ticket.updated_at = datetime.now(UTC)
 
     await db.commit()
