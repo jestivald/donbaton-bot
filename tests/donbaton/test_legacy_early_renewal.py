@@ -20,6 +20,9 @@ from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -47,8 +50,11 @@ from app.services.lte_quota_service import (
 from app.services.pricing_engine import PricingEngine
 from tests.donbaton.test_lte_legacy import BASELINE, EPOCH, IMPORT, legacy_seed
 from tests.donbaton.test_lte_quota import LTE, NOW, WIFI, sample, tariff
-from tests.donbaton.test_tariff_switch import TABLES
 from tests.fixtures.sqlite_memory import memory_session
+
+
+# Checkout now persists its identity in the transaction ledger.
+TABLES = list(Base.metadata.sorted_tables)
 
 
 # Боевая сетка ДонБатона (docs/DONBATON.md): Личный — 3 устройства, Семейный — 7.
@@ -75,7 +81,7 @@ _KEEP = object()
 
 
 @pytest.fixture(autouse=True)
-def early_renewal(monkeypatch):
+def early_renewal(monkeypatch, checkout_catalog):
     monkeypatch.setattr(settings, 'DONBATON_LTE_ENABLED', True)
     monkeypatch.setattr(settings, 'DONBATON_LTE_ACCOUNTING_READY', True)
     monkeypatch.setattr(settings, 'DONBATON_LTE_ACCOUNTING_EPOCH', EPOCH)
@@ -420,29 +426,19 @@ def _callback(data):
 
 
 def _state():
-    state = MagicMock()
-    state.get_data = AsyncMock(return_value={})
-    state.update_data = AsyncMock()
-    state.clear = AsyncMock()
-    return state
+    return FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=123, user_id=123))
 
 
 def _bot_boundaries(monkeypatch, user):
     from app.handlers.subscription import tariff_purchase as bot
 
-    async def debit(_db, charged_user, amount, *args, **kwargs):
-        charged_user.balance_kopeks -= amount
-        await _db.commit()
-        return True
-
     panel = SimpleNamespace(update_remnawave_user=AsyncMock(), create_remnawave_user=AsyncMock())
     reset_devices = AsyncMock()
     monkeypatch.setattr(user_crud, 'lock_user_for_pricing', AsyncMock(return_value=user))
-    monkeypatch.setattr(bot, 'subtract_user_balance', AsyncMock(side_effect=debit))
+    monkeypatch.setattr(bot.SubscriptionService, 'create_remnawave_user', panel.create_remnawave_user)
     monkeypatch.setattr(bot, 'SubscriptionService', lambda: panel)
     monkeypatch.setattr(bot, 'should_create_panel_account', AsyncMock(return_value=False))
     monkeypatch.setattr(bot, '_reset_panel_devices', reset_devices)
-    monkeypatch.setattr(bot, 'create_transaction', AsyncMock())
     monkeypatch.setattr(
         bot,
         'AdminNotificationService',
@@ -450,6 +446,21 @@ def _bot_boundaries(monkeypatch, user):
     )
     monkeypatch.setattr(bot.user_cart_service, 'delete_user_cart', AsyncMock())
     return bot, reset_devices
+
+
+async def _preview_checkout(bot, callback, user, db):
+    state = _state()
+    _, tariff_id, days = callback.data.split(':')
+    preview = _callback(f'tariff_period:{tariff_id}:{days}')
+    await bot.select_tariff_period.__wrapped__(preview, user, db, state)
+    markup = preview.message.edit_text.await_args.kwargs['reply_markup']
+    callback.data = next(
+        button.callback_data
+        for row in markup.inline_keyboard
+        for button in row
+        if (button.callback_data or '').startswith('tariff_confirm:')
+    )
+    return state
 
 
 def _succeeded(callback, marker):
@@ -470,7 +481,8 @@ async def test_bot_catalog_purchase_of_the_same_plan_goes_through(monkeypatch):
         bot, reset_devices = _bot_boundaries(monkeypatch, user)
         callback = _callback('tariff_confirm:10:30')
 
-        await bot.confirm_tariff_purchase.__wrapped__(callback, user, db, _state())
+        state = await _preview_checkout(bot, callback, user, db)
+        await bot.confirm_tariff_purchase.__wrapped__(callback, user, db, state)
 
         _succeeded(callback, 'Подписка успешно оформлена')
         assert user.balance_kopeks == 1_000_000 - 44900
@@ -488,7 +500,8 @@ async def test_bot_catalog_purchase_of_another_plan_goes_through(monkeypatch):
         bot, _ = _bot_boundaries(monkeypatch, user)
         callback = _callback('tariff_confirm:8:90')
 
-        await bot.confirm_tariff_purchase.__wrapped__(callback, user, db, _state())
+        state = await _preview_checkout(bot, callback, user, db)
+        await bot.confirm_tariff_purchase.__wrapped__(callback, user, db, state)
 
         _succeeded(callback, 'Подписка успешно оформлена')
         assert user.balance_kopeks == 1_000_000 - 79900
@@ -531,14 +544,26 @@ async def test_bot_extend_button_records_the_purchase(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_bot_catalog_purchase_keeps_devices_inside_the_window(monkeypatch):
+@pytest.mark.parametrize('devices', [4, 8, 0])
+async def test_bot_catalog_purchase_keeps_devices_inside_the_window(monkeypatch, devices):
     async with memory_session(monkeypatch, TABLES) as db:
-        sub, _, _, _ = await locked_legacy(db, devices=4)
+        sub, _, _, paid_until = await locked_legacy(db, devices=devices)
         user = await db.get(User, sub.user_id)
         bot, reset_devices = _bot_boundaries(monkeypatch, user)
-        await bot.confirm_tariff_purchase.__wrapped__(_callback('tariff_confirm:9:30'), user, db, _state())
+        callback = _callback('tariff_confirm:9:30')
+        state = await _preview_checkout(bot, callback, user, db)
+        await bot.confirm_tariff_purchase.__wrapped__(callback, user, db, state)
         assert sub.tariff_id == 9
         reset_devices.assert_not_awaited()
+
+        inside = await apply_panel_policy(
+            db, sub, {}, panel_user=sample(BASELINE), now=paid_until - timedelta(seconds=1)
+        )
+        assert inside['hwid_device_limit'] == devices
+        outside = await apply_panel_policy(
+            db, sub, {}, panel_user=sample(BASELINE), now=paid_until + timedelta(seconds=1)
+        )
+        assert outside['hwid_device_limit'] == sub.device_limit == 3
 
 
 # --------------------------------------------------------------------------- #

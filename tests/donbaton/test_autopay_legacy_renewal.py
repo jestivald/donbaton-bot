@@ -173,15 +173,16 @@ async def test_standard_migrated_subscription_still_renews(monkeypatch):
     """Перенос без индивидуальных условий продлевается как раньше."""
     async with memory_session(monkeypatch, TABLES) as db:
         sub, user, _ = await _seed_legacy(db, custom=False, paid_until=NOW + timedelta(days=1))
+        subscription_id, user_id = sub.id, user.id
         end_before = sub.end_date
         service, recorder, audit = _service(monkeypatch)
 
         await service._process_autopayments(db)
 
-        subscription = await db.get(Subscription, sub.id)
+        subscription = await db.get(Subscription, subscription_id)
         await db.refresh(subscription)
         assert subscription.end_date > end_before, 'обычная подписка перестала продлеваться'
-        assert (await db.get(User, user.id)).balance_kopeks == BALANCE - 29900
+        assert (await db.get(User, user_id)).balance_kopeks == BALANCE - 29900
         assert recorder.events('error') == []
         audit.assert_awaited()
 

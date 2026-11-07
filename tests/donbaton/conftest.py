@@ -9,7 +9,10 @@ though production runs with it off since 2026-09-28
 explicitly.
 """
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -38,3 +41,25 @@ def synthetic_telemetry(monkeypatch):
         }
 
     monkeypatch.setattr(lte_quota_service, '_read_telemetry_heartbeat', observed_heartbeat)
+
+
+@pytest.fixture
+def checkout_catalog(monkeypatch):
+    """A fresh panel catalog for domain tests that complete a network checkout.
+
+    Keep the real preflight validator; tests may remove squads or fail the
+    catalog request through the returned API double.
+    """
+    from app.services import checkout_squad_validation as checkout
+    from tests.donbaton.test_lte_quota import LTE, WIFI
+
+    api = SimpleNamespace(
+        get_internal_squads=AsyncMock(return_value=[SimpleNamespace(uuid=WIFI), SimpleNamespace(uuid=LTE)])
+    )
+
+    @asynccontextmanager
+    async def client():
+        yield api
+
+    monkeypatch.setattr(checkout, 'RemnaWaveService', lambda: SimpleNamespace(get_api_client=client))
+    return api

@@ -8,7 +8,7 @@
 3. Отказ политики доходит до клиента текстом, а не общим «Произошла ошибка».
 4. Кабинет: продление пробной сетевой подписки — пустой список и понятный 400.
 5. Мини-апп: сетевой подписке нельзя купить устройства.
-6. Сбой продления после списания возвращает деньги.
+6. Сбой продления после начала списания атомарно откатывает баланс и срок.
 7. Тексты про устройства.
 
 Модель владельца (docs/DONBATON.md): сетевой тариф — фиксированный лимит
@@ -21,6 +21,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiogram import types
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
 from fastapi import HTTPException
 from sqlalchemy import select, update as sa_update
 
@@ -52,7 +55,7 @@ PRICE_30 = 29900  # тариф 9 из legacy_seed: 299 ₽ за 30 дней, 3 �
 
 
 @pytest.fixture(autouse=True)
-def configured(monkeypatch):
+def configured(monkeypatch, checkout_catalog):
     monkeypatch.setattr(settings, 'DONBATON_LTE_ENABLED', True)
     monkeypatch.setattr(settings, 'DONBATON_LTE_ACCOUNTING_READY', True)
     monkeypatch.setattr(settings, 'DONBATON_LTE_ACCOUNTING_EPOCH', EPOCH)
@@ -87,12 +90,8 @@ def callback(data):
     return cb
 
 
-def fsm(data=None):
-    st = MagicMock()
-    st.get_data = AsyncMock(return_value=data or {})
-    st.update_data = AsyncMock()
-    st.clear = AsyncMock()
-    return st
+def fsm():
+    return FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=123, user_id=123))
 
 
 def shown_text(cb) -> str:
@@ -180,14 +179,19 @@ async def test_renewal_screen_shows_tariff_devices_without_device_surcharge(monk
 
 
 @pytest.mark.asyncio
-async def test_bot_purchase_of_the_same_network_tariff_goes_through(monkeypatch):
+@pytest.mark.parametrize('devices', [8, 0])
+async def test_bot_purchase_of_the_same_network_tariff_goes_through(monkeypatch, devices):
     async with memory_session(monkeypatch, TABLES) as db:
-        sub, _, user = await migrated(db, devices=8)
+        sub, _, user = await migrated(db, devices=devices)
         end_before = sub.end_date
         mute_side_effects(monkeypatch)
 
-        cb = callback('tariff_confirm:9:30')
-        await tariff_purchase.confirm_tariff_purchase(cb, db_user=user, db=db, state=fsm())
+        state = fsm()
+        preview = callback('tariff_period:9:30')
+        await tariff_purchase.select_tariff_period(preview, db_user=user, db=db, state=state)
+        confirm_data = next(data for _, data in buttons(preview) if data.startswith('tariff_confirm:'))
+        cb = callback(confirm_data)
+        await tariff_purchase.confirm_tariff_purchase(cb, db_user=user, db=db, state=state)
 
         assert 'Подписка успешно оформлена' in shown_text(cb)
         await db.refresh(user)
@@ -198,7 +202,7 @@ async def test_bot_purchase_of_the_same_network_tariff_goes_through(monkeypatch)
         # оплаченного срока по-прежнему держит apply_panel_policy.
         assert sub.device_limit == 3
         payload = await apply_panel_policy(db, sub, {}, panel_user=sample(BASELINE), now=NOW + timedelta(days=1))
-        assert payload['hwid_device_limit'] == 8
+        assert payload['hwid_device_limit'] == devices
 
 
 @pytest.mark.asyncio
@@ -578,17 +582,27 @@ async def test_miniapp_refuses_device_slots_for_a_network_subscription(switch_en
 
 
 @pytest.mark.asyncio
-async def test_failed_extension_after_the_charge_is_refunded(monkeypatch):
+async def test_failed_extension_after_the_charge_is_rolled_back(monkeypatch):
     async with memory_session(monkeypatch, TABLES) as db:
         sub, _, user = await migrated(db, devices=3, balance=100000)
         end_before = sub.end_date
         mute_side_effects(monkeypatch)
-        monkeypatch.setattr(tariff_purchase, 'extend_subscription', AsyncMock(side_effect=RuntimeError('panel down')))
+
+        async def fail_after_debit(_db, subscription, **kwargs):
+            # The operation reached renewal after the wallet debit was staged.
+            assert user.balance_kopeks == 100000 - PRICE_30
+            subscription.end_date += timedelta(days=30)
+            await _db.flush()
+            raise RuntimeError('renewal failed after staging changes')
+
+        extension = AsyncMock(side_effect=fail_after_debit)
+        monkeypatch.setattr(tariff_purchase, 'extend_subscription', extension)
 
         cb = callback(f'tariff_ext_confirm:{sub.id}:9:30')
         await tariff_purchase.confirm_tariff_extend(cb, db_user=user, db=db, state=fsm())
 
-        assert 'Средства возвращены' in shown_text(cb) or 'средства возвращены' in shown_text(cb)
+        extension.assert_awaited_once()
+        assert 'Произошла ошибка при продлении подписки' in shown_text(cb)
         await db.refresh(user)
         await db.refresh(sub)
         assert user.balance_kopeks == 100000
@@ -598,7 +612,11 @@ async def test_failed_extension_after_the_charge_is_refunded(monkeypatch):
             .scalars()
             .all()
         )
-        assert [refund.amount_kopeks for refund in refunds] == [PRICE_30]
+        assert refunds == []  # Debit and staged renewal rolled back atomically.
+        payments = (
+            await db.scalars(select(Transaction).where(Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value))
+        ).all()
+        assert payments == []
 
 
 @pytest.mark.asyncio
@@ -658,3 +676,64 @@ async def test_switch_note_counts_devices_from_the_subscription_not_its_tariff(d
             assert 'Устройств' not in note
         else:
             assert expected in note
+
+
+@pytest.mark.parametrize('surviving', [WIFI, LTE])
+@pytest.mark.parametrize('entrypoint', ['catalog', 'renewal', 'saved_cart', 'miniapp', 'cabinet'])
+async def test_network_checkout_refuses_partial_squads_before_any_charge(
+    monkeypatch, checkout_catalog, surviving, entrypoint
+):
+    """A live Wi-Fi squad cannot authorize charging for a missing LTE squad (or vice versa)."""
+    checkout_catalog.get_internal_squads.return_value = [SimpleNamespace(uuid=surviving)]
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, plan, user = await migrated(db, devices=8, balance=100000)
+        end_before = sub.end_date
+        mute_side_effects(monkeypatch)
+        if entrypoint == 'catalog':
+            state = fsm()
+            preview = callback('tariff_period:9:30')
+            await tariff_purchase.select_tariff_period(preview, db_user=user, db=db, state=state)
+            data = next(data for _, data in buttons(preview) if data.startswith('tariff_confirm:'))
+            cb = callback(data)
+            await tariff_purchase.confirm_tariff_purchase(cb, db_user=user, db=db, state=state)
+            assert_alert(cb, 'Серверы этого тарифа сейчас недоступны')
+        elif entrypoint == 'renewal':
+            cb = callback(f'tariff_ext_confirm:{sub.id}:9:30')
+            await tariff_purchase.confirm_tariff_extend(cb, db_user=user, db=db, state=fsm())
+            assert_alert(cb, 'Серверы этого тарифа сейчас недоступны')
+        elif entrypoint == 'saved_cart':
+            assert (
+                await auto._auto_purchase_tariff(
+                    db, user, {'cart_mode': 'tariff_purchase', 'tariff_id': 9, 'period_days': 30}
+                )
+                is False
+            )
+        elif entrypoint == 'miniapp':
+            await db.refresh(user, ['subscriptions'])
+            await db.refresh(plan, ['allowed_promo_groups'])
+            monkeypatch.setattr(miniapp, '_authorize_miniapp_user', AsyncMock(return_value=user))
+            monkeypatch.setattr(miniapp, 'get_tariff_by_id', AsyncMock(return_value=plan))
+            with pytest.raises(HTTPException) as error:
+                await miniapp.purchase_tariff_endpoint(
+                    miniapp.MiniAppTariffPurchaseRequest(initData='x', tariffId=9, periodDays=30), db=db
+                )
+            assert error.value.status_code == 409
+            assert error.value.detail['code'] == 'tariff_servers_unavailable'
+        else:
+            from app.cabinet.routes.subscription_modules import purchase
+            from app.cabinet.schemas.subscription import TariffPurchaseRequest
+
+            await db.refresh(plan, ['allowed_promo_groups'])
+            monkeypatch.setattr(purchase, 'get_subscription_by_user_id', AsyncMock(return_value=sub))
+            with pytest.raises(HTTPException) as error:
+                await purchase.purchase_tariff(TariffPurchaseRequest(tariff_id=9, period_days=30), user=user, db=db)
+            assert error.value.status_code == 409
+            assert error.value.detail['code'] == 'tariff_servers_unavailable'
+        await db.refresh(user)
+        await db.refresh(sub)
+        assert user.balance_kopeks == 100000
+        assert sub.end_date == end_before
+        assert sub.device_limit == 8
+        assert sub.connected_squads == [WIFI, LTE]
+        assert (await db.scalars(select(Transaction))).all() == []
+        tariff_purchase.SubscriptionService.create_remnawave_user.assert_not_awaited()

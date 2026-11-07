@@ -24,7 +24,8 @@ from app.services.lte_quota_service import get_quota_status
 from app.utils.legacy_subscription import is_legacy_subscription
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
-from ...schemas.subscription import LteQuotaData
+from ...schemas.subscription import LteQuotaData, TrafficAccountingData
+from .helpers import _load_traffic_accounting_fields
 
 
 logger = structlog.get_logger(__name__)
@@ -32,7 +33,7 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix='/subscriptions', tags=['Cabinet Multi-Tariff'], redirect_slashes=False)
 
 
-class SubscriptionListItem(BaseModel):
+class SubscriptionListItem(TrafficAccountingData):
     network_category: Literal['wifi', 'wifi_lte'] | None = None
     lte_quota: LteQuotaData | None = None
     id: int
@@ -94,7 +95,13 @@ async def list_subscriptions(
 ) -> SubscriptionsListResponse:
     """List all user subscriptions. Returns all subscriptions regardless of multi-tariff mode."""
     subscriptions = await get_all_subscriptions_by_user_id(db, user.id)
-    items = [await _subscription_to_list_item(db, sub) for sub in subscriptions]
+    items = []
+    for sub in subscriptions:
+        if sub.is_pending_trial:
+            continue
+        item = await _subscription_to_list_item(db, sub)
+        fields = await _load_traffic_accounting_fields(db, sub)
+        items.append(item.model_copy(update={k: v for k, v in fields.items() if k in type(item).model_fields}))
     return SubscriptionsListResponse(
         subscriptions=items,
         multi_tariff_enabled=settings.is_multi_tariff_enabled(),
@@ -109,12 +116,14 @@ async def get_subscription_detail(
 ) -> SubscriptionListItem:
     """Get specific subscription details with ownership check."""
     subscription = await get_subscription_by_id_for_user(db, subscription_id, user.id)
-    if not subscription:
+    if not subscription or subscription.is_pending_trial:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='Subscription not found',
         )
-    return await _subscription_to_list_item(db, subscription)
+    item = await _subscription_to_list_item(db, subscription)
+    fields = await _load_traffic_accounting_fields(db, subscription)
+    return item.model_copy(update={k: v for k, v in fields.items() if k in type(item).model_fields})
 
 
 @router.delete('/{subscription_id}')

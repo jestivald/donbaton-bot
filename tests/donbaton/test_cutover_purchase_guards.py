@@ -131,9 +131,10 @@ async def test_generic_housekeeping_preserves_imported_purchase_archive(stale_ca
         assert sub.end_date == now + timedelta(days=45)
         assert user.balance_kopeks == 12345
         # The scheduled worker rechecks the managed category under its row lock.
-        await DailySubscriptionService()._reset_subscription_traffic(db, sub.id, [purchases[1]])
+        await DailySubscriptionService()._reset_subscription_traffic(db, sub.id, [purchases[1].id])
         await db.commit()
         assert list((await db.execute(select(TrafficPurchase.id).order_by(TrafficPurchase.id))).scalars()) == [1, 2]
+        await db.refresh(sub)
         assert sub.traffic_limit_gb == 0
 
 

@@ -150,6 +150,7 @@ class GraceBillingState:
     is_free_tariff: bool = False
     user_status: str = 'active'
     grace_suppressed_until: datetime | None = None
+    network_category: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

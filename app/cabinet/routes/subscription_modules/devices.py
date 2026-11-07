@@ -104,6 +104,9 @@ async def purchase_devices_legacy(
     if not resolved:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No subscription found')
 
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
     result = await db.execute(
         select(Subscription)
         .where(and_(Subscription.id == resolved.id, Subscription.user_id == user.id))
@@ -125,6 +128,9 @@ async def purchase_devices_legacy(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Ваша подписка неактивна',
         )
+
+    if subscription.device_limit == 0:
+        raise HTTPException(status_code=400, detail='Докупка устройств недоступна: у подписки безлимит')
 
     # Get tariff for device price (if exists)
     tariff = None
@@ -174,11 +180,6 @@ async def purchase_devices_legacy(
     if chargeable_devices > 0:
         base_total_price = max(100, base_total_price)  # Минимум 1 рубль
 
-    # Lock user row to prevent TOCTOU on promo-offer state
-    from app.database.crud.user import lock_user_for_pricing
-
-    user = await lock_user_for_pricing(db, user.id)
-
     # Apply discount from promo group
     discount_result = _apply_addon_discount(user, 'devices', base_total_price, days_left)
     total_price = discount_result['discounted']
@@ -206,6 +207,7 @@ async def purchase_devices_legacy(
         try:
             cart_data = {
                 'cart_mode': 'add_devices',
+                'subscription_id': subscription.id,
                 # Намерение пополнить ради этой корзины: без него тихая автопокупка после
                 # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
                 'return_to_cart': True,
@@ -263,6 +265,7 @@ async def purchase_devices_legacy(
 
     # Re-lock subscription after subtract_user_balance committed (which released all locks).
     # Re-validate max device limit to prevent concurrent purchases exceeding the limit.
+    user = await lock_user_for_pricing(db, user.id)
     relock_result = await db.execute(
         select(Subscription)
         .where(Subscription.id == subscription.id)
@@ -273,17 +276,32 @@ async def purchase_devices_legacy(
 
     actual_current = subscription.device_limit or 1
     actual_new = actual_current + request.devices
-    if max_device_limit and actual_new > max_device_limit:
+    if subscription.device_limit == 0 or (max_device_limit and actual_new > max_device_limit):
         # Concurrent purchase already exceeded limit — refund balance
         user_refund = await db.execute(
             select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True)
         )
         refund_user = user_refund.scalar_one()
         refund_user.balance_kopeks += total_price
+        from app.database.crud.transaction import create_transaction
+
+        await create_transaction(
+            db,
+            user.id,
+            TransactionType.REFUND,
+            total_price,
+            'Возврат отменённой докупки устройств: условия подписки изменились',
+            payment_method=PaymentMethod.BALANCE,
+            commit=False,
+        )
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f'Максимальное количество устройств: {max_device_limit}. Баланс возвращён.',
+            detail=(
+                'У подписки теперь безлимит устройств. Баланс возвращён.'
+                if subscription.device_limit == 0
+                else f'Максимальное количество устройств: {max_device_limit}. Баланс возвращён.'
+            ),
         )
 
     # Add devices (under lock)
@@ -372,6 +390,9 @@ async def purchase_devices(
         if not resolved:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='У вас нет активной подписки')
 
+        from app.database.crud.user import lock_user_for_pricing
+
+        user = await lock_user_for_pricing(db, user.id)
         result = await db.execute(
             select(Subscription)
             .where(and_(Subscription.id == resolved.id, Subscription.user_id == user.id))
@@ -393,6 +414,9 @@ async def purchase_devices(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Ваша подписка неактивна',
             )
+
+        if subscription.device_limit == 0:
+            raise HTTPException(status_code=400, detail='Докупка устройств недоступна: у подписки безлимит')
 
         # Get tariff for device price (if exists)
         tariff = None
@@ -460,11 +484,6 @@ async def purchase_devices(
         if chargeable_devices > 0:
             base_price_prorated = max(100, base_price_prorated)  # Minimum 1 ruble
 
-        # Lock user BEFORE discount computation to prevent TOCTOU on promo group
-        from app.database.crud.user import lock_user_for_pricing
-
-        user = await lock_user_for_pricing(db, user.id)
-
         # Apply discount from promo group
         period_hint_days = days_left
         discount_result = _apply_addon_discount(user, 'devices', base_price_prorated, period_hint_days)
@@ -484,6 +503,7 @@ async def purchase_devices(
             try:
                 cart_data = {
                     'cart_mode': 'add_devices',
+                    'subscription_id': subscription.id,
                     # Намерение пополнить ради этой корзины: без него тихая автопокупка после
                     # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
                     'return_to_cart': True,
@@ -542,6 +562,7 @@ async def purchase_devices(
 
         # Re-lock subscription after subtract_user_balance committed (which released all locks).
         # Re-validate max device limit to prevent concurrent purchases exceeding the limit.
+        user = await lock_user_for_pricing(db, user.id)
         relock_result = await db.execute(
             select(Subscription)
             .where(Subscription.id == subscription.id)
@@ -552,17 +573,32 @@ async def purchase_devices(
 
         actual_current = subscription.device_limit or 1
         actual_new = actual_current + request.devices
-        if max_device_limit and actual_new > max_device_limit:
+        if subscription.device_limit == 0 or (max_device_limit and actual_new > max_device_limit):
             # Concurrent purchase already exceeded limit — refund balance
             user_refund = await db.execute(
                 select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True)
             )
             refund_user = user_refund.scalar_one()
             refund_user.balance_kopeks += price_kopeks
+            from app.database.crud.transaction import create_transaction
+
+            await create_transaction(
+                db,
+                user.id,
+                TransactionType.REFUND,
+                price_kopeks,
+                'Возврат отменённой докупки устройств: условия подписки изменились',
+                payment_method=PaymentMethod.BALANCE,
+                commit=False,
+            )
             await db.commit()
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f'Максимальное количество устройств: {max_device_limit}. Баланс возвращён.',
+                detail=(
+                    'У подписки теперь безлимит устройств. Баланс возвращён.'
+                    if subscription.device_limit == 0
+                    else f'Максимальное количество устройств: {max_device_limit}. Баланс возвращён.'
+                ),
             )
 
         # Increase device limit (under lock)
@@ -696,6 +732,9 @@ async def save_devices_cart(
             detail='Ваша подписка неактивна',
         )
 
+    if subscription.device_limit == 0:
+        raise HTTPException(status_code=400, detail='Докупка устройств недоступна: у подписки безлимит')
+
     # Get tariff for device price (if exists)
     tariff = None
     if subscription.tariff_id:
@@ -769,6 +808,7 @@ async def save_devices_cart(
     # Save cart for auto-purchase after balance top-up
     cart_data = {
         'cart_mode': 'add_devices',
+        'subscription_id': subscription.id,
         # Намерение пополнить ради этой корзины: без него тихая автопокупка после
         # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
         'return_to_cart': True,
@@ -817,6 +857,13 @@ async def get_device_price(
             'min_device_limit': subscription.device_limit,
             'can_reduce': 0,
             'connected_devices_count': 0,
+        }
+
+    if subscription.device_limit == 0:
+        return {
+            'available': False,
+            'reason': 'У подписки уже безлимит устройств',
+            'reason_code': 'devices_unavailable',
         }
 
     tariff = None

@@ -20,7 +20,7 @@ from app.cabinet.schemas.subscription import TariffPurchaseRequest
 from app.config import Settings, settings
 from app.database.crud import subscription as subscription_crud, user as user_crud
 from app.database.crud.subscription import extend_subscription
-from app.database.models import LavaSubscription, SentNotification, Subscription, Tariff, User
+from app.database.models import LavaSubscription, SentNotification, Subscription, Tariff, User, UserPromoGroup
 from app.keyboards import inline as keyboards
 from app.services.donbaton_catalog import validate_user_tariff_purchase
 from app.services.lte_quota_service import (
@@ -41,7 +41,7 @@ from tests.donbaton.test_lte_quota import LTE, NOW, WIFI, sample, tariff
 from tests.fixtures.sqlite_memory import memory_session
 
 
-TABLES = [*LEGACY_TABLES, SentNotification.__table__, LavaSubscription.__table__]
+TABLES = [*LEGACY_TABLES, SentNotification.__table__, LavaSubscription.__table__, UserPromoGroup.__table__]
 
 # Боевая сетка ДонБатона: 9 — «Личный» (60 ГиБ / 2 устройства),
 # 10 — «Семейный» (120 ГиБ / 4 устройства), 7 и 8 — те же без LTE.
@@ -74,7 +74,7 @@ PLANS = {
 
 
 @pytest.fixture(autouse=True)
-def switching_enabled(monkeypatch):
+def switching_enabled(monkeypatch, checkout_catalog):
     monkeypatch.setattr(settings, 'DONBATON_LTE_ENABLED', True)
     monkeypatch.setattr(settings, 'DONBATON_LTE_ACCOUNTING_READY', True)
     monkeypatch.setattr(settings, 'DONBATON_LTE_ACCOUNTING_EPOCH', EPOCH)

@@ -59,6 +59,10 @@ def handler_context(monkeypatch, category='wifi_lte', *, binding=None, category_
         network_category=None if category_on_tariff else category,
     )
     db = AsyncMock()
+    monkeypatch.setattr(
+        'app.handlers.subscription.cispay_recurrent.get_cispay_agreement_state',
+        AsyncMock(return_value={'status': 'none'}),
+    )
     monkeypatch.setattr(autopay, '_resolve_subscription', AsyncMock(return_value=(subscription, 10)))
     monkeypatch.setattr(
         'app.database.crud.platega_subscription.get_active_platega_subscription_by_subscription',

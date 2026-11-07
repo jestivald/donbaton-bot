@@ -655,6 +655,7 @@ async def test_webhooks_do_not_revive_a_subscription_in_the_window(monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_expiry_webhook_at_the_window_end_is_not_announced_again(monkeypatch):
+    monkeypatch.setattr('app.database.crud.transaction.get_last_subscription_payment_at', AsyncMock(return_value=None))
     from app.services import remnawave_webhook_service as webhook_module
 
     consider = AsyncMock()

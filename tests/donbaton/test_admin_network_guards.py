@@ -430,6 +430,7 @@ async def test_bulk_extend_reports_policy_reason(monkeypatch):
     ids=['extend', 'shorten'],
 )
 async def test_cabinet_extend_and_shorten_return_400_with_reason(monkeypatch, error, request_kwargs):
+    monkeypatch.setattr('app.services.cispay_recurrent_guard.has_conflicting_cispay', AsyncMock(return_value=False))
     user = SimpleNamespace(id=1, subscriptions=[])
     sub = SimpleNamespace(id=1, end_date=NOW + timedelta(days=10), status='active', remnawave_id=11)
     cabinet_boundary(monkeypatch, user, sub)

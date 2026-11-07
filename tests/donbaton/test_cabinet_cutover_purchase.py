@@ -20,7 +20,7 @@ from tests.fixtures.sqlite_memory import memory_session
 
 
 @pytest.fixture(autouse=True)
-def configured(monkeypatch):
+def configured(monkeypatch, checkout_catalog):
     monkeypatch.setattr(settings, 'DONBATON_LTE_ENABLED', True)
     monkeypatch.setattr(settings, 'DONBATON_LTE_ACCOUNTING_READY', True)
     monkeypatch.setattr(settings, 'DONBATON_LTE_ACCOUNTING_EPOCH', EPOCH)
