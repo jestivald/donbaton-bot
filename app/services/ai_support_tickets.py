@@ -239,7 +239,9 @@ class AiTicketService:
             ticket_id=ticket.id,
             author_user_id=None,
             # После передачи человеку подпись «напишите «оператор»» уже не нужна.
-            text=f'{api.AI_REPLY_PREFIX}\n\n{reply}' + ('' if handoff else f'\n\n{api.reply_footer_text()}'),
+            # Без префикса «🤖 ИИ-помощник» (решение владельца 07.11): клиент видит просто ответ. Ответы ИИ
+            # отличаются по журналу (reply_message_id), админам копия приходит с пометкой «🤖 Ответ ИИ».
+            text=reply + ('' if handoff else f'\n\n{api.reply_footer_text()}'),
             mark_answered=not handoff,
             origin='ai',
             trigger_message_id=job.message_id,

@@ -1973,7 +1973,7 @@
   Функции: `is_peak`, `cost`
 - `app/services/ai_support/prompts.py` — Python-модуль
   Классы: нет
-  Функции: `messages` — Порядок ради кэша провайдера: правила → база знаний → инструкции/статус/дата/канал → диалог.
+  Функции: `clean_assistant_text` — Прошлые ответы ИИ в истории тикета — без префикса «🤖 ИИ-помощник» и подписи: иначе модель их копирует, `messages` — Порядок ради кэша провайдера: правила → база знаний → инструкции/статус/дата/канал → диалог.
 - `app/services/ai_support/provider.py` — Python-модуль
   Классы: `Usage` (1 методов), `Completion`, `ProviderError` (1 методов)
   Функции: `startup`, `get_client`, `shutdown`, `parse_usage`, `retry_delay`, `parse_response`, `complete`
@@ -2793,6 +2793,7 @@
 - `docs/handoffs/handoff-2026-09-28-lte-gate-off.md` — файл
 - `docs/handoffs/handoff-2026-10-01-upstream-5.0.0.md` — файл
 - `docs/handoffs/handoff-2026-10-21-premium-emoji.md` — файл
+- `docs/handoffs/handoff-2026-11-07-ai-support.md` — файл
 
 ## migrations
 
@@ -5286,7 +5287,7 @@
   Функции: `subscription`, `test_account_overview_has_only_allowed_fields`, `test_devices_uses_existing_api_and_discards_hwid`, `test_account_error_and_permission_gates`
 - `tests/services/ai_support/test_knowledge_settings.py` — Python-модуль
   Классы: нет
-  Функции: `page`, `test_kb_selection_order_language_and_html`, `test_cache_reload_and_db_fallback`, `test_settings_category_masks_and_textarea`, `test_normalization_and_prompt_order`, `test_prompt_merges_consecutive_roles_and_keeps_owner_contacts`, `test_html_text_numbers_ordered_lists`, `test_long_question_keeps_latest_clarification`
+  Функции: `page`, `test_kb_selection_order_language_and_html`, `test_cache_reload_and_db_fallback`, `test_settings_category_masks_and_textarea`, `test_normalization_and_prompt_order`, `test_prompt_merges_consecutive_roles_and_keeps_owner_contacts`, `test_html_text_numbers_ordered_lists`, `test_long_question_keeps_latest_clarification`, `test_assistant_history_without_ai_prefix_and_footer`
 - `tests/services/ai_support/test_migration.py` — Python-модуль
   Классы: нет
   Функции: `migration`, `run`, `snapshot`, `test_sqlite_schema_parity_unique_and_downgrade`, `test_postgres_upgrade_parity_downgrade`
@@ -5301,7 +5302,7 @@
   Функции: `test_markdown_to_hidden_faq`, `test_lifecycle_idempotent_and_closes`, `test_eval_restores_model_and_disables_account_tools`, `test_seed_markdown_keeps_numbered_steps`
 - `tests/services/ai_support/test_service.py` — Python-модуль
   Классы: нет
-  Функции: `kb`, `response`, `call`, `ctx`, `test_answer_journal_feedback_stats_and_retention`, `test_duplicate_and_human_request`, `test_human_detector`, `test_human_false_positives`, `test_handoff_model_and_thinking_roundtrip`, `test_tool_round_limit`, `test_account_tools_only_context_user`, `test_limits_budget_and_concurrency`, `test_error_alerts_and_guard`, `test_disabled_and_db_errors`, `test_log_texts_off`, `test_handoff_empty_final_uses_template`, `test_total_deadline_including_tools`, `test_global_concurrency_four`, `test_budget_cache_invalidates_after_write`, `test_journal_failure_blocks_publish`, `test_total_deadline_bounds_alert_and_finalization`
+  Функции: `kb`, `response`, `call`, `ctx`, `test_answer_journal_feedback_stats_and_retention`, `test_duplicate_and_human_request`, `test_human_detector`, `test_human_false_positives`, `test_handoff_model_and_thinking_roundtrip`, `test_tool_round_limit`, `test_account_tools_only_context_user`, `test_limits_budget_and_concurrency`, `test_error_alerts_and_guard`, `test_disabled_and_db_errors`, `test_log_texts_off`, `test_handoff_empty_final_uses_template`, `test_total_deadline_including_tools`, `test_global_concurrency_four`, `test_budget_cache_invalidates_after_write`, `test_journal_failure_blocks_publish`, `test_total_deadline_bounds_alert_and_finalization`, `test_handoff_claim_in_text_becomes_handoff`, `test_model_reply_prefix_is_stripped`
 
 #### tests/services/ai_support_integ
 
@@ -5316,7 +5317,7 @@
   Функции: `ticket`, `delivery`, `test_publish_status_and_exactly_one_event`, `test_publish_ai_rechecks_before_commit`, `test_ai_author_is_existing_admin_account` — Синтетического автора не создаём: автор ответа ИИ — найденный в базе админ из ADMIN_IDS., `test_ai_reply_skipped_without_admin_author`, `test_human_draft_is_audited_as_human`, `test_delivery_all_channels_with_independent_toggles`, `test_delivery_failure_does_not_skip_cabinet`
 - `tests/services/ai_support_integ/test_ticket_worker.py` — Python-модуль
   Классы: `SnapshotDb` (2 методов)
-  Функции: `msg`, `ticket`, `contract`, `loaded`, `test_auto_answer_once_and_no_recursive_admin_event`, `test_event_listener_returns_before_model`, `test_auto_guards_never_invoke_model`, `test_real_snapshot_guards`, `test_handoff_publishes_open_then_marks_and_notifies`, `test_non_answers_never_publish`, `test_generation_loses_race_and_does_not_publish`, `test_draft_helps_after_human_reply_and_never_sends_to_client`, `test_draft_limit_ten`, `test_question_includes_all_customer_messages_since_support`, `test_queue_full_does_not_raise`, `test_stale_handoff_still_notifies_admins_without_client_message` — Новое сообщение клиента во время генерации: решение «передать» выполняется для админов, клиенту не пишем., `test_stale_answer_is_dropped_silently`, `test_handoff_reply_has_no_operator_footer`, `test_chat_handoff_messages_are_not_answered_by_ai`
+  Функции: `msg`, `ticket`, `contract`, `loaded`, `test_auto_answer_once_and_no_recursive_admin_event`, `test_event_listener_returns_before_model`, `test_auto_guards_never_invoke_model`, `test_real_snapshot_guards`, `test_handoff_publishes_open_then_marks_and_notifies`, `test_non_answers_never_publish`, `test_generation_loses_race_and_does_not_publish`, `test_draft_helps_after_human_reply_and_never_sends_to_client`, `test_draft_limit_ten`, `test_question_includes_all_customer_messages_since_support`, `test_queue_full_does_not_raise`, `test_stale_handoff_still_notifies_admins_without_client_message` — Новое сообщение клиента во время генерации: решение «передать» выполняется для админов, клиенту не пишем., `test_stale_answer_is_dropped_silently`, `test_handoff_reply_has_no_operator_footer`, `test_chat_handoff_messages_are_not_answered_by_ai`, `test_auto_reply_has_no_ai_prefix`
 
 #### tests/services/dpichecker
 

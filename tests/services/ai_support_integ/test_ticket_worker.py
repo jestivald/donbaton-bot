@@ -79,7 +79,7 @@ async def test_auto_answer_once_and_no_recursive_admin_event(loaded, monkeypatch
         assert kwargs['mark_answered'] is True
         assert kwargs['origin'] == 'ai'
         assert kwargs['trigger_message_id'] == 10
-        assert kwargs['text'] == '🤖 ИИ-помощник\n\nПроверьте настройки\n\nПозовите оператора'
+        assert kwargs['text'] == 'Проверьте настройки\n\nПозовите оператора'
         api.attach_reply_message.assert_awaited_once_with(12, 11)
     finally:
         await service.stop()
@@ -286,3 +286,10 @@ async def test_chat_handoff_messages_are_not_answered_by_ai(monkeypatch, ticket)
     monkeypatch.setattr(worker, 'load_conversation', AsyncMock(return_value=(ticket, ticket.messages)))
     await worker.AiTicketService().process(worker.TicketJob(3, 10))
     api.answer.assert_not_awaited()
+
+
+async def test_auto_reply_has_no_ai_prefix(loaded):
+    await worker.AiTicketService().process(worker.TicketJob(3, 10))
+    text = worker.publish_support_reply.call_args.kwargs['text']
+    assert not text.startswith(api.AI_REPLY_PREFIX)
+    assert text.startswith('Проверьте настройки') and text.endswith('Позовите оператора')

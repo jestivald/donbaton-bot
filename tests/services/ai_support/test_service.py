@@ -400,3 +400,9 @@ async def test_handoff_claim_in_text_becomes_handoff(journal, transport, kb, tex
         assert result.reply_text == text
     else:
         assert result.outcome == api.AiOutcome.ANSWERED and result.handoff_reason is None
+
+
+async def test_model_reply_prefix_is_stripped(journal, transport, kb):
+    transport(lambda request: response('🤖 ИИ-помощник\n\n🤖 ИИ-помощник\n\nОбновите подписку.'))
+    result = await api.answer('Не работает', [], ctx())
+    assert result.outcome == api.AiOutcome.ANSWERED and result.reply_text == 'Обновите подписку.'

@@ -142,3 +142,18 @@ def test_long_question_keeps_latest_clarification():
     messages = prompts.messages(question, [], ctx, kb, config)
     assert messages[-1]['content'].endswith('Уточняю: проблема на Android, на iPhone работает')
     assert len(messages[-1]['content']) < 2100
+
+
+def test_assistant_history_without_ai_prefix_and_footer(monkeypatch):
+    monkeypatch.setattr(settings, 'AI_SUPPORT_HISTORY_TURNS', 6)
+    config = settings_view.snapshot()
+    ctx = api.AiRequestContext(api.AiChannel.TICKET, 1)
+    kb = knowledge.build([page('ai-test')], 'ru')
+    footer = settings_view.reply_footer_text()
+    history = [
+        api.ChatTurn('user', 'привет'),
+        api.ChatTurn('assistant', f'{api.AI_REPLY_PREFIX}\n\nЗдравствуйте!\n\n{footer}'),
+    ]
+    messages = prompts.messages('ещё вопрос', history, ctx, kb, config)
+    assistant = next(m for m in messages if m['role'] == 'assistant')['content']
+    assert assistant == 'Здравствуйте!'

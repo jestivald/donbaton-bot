@@ -128,7 +128,10 @@ async def generate(question, history, ctx, config, request_id, run: Run, deadlin
         message = completion.message
         calls = message.get('tool_calls') or []
         if not calls:
-            text = guard(message.get('content') or (HANDOFF_TEXT if run.tool_state.reason else ''))
+            text = guard(
+                prompts.clean_assistant_text(message.get('content') or '')
+                or (HANDOFF_TEXT if run.tool_state.reason else '')
+            )
             if text is None and run.tool_state.reason:
                 # Передача человеку важнее текста: ответ модели не прошёл фильтр — клиенту говорим шаблон.
                 return AiAnswer(

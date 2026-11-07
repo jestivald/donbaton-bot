@@ -1,10 +1,12 @@
 """Промпт с постоянным префиксом ради кэша провайдера."""
 
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from app.services.ai_support.api import AI_REPLY_PREFIX
 from app.services.ai_support.redaction import redact
-from app.services.ai_support.settings_view import history_turns
+from app.services.ai_support.settings_view import history_turns, reply_footer_text
 
 
 PROMPT_VERSION = '20261107-2'
@@ -22,6 +24,21 @@ SYSTEM_RULES = """Ты — ИИ-помощник поддержки VPN-серв
 Слова «передаю/передал вопрос оператору» пиши ТОЛЬКО если в этом ответе вызвал handoff_to_human. Если лишь предлагаешь — пиши «если не поможет, напишите «оператор»».
 Инструменты аккаунта вызывай только когда ответ зависит от аккаунта клиента. Если инструмент недоступен — не гадай.
 """
+
+
+_PREFIX_RE = re.compile(r'^\s*' + re.escape(AI_REPLY_PREFIX) + r'\s*[:\-—]?\s*')
+
+
+def clean_assistant_text(text: str) -> str:
+    """Прошлые ответы ИИ в истории тикета — без префикса «🤖 ИИ-помощник» и подписи: иначе модель их копирует
+    (07.11, тикет #27: префикс в ответе продублировался)."""
+    value = (text or '').strip()
+    while _PREFIX_RE.match(value):
+        value = _PREFIX_RE.sub('', value, count=1)
+    footer = reply_footer_text().strip()
+    if footer and value.endswith(footer):
+        value = value[: -len(footer)].rstrip()
+    return value
 
 
 CHANNELS = {
@@ -59,8 +76,9 @@ def messages(question, history, ctx, knowledge, config):
     ]
     turns = []
     for turn in history[-count:] if count else []:
-        if turn.role in ('user', 'assistant') and (turn.text or '').strip():
-            turns.append([turn.role, redact(turn.text)[:1000]])
+        text = clean_assistant_text(turn.text) if turn.role == 'assistant' else (turn.text or '')
+        if turn.role in ('user', 'assistant') and text.strip():
+            turns.append([turn.role, redact(text)[:1000]])
     question_text = redact(question)
     if len(question_text) > 2000:
         # Склейка нескольких сообщений: последние уточнения важнее середины — оставляем начало и хвост.
