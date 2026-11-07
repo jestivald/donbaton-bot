@@ -4531,6 +4531,8 @@ class Ticket(Base):
     closed_at = Column(AwareDateTime(), nullable=True)
     # SLA reminders
     last_sla_reminder_at = Column(AwareDateTime(), nullable=True)
+    client_reminder_sent_at = Column(AwareDateTime(), nullable=True)
+    autoclosed_at = Column(AwareDateTime(), nullable=True)
 
     # Связи
     user = relationship('User', backref='tickets')

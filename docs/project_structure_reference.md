@@ -402,7 +402,7 @@
   Функции: `get_user_notifications` — Get ticket notifications for current user., `get_user_unread_count` — Get unread notifications count for current user., `mark_notification_as_read` — Mark a notification as read., `mark_all_notifications_as_read` — Mark all notifications as read for current user., `mark_ticket_notifications_as_read` — Mark all notifications for a specific ticket as read., `get_admin_notifications` — Get ticket notifications for admins., `get_admin_unread_count` — Get unread notifications count for admins., `mark_admin_notification_as_read` — Mark an admin notification as read., `mark_all_admin_notifications_as_read` — Mark all admin notifications as read., `mark_admin_ticket_notifications_as_read` — Mark all admin notifications for a specific ticket as read.
 - `app/cabinet/routes/tickets.py` — Python-модуль
   Классы: нет
-  Функции: `get_tickets` — Get user's support tickets., `create_ticket` — Create a new support ticket., `get_ticket` — Get ticket with all messages., `add_ticket_message` — Add message to existing ticket.
+  Функции: `get_tickets` — Get user's support tickets., `create_ticket` — Create a new support ticket., `get_ticket` — Get ticket with all messages., `close_ticket` — Close the user's own ticket through the shared status/event path., `add_ticket_message` — Add message to existing ticket.
 - `app/cabinet/routes/unsubscribe.py` — Python-модуль
   Классы: нет
   Функции: `unsubscribe_page` — Ничего не меняет — только отдаёт самоотправляющуюся форму., `unsubscribe_one_click` — Единственное место, где отписка применяется.
@@ -1943,6 +1943,12 @@
 - `app/services/tariff_switch_policy.py` — Python-модуль
   Классы: нет
   Функции: `remaining_days_for_switch` — Сколько дней остатка оплачивать при переключении тарифа., `should_reset_used_traffic` — Обнулять ли счётчик трафика при переключении тарифа., `should_reset_devices_on_switch` — Сбрасывать ли подключённые устройства при смене тарифа.
+- `app/services/ticket_automation_service.py` — Python-модуль
+  Классы: `TicketAutomationService` (6 методов)
+  Функции: `night_handoff_reply`, `explicit_close_request` — Консервативная дополнительная защита: благодарности сами по себе недостаточно., `asks_client_question`, `aware`, `last_substantive_message`, `waiting_for_human` — Ответ сотрудника снимает ожидание; ответ ИИ и системное напоминание — нет., `request_ai_close` — Инструмент резервирует намерение; только интеграция после финального ответа закрывает тикет., `finish_ai_close` — Вызывать только после ANSWERED: HANDOFF/ошибка/черновик никогда не закрывают тикет.
+- `app/services/ticket_digest_service.py` — Python-модуль
+  Классы: `DigestTicket`
+  Функции: `send_ticket_digests` — True — сводки обработали цикл, одиночные SLA-уведомления отправлять не надо.
 - `app/services/ticket_reply_service.py` — Python-модуль
   Классы: нет
   Функции: `publish_support_reply` — Сохранить один ответ, затем независимо доставить его во все каналы.
@@ -3366,6 +3372,9 @@
 - `migrations/alembic/versions/0144_cispay_subscriptions.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0145_ticket_automation.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 
 ## scripts
 
@@ -3985,6 +3994,9 @@
 - `tests/cabinet/test_ticket_cabinet_guards.py` — Python-модуль
   Классы: нет
   Функции: `user`, `test_create_ticket_rejects_blocked_user` — REGRESSION: заблокированный в поддержке пользователь не должен создавать, `test_add_message_rejects_blocked_user` — REGRESSION: дозапись в тикет тоже должна упираться в глобальную блокировку., `test_expired_block_does_not_reject` — Истёкшая блокировка не считается: CRUD возвращает None, guard молчит., `test_create_ticket_rejects_second_open_ticket` — REGRESSION: второй незакрытый тикет через кабинет создать нельзя., `test_add_message_not_limited_by_open_ticket_check` — Лимит открытых тикетов относится только к созданию: отвечать в свой, `test_get_ticket_respects_disabled_mode` — REGRESSION: при SUPPORT_SYSTEM_MODE=contact чтение тикета должно давать, `test_add_message_respects_disabled_mode` — REGRESSION: при выключенных тикетах дозапись в существующий тикет, `test_create_ticket_respects_disabled_mode` — Пин существующего поведения create_ticket., `test_get_tickets_respects_disabled_mode` — Пин существующего поведения списка тикетов.
+- `tests/cabinet/test_ticket_client_close.py` — Python-модуль
+  Классы: нет
+  Функции: `emitted`, `ticket_client`, `test_close_persists_and_emits_once`, `test_get_exposes_close_capability`, `test_foreign_and_missing_tickets_are_not_found`, `test_disabled_feature_rejects_close`, `test_already_closed_rejects_without_event`, `test_reply_block_does_not_prevent_own_close`
 - `tests/cabinet/test_ticket_reply_state.py` — Python-модуль
   Классы: нет
   Функции: `isolated_notifications` — Оставить реальные запросы и модель, подменив только внешние эффекты., `test_client_reply_reopens_ticket_and_resets_sla` — Закрытый тикет по-прежнему не принимает ответ; остальные ждут поддержки., `test_reply_block_is_exposed_and_enforced` — Поле API и guard используют вычисляемое свойство настоящей модели.
@@ -6087,9 +6099,15 @@
 - `tests/services/test_telegram_transport_startup.py` — Python-модуль
   Классы: нет
   Функции: `test_webhook_without_url_rejects_startup`, `test_valid_transport_configuration_is_accepted`, `test_switch_to_polling_receives_pending_updates_from_old_webhook`, `test_webhook_mode_does_not_delete_webhook_or_start_polling`, `test_webhook_deletion_failure_aborts_startup`
+- `tests/services/test_ticket_automation.py` — Python-модуль
+  Классы: нет
+  Функции: `automation_db`, `ai_record`, `test_autoclose_stores_notice_and_uses_standard_status_event`, `test_thresholds`, `test_reminder_once_after_restart_does_not_postpone_autoclose`, `test_ineligible_status_or_last_client_message`, `test_pending_and_completed_handoff_wait_for_human`, `test_human_answer_after_handoff_allows_autoclose`, `test_human_sent_draft_after_handoff_allows_autoclose`, `test_quiet_hours_defer_both_actions_until_morning`, `test_independent_off_switches`, `test_reminder_requires_question`, `test_night_handoff_text`, `test_client_reply_after_reminder_prevents_autoclose`, `test_current_crud_does_not_reopen_closed_ticket`, `test_service_lifecycle`, `test_bot_chat_handoff_confirmation_has_night_notice`, `test_migration_roundtrip`
 - `tests/services/test_ticket_reply_email.py` — Python-модуль
   Классы: нет
   Функции: `sent` — Перехватывает send_notification роутера., `last_message` — Подменяет чтение последнего сообщения тикета (проверка на фото)., `test_email_user_gets_ticket_reply_email`, `test_photo_reply_marked_in_context`, `test_long_reply_is_previewed`, `test_telegram_user_does_not_get_email` — Юзеру с Telegram ответ уже ушёл в бот — письмо было бы дублем., `test_disabled_toggle_blocks_email`, `test_global_notifications_switch_does_not_mute_support_replies` — ENABLE_NOTIFICATIONS не должен глушить ответ поддержки только email-юзеру., `test_user_without_verified_email_is_skipped`, `test_delivery_failure_does_not_raise`, `test_template_renders_for_supported_languages`, `test_template_escapes_html_in_preview` — Ответ поддержки вида «откройте <config>» не должен ломать вёрстку письма., `test_template_mentions_photo_when_reply_has_one`
+- `tests/services/test_ticket_sla_digest.py` — Python-модуль
+  Классы: `RedisMemory` (5 методов)
+  Функции: `ticket`, `env`, `cycle`, `test_one_message_for_seven_tickets`, `test_interval_survives_new_monitoring_instance`, `test_quiet_hours_skip_all_digests`, `test_morning_once_and_replaces_regular_digest`, `test_interval_counts_from_delivery_after_slow_telegram`, `test_morning_overrides_unexpired_sla_interval`, `test_morning_catches_up_after_restart_later_in_day`, `test_both_switches_off_leave_legacy_policy`, `test_morning_only_then_legacy_policy`, `test_no_quiet_window_means_no_morning_digest`, `test_timezone_is_respected`, `test_empty_morning_processed_once`, `test_delivery_failure_retries_next_cycle`, `test_concurrent_cycles_do_not_duplicate`, `test_redis_unavailable_fails_closed`, `test_morning_send_exception_releases_reservations`, `test_quiet_hours_rechecked_after_slow_ai`, `test_ai_failure_falls_back_to_redacted_client_text`, `test_journal_summary_has_priority_and_is_redacted`, `test_ai_request_is_bounded_and_does_not_bind_ticket_or_user`, `test_ai_timeout_falls_back`, `test_disabled_ai_uses_client_text_without_call`, `test_render_caps_30_rows_and_adds_remaining_count`, `test_render_stays_one_telegram_message_with_whole_escaped_rows`, `test_selection_keeps_legacy_sla_filters_but_morning_lists_all_open`, `test_loading_snapshots_bounded_history_and_releases_transaction`, `test_monitoring_guards_prevent_digests`, `test_monitoring_legacy_path_remains_per_ticket`
 - `tests/services/test_traffic_accounting.py` — Python-модуль
   Классы: нет
   Функции: `account`, `grant`, `test_spent_expired_package_cannot_swallow_new_purchase`, `test_reset_only_restores_base_and_keeps_package_remainder`, `test_repeated_sample_and_grants_are_idempotent`, `test_earlier_expiry_is_consumed_first`, `test_expiry_only_removes_unused_remainder`, `test_invalid_counters_do_not_create_traffic`, `test_exhaustion_does_not_encode_unlimited`, `test_usage_above_entitlement_does_not_consume_future_purchase`, `test_same_operation_key_with_different_grant_is_a_conflict`, `test_old_period_replay_cannot_overwrite_current_base`, `test_counter_increase_without_lifetime_increase_is_rejected`, `test_migration_preserves_current_available_bytes`, `test_migration_does_not_restore_full_active_packages`, `test_unlimited_account_cannot_be_migrated_as_empty_finite_quota`, `test_migration_rejects_reserved_carry_input`
@@ -6211,6 +6229,9 @@
 - `tests/services/ai_support/test_account_tools.py` — Python-модуль
   Классы: `DB` (5 методов)
   Функции: `subscription`, `test_account_overview_has_only_allowed_fields`, `test_devices_uses_existing_api_and_discards_hwid`, `test_account_error_and_permission_gates`
+- `tests/services/ai_support/test_close_ticket_tool.py` — Python-модуль
+  Классы: нет
+  Функции: `context`, `call_close`, `test_close_reserves_then_closes_with_notice_and_is_idempotent`, `test_server_guards`, `test_handoff_and_money_never_close`, `test_handoff_in_same_tool_round_blocks_close`, `test_new_handoff_or_client_reply_after_reservation_blocks_final_close`, `test_tool_exposed_only_for_automatic_ticket_channel`, `test_prompt_requires_explicit_request`, `test_finish_without_model_tool_request_does_nothing`, `test_explicit_close_request`, `test_worker_finalizes_only_successful_automatic_reply`, `prepare_worker`, `test_worker_appends_night_text_only_on_handoff`
 - `tests/services/ai_support/test_images.py` — Python-модуль
   Классы: нет
   Функции: `vision`, `bot_with`, `test_vision_settings_defaults_and_category`, `test_vision_capability`, `test_fetch_keeps_bytes_in_memory_and_limits_count`, `test_mime_by_signature_or_extension`, `test_declared_oversize_skipped_before_download`, `test_real_size_limit_even_without_file_size`, `test_exact_size_is_allowed`, `test_download_error_skips_and_continues`, `test_timeout_includes_both_telegram_operations`, `test_disabled_no_bot_or_zero_limits_do_not_download`, `test_photo_uses_largest_size_that_fits`, `test_image_document_selection`, `test_api_images_rechecked_for_size_mime_and_count`, `test_provider_hard_limit_32_mib`

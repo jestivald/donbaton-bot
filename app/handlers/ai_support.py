@@ -23,6 +23,7 @@ from app.services.ai_support import api
 from app.services.ai_support.images import fetch_telegram_images, telegram_image_refs, unavailable_question
 from app.services.ai_support.limits import day_start
 from app.services.support_settings_service import SupportSettingsService
+from app.services.ticket_automation_service import night_handoff_reply
 from app.utils.cache import cache
 
 
@@ -384,7 +385,10 @@ async def handoff_to_operator(
             'AI_SUPPORT_HANDOFF_DONE',
             'Передал оператору, обращение №{ticket_id}; ответ придёт сюда и в разделе «Поддержка».',
         ).format(ticket_id=ticket_id)
-        await message.answer(_explanation_prefix(explanation) + html.escape(confirmation), parse_mode='HTML')
+        await message.answer(
+            _explanation_prefix(explanation) + html.escape(night_handoff_reply(confirmation, language)),
+            parse_mode='HTML',
+        )
     except Exception:
         logger.exception('Не удалось передать чат ИИ оператору', request_id=request_id)
         await _unavailable(message, language)

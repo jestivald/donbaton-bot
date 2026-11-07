@@ -372,6 +372,9 @@ async def main():
         monitoring_service.bot = bot
         grace_access_runtime.bot = bot
         maintenance_service.set_bot(bot)
+        from app.services.ticket_automation_service import ticket_automation_service
+
+        await ticket_automation_service.start()
         try:
             from app.services.ai_support import api as ai_support_api
             from app.services.ai_support_tickets import ai_ticket_service
@@ -994,6 +997,12 @@ async def main():
                 logger.warning('Не удалось отправить уведомление об остановке', error=shutdown_notify_error)
 
         logger.info('ℹ️ Остановка сервиса автопроверки пополнений...')
+        try:
+            from app.services.ticket_automation_service import ticket_automation_service
+
+            await ticket_automation_service.stop()
+        except Exception:
+            logger.exception('Не удалось остановить автоматизацию тикетов')
         try:
             from app.services.ai_support import api as ai_support_api
             from app.services.ai_support_tickets import ai_ticket_service

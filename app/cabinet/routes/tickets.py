@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.cabinet.routes.media import make_media_token
 from app.cabinet.routes.websocket import notify_admins_new_ticket, notify_admins_ticket_reply
+from app.config import settings
 from app.database.crud.ticket import TicketCRUD
 from app.database.crud.ticket_notification import TicketNotificationCRUD
 from app.database.models import Ticket, TicketMessage, User
@@ -271,6 +272,7 @@ async def create_ticket(
         updated_at=ticket.updated_at,
         closed_at=ticket.closed_at,
         is_reply_blocked=ticket.is_user_reply_blocked,
+        can_close=settings.SUPPORT_CLIENT_CAN_CLOSE_TICKETS and ticket.status != 'closed',
         messages=messages,
     )
 
@@ -309,8 +311,34 @@ async def get_ticket(
         updated_at=ticket.updated_at or ticket.created_at,
         closed_at=ticket.closed_at,
         is_reply_blocked=ticket.is_user_reply_blocked,
+        can_close=settings.SUPPORT_CLIENT_CAN_CLOSE_TICKETS and ticket.status != 'closed',
         messages=messages_response,
     )
+
+
+@router.post('/{ticket_id}/close', response_model=TicketDetailResponse)
+async def close_ticket(
+    ticket_id: int,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Close the user's own ticket through the shared status/event path."""
+    _ensure_tickets_enabled()
+    if not settings.SUPPORT_CLIENT_CAN_CLOSE_TICKETS:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Closing support tickets is disabled')
+
+    # Serialize concurrent close requests and replies that lock this ticket.
+    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.user_id == user.id).with_for_update())
+    ticket = result.scalar_one_or_none()
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Ticket not found')
+    if ticket.status == 'closed':
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Ticket is already closed')
+
+    # TicketCRUD emits ticket.status_changed, consumed by the admin support WS bridge.
+    if not await TicketCRUD.close_ticket(db, ticket_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Ticket not found')
+    return await get_ticket(ticket_id, user, db)
 
 
 @router.post('/{ticket_id}/messages', response_model=TicketMessageResponse)
@@ -325,7 +353,7 @@ async def add_ticket_message(
     await _ensure_not_blocked(db, user)
 
     # Get ticket
-    query = select(Ticket).where(Ticket.id == ticket_id, Ticket.user_id == user.id)
+    query = select(Ticket).where(Ticket.id == ticket_id, Ticket.user_id == user.id).with_for_update()
     result = await db.execute(query)
     ticket = result.scalar_one_or_none()
 

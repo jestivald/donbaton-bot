@@ -1,4 +1,4 @@
-"""Инструменты только для чтения: субъект всегда берётся из контекста запроса."""
+"""Инструменты поддержки: субъект всегда берётся из контекста запроса."""
 
 import asyncio
 import json
@@ -11,9 +11,10 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database.database import AsyncSessionLocal
 from app.database.models import Subscription, Transaction, User
-from app.services.ai_support.api import HandoffReason
+from app.services.ai_support.api import AiChannel, HandoffReason
 from app.services.ai_support.output_guard import operator_summary
 from app.services.ai_support.redaction import redact
 
@@ -63,6 +64,11 @@ def definitions(ctx, config):
             ['reason', 'summary'],
         )
     ]
+    if settings.AI_SUPPORT_CAN_CLOSE_TICKETS and ctx.channel == AiChannel.TICKET and ctx.ticket_id and ctx.user_id:
+        from app.services.ai_support import api
+
+        if api.ticket_mode() == 'auto':
+            tools.append(schema('close_ticket', 'Запросить закрытие текущего обращения по явной просьбе клиента.'))
     if config.share_account and ctx.allow_account_tools and ctx.user_id:
         tools.extend(
             [
@@ -245,6 +251,14 @@ async def execute(call, ctx, config, state: ToolState):
             state.reason = HandoffReason(args['reason'])
             state.summary = operator_summary(args['summary'], state.reason)
             return {'accepted': True, 'note': 'Сообщи клиенту, что вопрос передан оператору; ответ придёт сюда'}
+        if name == 'close_ticket':
+            from app.services.ticket_automation_service import request_ai_close
+
+            if args or state.reason is not None:
+                return UNAVAILABLE
+            if await request_ai_close(ctx):
+                return {'accepted': True, 'note': 'Закрытие запрошено; приложение подтвердит его клиенту само.'}
+            return UNAVAILABLE
         if not (config.share_account and ctx.allow_account_tools and ctx.user_id) or args:
             return UNAVAILABLE
         if name == 'get_account_overview':

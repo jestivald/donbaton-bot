@@ -3416,6 +3416,10 @@ class MonitoringService:
                 sla_minutes = max(1, int(getattr(settings, 'SUPPORT_TICKET_SLA_MINUTES', 60)))
             cooldown_minutes = max(1, int(getattr(settings, 'SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES', 30)))
             now = datetime.now(UTC)
+            from app.services.ticket_digest_service import send_ticket_digests
+
+            if await send_ticket_digests(db, self.bot, now, sla_minutes, cooldown_minutes):
+                return
             stale_before = now - timedelta(minutes=sla_minutes)
             cooldown_before = now - timedelta(minutes=cooldown_minutes)
 

@@ -17,6 +17,7 @@ from app.services.ai_support_notify import admin_alert, notify_ticket_answer, se
 from app.services.event_emitter import event_emitter
 from app.services.maintenance_service import maintenance_service
 from app.services.support_settings_service import SupportSettingsService
+from app.services.ticket_automation_service import explicit_close_request, finish_ai_close, night_handoff_reply
 from app.services.ticket_reply_service import publish_support_reply
 
 
@@ -285,10 +286,26 @@ class AiTicketService:
             if result.reply_text and await _reserve_draft(ticket.id, result.request_id):
                 await notify_ticket_answer(ticket.id, result, draft=True)
             return
+        if result.outcome == api.AiOutcome.ANSWERED and explicit_close_request(question):
+            closed_message = await finish_ai_close(
+                api.AiRequestContext(
+                    api.AiChannel.TICKET,
+                    ticket.user_id,
+                    language=ticket.user.language if ticket.user else 'ru',
+                    ticket_id=ticket.id,
+                    trigger_message_id=job.message_id,
+                )
+            )
+            if closed_message is not None:
+                await api.attach_reply_message(result.request_id, closed_message)
+                await notify_ticket_answer(ticket.id, result)
+                return
         handoff = result.outcome == api.AiOutcome.HANDOFF
         reply = result.reply_text or ('Приглашаю оператора.' if handoff else '')
         if not reply:
             return
+        if handoff:
+            reply = night_handoff_reply(reply, ticket.user.language if ticket.user else 'ru')
         published = await publish_support_reply(
             ticket_id=ticket.id,
             author_user_id=None,

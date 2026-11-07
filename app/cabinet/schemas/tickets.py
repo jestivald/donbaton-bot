@@ -97,6 +97,7 @@ class TicketDetailResponse(BaseModel):
     updated_at: datetime
     closed_at: datetime | None = None
     is_reply_blocked: bool = False
+    can_close: bool = False
     messages: list[TicketMessageResponse] = []
 
     class Config:
