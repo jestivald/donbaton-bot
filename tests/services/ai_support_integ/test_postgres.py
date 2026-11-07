@@ -30,8 +30,10 @@ async def test_concurrent_publish_rechecks_trigger_under_row_lock(postgres_datab
             await db.flush()
             question = TicketMessage(ticket_id=ticket.id, user_id=user.id, message_text='Помогите', is_from_admin=False)
             db.add(question)
+            admin = User(first_name='Админ', language='ru', telegram_id=900001)
+            db.add(admin)
             await db.commit()
-            ticket_id, trigger = ticket.id, question.id
+            ticket_id, trigger, admin_id = ticket.id, question.id, admin.id
 
         held = asyncio.Event()
         waiter_seen = asyncio.Event()
@@ -55,6 +57,7 @@ async def test_concurrent_publish_rechecks_trigger_under_row_lock(postgres_datab
             monkeypatch.setattr(service.SupportSettingsService, 'is_tickets_enabled', lambda: True)
             monkeypatch.setattr(service.event_emitter, 'emit', AsyncMock())
             monkeypatch.setattr(service, '_deliver_reply', AsyncMock())
+            monkeypatch.setattr(service.settings, 'AI_SUPPORT_AUTHOR_TELEGRAM_ID', 900001)
 
             async def publish():
                 return await service.publish_support_reply(
@@ -79,7 +82,9 @@ async def test_concurrent_publish_rechecks_trigger_under_row_lock(postgres_datab
                 )
                 == 1
             )
-            assert await db.scalar(select(func.count()).select_from(User).where(User.auth_type == 'ai_support')) == 1
+            assert await db.scalar(select(func.count()).select_from(User)) == 2  # клиент и админ, без служебного автора
+            reply = await db.scalar(select(TicketMessage).where(TicketMessage.is_from_admin.is_(True)))
+            assert reply.user_id == admin_id
             assert (await db.get(Ticket, ticket_id)).status == 'open'
 
 

@@ -227,7 +227,8 @@ class AiTicketService:
         published = await publish_support_reply(
             ticket_id=ticket.id,
             author_user_id=None,
-            text=f'{api.AI_REPLY_PREFIX}\n\n{reply}\n\n{api.reply_footer_text()}',
+            # После передачи человеку подпись «напишите «оператор»» уже не нужна.
+            text=f'{api.AI_REPLY_PREFIX}\n\n{reply}' + ('' if handoff else f'\n\n{api.reply_footer_text()}'),
             mark_answered=not handoff,
             origin='ai',
             trigger_message_id=job.message_id,

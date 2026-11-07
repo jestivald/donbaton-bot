@@ -99,9 +99,31 @@ def test_normalization_and_prompt_order(monkeypatch):
     ctx = api.AiRequestContext(api.AiChannel.TICKET, 99999999, ticket_title='Email a@b.com')
     kb = knowledge.build([page('ai-test')], 'ru')
     messages = prompts.messages('вопрос +7 999 123 45 67', [api.ChatTurn('user', 'old')], ctx, kb, config)
-    assert [m['role'] for m in messages] == ['system', 'system', 'system', 'user', 'user']
+    # Контекст канала — в системном сообщении, тема тикета — в вопросе; история длиной 0 не передаётся.
+    assert [m['role'] for m in messages] == ['system', 'system', 'system', 'user']
     assert messages[1]['content'].startswith('База знаний:')
-    assert 'Текущая дата МСК:' in messages[2]['content']
+    assert 'Текущая дата МСК:' in messages[2]['content'] and 'Канал: обращение' in messages[2]['content']
     assert '99999999' not in json.dumps(messages)
     assert 'a@b.com' not in json.dumps(messages)
-    assert messages[-1]['content'] == 'вопрос [телефон]'
+    assert messages[-1]['content'] == 'Тема обращения: Email [почта]\n\nвопрос [телефон]'
+
+
+def test_prompt_merges_consecutive_roles_and_keeps_owner_contacts(monkeypatch):
+    monkeypatch.setattr(settings, 'AI_SUPPORT_HISTORY_TURNS', 6)
+    monkeypatch.setattr(
+        settings, 'AI_SUPPORT_OWNER_INSTRUCTIONS_TEMPLATE', 'Контакт: @batonsupport, support@donbaton.tech'
+    )
+    config = settings_view.snapshot()
+    ctx = api.AiRequestContext(api.AiChannel.BOT_CHAT, 1)
+    kb = knowledge.build([page('ai-test')], 'ru')
+    history = [
+        api.ChatTurn('user', 'первое'),
+        api.ChatTurn('user', 'второе'),
+        api.ChatTurn('assistant', 'ответ'),
+    ]
+    messages = prompts.messages('ещё вопрос', history, ctx, kb, config)
+    roles = [m['role'] for m in messages if m['role'] != 'system']
+    assert roles == ['user', 'assistant', 'user']
+    assert messages[3]['content'] == 'первое\n\nвторое'
+    # Инструкции владельца — доверенный текст: публичные контакты не обезличиваются.
+    assert '@batonsupport' in messages[2]['content'] and 'support@donbaton.tech' in messages[2]['content']

@@ -210,6 +210,8 @@ class Settings(BaseSettings):
     AI_SUPPORT_OWNER_INSTRUCTIONS_TEMPLATE: str = ''
     AI_SUPPORT_STATUS_NOTE_TEMPLATE: str = ''
     AI_SUPPORT_REPLY_FOOTER_TEMPLATE: str = 'Если ответ не помог — напишите «оператор», и вопрос перейдёт сотруднику.'
+    # Telegram ID администратора, от имени которого в тикете публикуются ответы ИИ (0 — первый из ADMIN_IDS).
+    AI_SUPPORT_AUTHOR_TELEGRAM_ID: int = 0
 
     SUPPORT_USERNAME: str = '@support'
     # Публичные контакты сервиса, которые кабинет отдаёт в GET /info/service.

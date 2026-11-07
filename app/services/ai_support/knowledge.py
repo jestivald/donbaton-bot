@@ -15,7 +15,6 @@ from sqlalchemy import and_, or_, select
 from app.database.database import AsyncSessionLocal
 from app.database.models import InfoPage
 from app.services.ai_support.api import KbStatus
-from app.services.ai_support.redaction import redact
 
 
 logger = structlog.get_logger(__name__)
@@ -107,7 +106,8 @@ def build(pages, language: str) -> Knowledge:
             items += 1
         chunks.append(title + '\n' + '\n\n'.join(content))
         slugs.append(page.slug)
-    text = redact('\n\n'.join(chunks))
+    # База знаний — доверенный текст владельца: не обезличиваем (иначе пропадут публичные контакты поддержки).
+    text = '\n\n'.join(chunks)
     return Knowledge(
         text,
         KbStatus(

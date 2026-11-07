@@ -770,6 +770,9 @@ class BotConfigurationService:
             'description': 'Текущие известные сбои и статус сервиса (многострочный текст).'
         },
         'AI_SUPPORT_REPLY_FOOTER_TEMPLATE': {'description': 'Подпись под ответом ИИ в тикете: как вызвать оператора.'},
+        'AI_SUPPORT_AUTHOR_TELEGRAM_ID': {
+            'description': 'Telegram ID админа — автора ответов ИИ в тикетах; 0 — первый из ADMIN_IDS, найденный в базе.'
+        },
         'SUPPORT_ADMIN_TICKET_NOTIFICATIONS_ENABLED': {
             'description': 'Сообщать администраторам в Telegram о новых тикетах и ответах пользователей.',
             'format': 'Булево значение (да/нет).',

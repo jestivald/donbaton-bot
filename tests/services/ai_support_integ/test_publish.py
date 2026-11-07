@@ -115,19 +115,32 @@ async def test_publish_ai_rechecks_before_commit(monkeypatch, ticket, guard):
     service.event_emitter.emit.assert_not_awaited()
 
 
-async def test_system_author_has_no_login_or_admin_rights(monkeypatch, ticket):
-    db = Db([ticket, SimpleNamespace(id=10, is_from_admin=False), None])
+async def test_ai_author_is_existing_admin_account(monkeypatch, ticket):
+    """Синтетического автора не создаём: автор ответа ИИ — найденный в базе админ из ADMIN_IDS."""
+    monkeypatch.setattr(service.settings, 'AI_SUPPORT_AUTHOR_TELEGRAM_ID', 0)
+    monkeypatch.setattr(service.settings, 'ADMIN_IDS', '111,222')
+    db = Db([ticket, SimpleNamespace(id=10, is_from_admin=False), None, 77])
     monkeypatch.setattr(service, 'AsyncSessionLocal', lambda: db)
     await service.publish_support_reply(
         ticket_id=3, author_user_id=None, text='ИИ', mark_answered=True, origin='ai', trigger_message_id=10
     )
-    author = next(obj for obj in db.added if isinstance(obj, User))
-    assert author.auth_type == 'ai_support'
-    assert author.telegram_id is None
-    assert author.email is None
-    assert author.password_hash is None
+    assert not any(isinstance(obj, User) for obj in db.added)
     reply = next(obj for obj in db.added if isinstance(obj, TicketMessage))
-    assert reply.user_id == author.id
+    assert reply.user_id == 77
+
+
+async def test_ai_reply_skipped_without_admin_author(monkeypatch, ticket):
+    monkeypatch.setattr(service.settings, 'AI_SUPPORT_AUTHOR_TELEGRAM_ID', 555)
+    db = Db([ticket, SimpleNamespace(id=10, is_from_admin=False), None])
+    monkeypatch.setattr(service, 'AsyncSessionLocal', lambda: db)
+    assert (
+        await service.publish_support_reply(
+            ticket_id=3, author_user_id=None, text='ИИ', mark_answered=True, origin='ai', trigger_message_id=10
+        )
+        is None
+    )
+    assert not db.added
+    assert not db.commits
 
 
 async def test_human_draft_is_audited_as_human(monkeypatch, ticket):

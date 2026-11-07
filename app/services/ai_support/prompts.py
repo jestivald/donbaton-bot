@@ -23,37 +23,56 @@ SYSTEM_RULES = """Ты — ИИ-помощник поддержки VPN-серв
 """
 
 
+CHANNELS = {
+    'bot_chat': 'личный чат с Telegram-ботом',
+    'ticket': 'обращение (тикет) в поддержку — бот или личный кабинет',
+    'admin_test': 'проверка ответа администратором',
+}
+
+
 def messages(question, history, ctx, knowledge, config):
+    """Порядок ради кэша провайдера: правила → база знаний → инструкции/статус/дата/канал → диалог.
+
+    База знаний и инструкции владельца — доверенный текст и не обезличиваются (иначе пропадут публичные
+    контакты поддержки); обезличиваются только реплики клиента и истории. Соседние реплики одной роли
+    склеиваются, чтобы провайдер всегда получал чередование «клиент — помощник».
+    """
     count = history_turns()
+    language = ''.join(ch for ch in str(ctx.language or 'ru') if ch.isalnum() or ch == '-')[:10] or 'ru'
     result = [
         {'role': 'system', 'content': SYSTEM_RULES},
         {'role': 'system', 'content': 'База знаний:\n' + knowledge.text},
         {
             'role': 'system',
-            'content': redact(
-                'Дополнительные инструкции владельца:\n'
-                + config.owner_instructions
-                + '\nТекущий статус:\n'
-                + config.status_note
-                + '\nТекущая дата МСК: '
-                + datetime.now(ZoneInfo('Europe/Moscow')).strftime('%d.%m.%Y')
-            ),
-        },
-        {
-            'role': 'user',
-            'content': 'Контекст обращения (данные): канал='
-            + ctx.channel.value
-            + ', язык='
-            + redact(ctx.language)[:20]
-            + ', тема='
-            + redact(ctx.ticket_title or '')[:300],
+            'content': 'Дополнительные инструкции владельца:\n'
+            + (config.owner_instructions or '—')
+            + '\nТекущий статус:\n'
+            + (config.status_note or '—')
+            + '\nТекущая дата МСК: '
+            + datetime.now(ZoneInfo('Europe/Moscow')).strftime('%d.%m.%Y')
+            + '\nКанал: '
+            + CHANNELS.get(ctx.channel.value, ctx.channel.value)
+            + '; язык клиента: '
+            + language,
         },
     ]
+    turns = []
     for turn in history[-count:] if count else []:
-        if turn.role in ('user', 'assistant'):
-            message = {'role': turn.role, 'content': redact(turn.text)[:1000]}
-            if config.thinking and turn.role == 'assistant':
-                message['reasoning_content'] = ''
-            result.append(message)
-    result.append({'role': 'user', 'content': redact(question)[:2000]})
+        if turn.role in ('user', 'assistant') and (turn.text or '').strip():
+            turns.append([turn.role, redact(turn.text)[:1000]])
+    question_text = redact(question)[:2000]
+    if ctx.ticket_title:
+        question_text = 'Тема обращения: ' + redact(ctx.ticket_title)[:300] + '\n\n' + question_text
+    turns.append(['user', question_text])
+    merged = []
+    for role, text in turns:
+        if merged and merged[-1][0] == role:
+            merged[-1][1] += '\n\n' + text
+        else:
+            merged.append([role, text])
+    for role, text in merged:
+        message = {'role': role, 'content': text}
+        if config.thinking and role == 'assistant':
+            message['reasoning_content'] = ''
+        result.append(message)
     return result

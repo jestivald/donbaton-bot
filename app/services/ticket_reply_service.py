@@ -4,9 +4,10 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import structlog
-from sqlalchemy import select, text as sql_text
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database.crud.ticket import TicketCRUD
 from app.database.crud.ticket_notification import TicketNotificationCRUD
 from app.database.database import AsyncSessionLocal
@@ -18,15 +19,21 @@ from app.services.support_settings_service import SupportSettingsService
 logger = structlog.get_logger(__name__)
 
 
-async def _ai_author_id(db) -> int:
-    """Служебный автор без способов входа и административных прав."""
-    await db.execute(sql_text('SELECT pg_advisory_xact_lock(714201, 1)'))
-    author = await db.scalar(select(User).where(User.auth_type == 'ai_support').limit(1))
-    if author is None:
-        author = User(auth_type='ai_support', first_name='ИИ-помощник', language='ru')
-        db.add(author)
-        await db.flush()
-    return author.id
+async def _ai_author_id(db) -> int | None:
+    """Автор ответа ИИ в тикете — существующий админ-аккаунт.
+
+    Синтетического пользователя не создаём: ticket_messages.user_id ссылается на users с ON DELETE CASCADE,
+    а автоочистка неактивных пользователей (get_inactive_users) рано или поздно удалила бы такого автора
+    вместе со всеми ответами ИИ. Ответы ИИ отличаются по журналу ai_support_requests и префиксу в тексте.
+    """
+    configured = int(settings.AI_SUPPORT_AUTHOR_TELEGRAM_ID or 0)
+    candidates = [configured] if configured else settings.get_admin_ids()
+    for telegram_id in candidates:
+        author_id = await db.scalar(select(User.id).where(User.telegram_id == telegram_id).limit(1))
+        if author_id is not None:
+            return author_id
+    logger.warning('Не найден админ-аккаунт для ответов ИИ в тикетах', configured=configured)
+    return None
 
 
 async def publish_support_reply(
@@ -71,6 +78,8 @@ async def publish_support_reply(
                 if origin == 'human':
                     return None
                 author_user_id = await _ai_author_id(db)
+                if author_user_id is None:
+                    return None
             message = TicketMessage(
                 ticket_id=ticket_id, user_id=author_user_id, message_text=text, is_from_admin=True, has_media=False
             )

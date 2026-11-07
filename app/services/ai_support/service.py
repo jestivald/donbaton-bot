@@ -48,21 +48,33 @@ async def alert(kind: str, *, deadline: float | None = None) -> None:
         logger.warning('Не удалось отправить тревогу ИИ', kind=kind)
 
 
+# «Оператор» в вопросах о VPN чаще всего — мобильный оператор (МТС, Билайн…), поэтому слово само по себе
+# не считается просьбой о человеке: нужна либо реплика из одного обращения («оператор», «человека пожалуйста»),
+# либо глагол просьбы рядом («позовите оператора», «нужен живой человек», «свяжите с сотрудником»).
+_HUMAN_NOUN = r'(?:оператор\w*|человек\w*|сотрудник\w*|специалист\w*|менеджер\w*|поддержк\w*|админ\w*)'
+_HUMAN_ONLY_RE = re.compile(
+    r'^(?:(?:мне|нам)\s+)?(?:(?:жив\w*|реальн\w*|настоящ\w*)\s+)?' + _HUMAN_NOUN + r'(?:\s+(?:пожалуйста|плиз|pls))?$'
+)
+_HUMAN_ASK_RE = re.compile(
+    r'(?:позови\w*|позвать|зови\w*|дайте|дай|хочу|нужен|нужна|нужно|соедини\w*|переключи\w*|переведи\w*|'
+    r'свяжи\w*|связаться|подключи\w*|пригласи\w*|верните|вызови\w*|вызвать|можно)\s+'
+    r'(?:мне\s+|меня\s+|нас\s+)?(?:с\s+|на\s+|к\s+)?(?:(?:жив\w*|реальн\w*|настоящ\w*)\s+)?' + _HUMAN_NOUN
+)
+_HUMAN_NEGATION_RE = re.compile(
+    r'(?:не\s+(?:нужен|нужна|нужно|надо|зови\w*|хочу)|без)\s+(?:(?:жив\w*)\s+)?' + _HUMAN_NOUN
+)
+_HUMAN_EN_RE = re.compile(
+    r'\b(?:(?:talk|speak|chat|connect\s+me)\s+(?:to|with)\s+(?:a\s+)?(?:human|person|agent|operator|someone)|'
+    r'(?:real|live)\s+(?:human|person|agent|operator)|^(?:human|operator|agent)(?:\s+please)?$)\b'
+)
+
+
 def is_human_request(text: str) -> bool:
-    value = (text or '').lower().strip()
-    if re.search(r'\b(?:не\s+(?:нужен|надо|зови|нужна)|без)\s+(?:оператор|человек|сотрудник)', value):
+    value = re.sub(r'[!?.,…:;)(«»"\']+', ' ', (text or '').lower()).strip()
+    value = re.sub(r'\s+', ' ', value)
+    if not value or _HUMAN_NEGATION_RE.search(value):
         return False
-    if re.search(r'\bоператор\s+(?:связи|мобильн|интернет)', value):
-        return False
-    return bool(
-        re.search(
-            r'\b(?:оператор(?:а|у|ом)?|жив(?:ой|ого|ому)\s+(?:человек\w*|сотрудник\w*)|'
-            r'(?:позови(?:те)?|дайте|хочу|нужен|соедините|переведите|свяжите)\s+(?:меня\s+)?(?:с\s+)?(?:человек\w*|сотрудник\w*)|'
-            r'human|live\s+agent|speak\s+to\s+(?:a\s+)?(?:person|agent))\b',
-            value,
-            re.IGNORECASE,
-        )
-    )
+    return bool(_HUMAN_ONLY_RE.match(value) or _HUMAN_ASK_RE.search(value) or _HUMAN_EN_RE.search(value))
 
 
 @dataclass
@@ -110,6 +122,14 @@ async def generate(question, history, ctx, config, request_id, run: Run, deadlin
         calls = message.get('tool_calls') or []
         if not calls:
             text = guard(message.get('content') or (HANDOFF_TEXT if run.tool_state.reason else ''))
+            if text is None and run.tool_state.reason:
+                # Передача человеку важнее текста: ответ модели не прошёл фильтр — клиенту говорим шаблон.
+                return AiAnswer(
+                    AiOutcome.HANDOFF,
+                    reply_text=HANDOFF_TEXT,
+                    handoff_reason=run.tool_state.reason,
+                    operator_summary=run.tool_state.summary,
+                )
             if text is None:
                 return AiAnswer(AiOutcome.FILTERED, error_code='output_filtered')
             return AiAnswer(

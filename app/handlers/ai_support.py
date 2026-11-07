@@ -155,7 +155,9 @@ async def handle_ai_message(message: types.Message, db_user: User | None = None)
         if result.request_id is not None:
             await _remember(result.request_id, db_user.id, turns)
         if result.outcome == api.AiOutcome.HANDOFF and result.request_id is not None:
-            await handoff_to_operator(message, db_user, result.request_id, turns, result.handoff_reason)
+            await handoff_to_operator(
+                message, db_user, result.request_id, turns, result.handoff_reason, explanation=result.reply_text
+            )
         elif result.outcome == api.AiOutcome.ANSWERED and result.reply_text:
             texts = get_texts(language)
             disclosure = texts.t(
@@ -200,29 +202,42 @@ async def _get_or_create_handoff(user_id: int, request_id: int, turns: list[api.
         return ticket.id
 
 
+def _explanation_prefix(explanation: str | None) -> str:
+    """Пояснение модели (например, правила возврата) перед подтверждением передачи; шаблон не дублируем."""
+    from app.services.ai_support.service import HANDOFF_TEXT
+
+    text = (explanation or '').strip()
+    if not text or text == HANDOFF_TEXT:
+        return ''
+    return html.escape(text[:3000]) + '\n\n'
+
+
 async def handoff_to_operator(
     message: types.Message,
     db_user: User,
     request_id: int,
     turns: list[api.ChatTurn],
     reason: str | None = None,
+    *,
+    explanation: str | None = None,
 ) -> None:
     texts = get_texts(db_user.language)
     try:
         ticket_id = await _get_or_create_handoff(db_user.id, request_id, turns, reason)
         if ticket_id is None:
             await message.answer(
-                texts.t('AI_SUPPORT_CONTACT_ONLY', 'Свяжитесь с оператором по кнопке поддержки.'),
+                _explanation_prefix(explanation)
+                + html.escape(texts.t('AI_SUPPORT_CONTACT_ONLY', 'Свяжитесь с оператором по кнопке поддержки.')),
+                parse_mode='HTML',
                 reply_markup=support_keyboard(db_user.language, contact_only=True),
             )
             return
         await api.mark_handoff_done(request_id, ticket_id)
-        await message.answer(
-            texts.t(
-                'AI_SUPPORT_HANDOFF_DONE',
-                'Передал оператору, обращение №{ticket_id}; ответ придёт сюда и в разделе «Поддержка».',
-            ).format(ticket_id=ticket_id)
-        )
+        confirmation = texts.t(
+            'AI_SUPPORT_HANDOFF_DONE',
+            'Передал оператору, обращение №{ticket_id}; ответ придёт сюда и в разделе «Поддержка».',
+        ).format(ticket_id=ticket_id)
+        await message.answer(_explanation_prefix(explanation) + html.escape(confirmation), parse_mode='HTML')
     except Exception:
         logger.exception('Не удалось передать чат ИИ оператору', request_id=request_id)
         await _unavailable(message, db_user.language)

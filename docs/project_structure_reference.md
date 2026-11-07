@@ -945,6 +945,9 @@
   Классы: нет
   Функции: нет
 - `app/handlers/admin/`
+- `app/handlers/ai_support.py` — Python-модуль
+  Классы: нет
+  Функции: `support_keyboard`, `answer_keyboard`, `handle_ai_message`, `handoff_to_operator`, `handle_feedback`, `handle_operator`, `register_handlers`
 - `app/handlers/balance/`
 - `app/handlers/channel_member.py` — Python-модуль
   Классы: нет
@@ -1001,6 +1004,9 @@
 - `app/handlers/admin/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `app/handlers/admin/ai_support.py` — Python-модуль
+  Классы: `AiSupportStates`
+  Функции: `show_ai_support`, `refresh_kb`, `start_test`, `test_question`, `send_draft` — Права совпадают с ручным ответом: администратор или активный модератор., `register_handlers`
 - `app/handlers/admin/backup.py` — Python-модуль
   Классы: `BackupStates`
   Функции: `get_backup_main_keyboard`, `get_backup_list_keyboard`, `get_backup_manage_keyboard`, `get_backup_settings_keyboard`, `show_backup_panel`, `create_backup_handler`, `show_backup_list`, `manage_backup_file`, `delete_backup_confirm`, `delete_backup_execute`, `restore_backup_start`, `restore_backup_execute`, `handle_backup_file_upload`, `show_backup_settings`, `toggle_backup_setting`, `register_handlers`
@@ -1466,6 +1472,12 @@
   Классы: `NotificationCategory`, `AdminNotificationService` (50 методов)
   Функции: нет
 - `app/services/ai_support/`
+- `app/services/ai_support_notify.py` — Python-модуль
+  Классы: нет
+  Функции: `ticket_keyboard`, `send_notice` — Все внешние вставки экранируются после обрезки, включая тексты тревог., `admin_alert`, `notify_ticket_answer`
+- `app/services/ai_support_tickets.py` — Python-модуль
+  Классы: `TicketJob`, `AiTicketService` (7 методов)
+  Функции: `load_conversation` — Короткий снимок; к моменту обращения к модели сессия уже закрыта., `conversation_input`, `enqueue_ticket_message` — Безопасная точка входа для мобильного WS и других источников.
 - `app/services/antilopay_service.py` — Python-модуль
   Классы: `AntilopayAPIError` (1 методов), `AntilopayService` (12 методов)
   Функции: нет
@@ -1880,6 +1892,9 @@
 - `app/services/tariff_switch_policy.py` — Python-модуль
   Классы: нет
   Функции: `remaining_days_for_switch` — Сколько дней остатка оплачивать при переключении тарифа., `should_reset_used_traffic` — Обнулять ли счётчик трафика при переключении тарифа., `should_reset_devices_on_switch` — Сбрасывать ли подключённые устройства при смене тарифа.
+- `app/services/ticket_reply_service.py` — Python-модуль
+  Классы: нет
+  Функции: `publish_support_reply` — Сохранить один ответ, затем независимо доставить его во все каналы.
 - `app/services/traffic_monitoring_service.py` — Python-модуль
   Классы: `TrafficViolation`, `TrafficMonitoringServiceV2` (35 методов), `TrafficMonitoringSchedulerV2` (9 методов), `TrafficMonitoringService` (6 методов), `TrafficMonitoringScheduler` (9 методов)
   Функции: нет
@@ -1958,7 +1973,7 @@
   Функции: `is_peak`, `cost`
 - `app/services/ai_support/prompts.py` — Python-модуль
   Классы: нет
-  Функции: `messages`
+  Функции: `messages` — Порядок ради кэша провайдера: правила → база знаний → инструкции/статус/дата/канал → диалог.
 - `app/services/ai_support/provider.py` — Python-модуль
   Классы: `Usage` (1 методов), `Completion`, `ProviderError` (1 методов)
   Функции: `startup`, `get_client`, `shutdown`, `parse_usage`, `retry_delay`, `parse_response`, `complete`
@@ -2451,6 +2466,9 @@
 - `app/utils/text_search.py` — Python-модуль
   Классы: нет
   Функции: `case_variants` — Регистровые варианты термина, по которым имеет смысл искать., `contains_patterns` — LIKE-шаблоны «содержит term» для всех регистровых вариантов., `contains_conditions` — ILIKE-условия «колонка содержит term» — по каждой колонке и каждому варианту., `contains_clause` — Готовое OR-условие «хотя бы одна колонка содержит term».
+- `app/utils/ticket_media.py` — Python-модуль
+  Классы: нет
+  Функции: `get_ticket_media`, `ticket_media_chunks`
 - `app/utils/ticket_text.py` — Python-модуль
   Классы: нет
   Функции: `preview_text` — Короткое превью сообщения для уведомлений (полный текст — в карточке тикета)., `split_long_block` — Режет блок по границам строк/слов, не разрывая HTML-теги и сущности., `build_ticket_pages` — Собирает страницы «шапка + сообщения», не теряя ни одного символа.
@@ -3730,6 +3748,9 @@
 - `tests/cabinet/test_telegram_login_claims_phantom.py` — Python-модуль
   Классы: нет
   Функции: `test_phantom_is_claimed_instead_of_creating_a_second_account`, `test_without_phantom_user_is_created_as_before`, `test_without_username_phantom_is_not_even_looked_up`, `test_lost_claim_race_returns_the_existing_user` — claim_phantom вернул (False, existing): telegram_id уже завёл бот — берём его запись., `test_failed_claim_without_fallback_falls_through_to_create`
+- `tests/cabinet/test_telegram_ticket_media_flow.py` — Python-модуль
+  Классы: `LocalTelegramFiles` (7 методов)
+  Функции: `test_upload_create_reply_reload_download` — Обе стороны кабинета сохраняют ID и байты; скачивание требует токен файла.
 - `tests/cabinet/test_telegram_widget_replay.py` — Python-модуль
   Классы: нет
   Функции: `test_widget_login_is_one_time_and_24h`, `test_widget_link_is_one_time_and_24h`
@@ -3739,6 +3760,9 @@
 - `tests/cabinet/test_ticket_cabinet_guards.py` — Python-модуль
   Классы: нет
   Функции: `user`, `test_create_ticket_rejects_blocked_user` — REGRESSION: заблокированный в поддержке пользователь не должен создавать, `test_add_message_rejects_blocked_user` — REGRESSION: дозапись в тикет тоже должна упираться в глобальную блокировку., `test_expired_block_does_not_reject` — Истёкшая блокировка не считается: CRUD возвращает None, guard молчит., `test_create_ticket_rejects_second_open_ticket` — REGRESSION: второй незакрытый тикет через кабинет создать нельзя., `test_add_message_not_limited_by_open_ticket_check` — Лимит открытых тикетов относится только к созданию: отвечать в свой, `test_get_ticket_respects_disabled_mode` — REGRESSION: при SUPPORT_SYSTEM_MODE=contact чтение тикета должно давать, `test_add_message_respects_disabled_mode` — REGRESSION: при выключенных тикетах дозапись в существующий тикет, `test_create_ticket_respects_disabled_mode` — Пин существующего поведения create_ticket., `test_get_tickets_respects_disabled_mode` — Пин существующего поведения списка тикетов.
+- `tests/cabinet/test_ticket_reply_state.py` — Python-модуль
+  Классы: нет
+  Функции: `isolated_notifications` — Оставить реальные запросы и модель, подменив только внешние эффекты., `test_client_reply_reopens_ticket_and_resets_sla` — Закрытый тикет по-прежнему не принимает ответ; остальные ждут поддержки., `test_reply_block_is_exposed_and_enforced` — Поле API и guard используют вычисляемое свойство настоящей модели.
 - `tests/cabinet/test_traffic_packages_discount.py` — Python-модуль
   Классы: нет
   Функции: `classic_mode` — Drive ``get_traffic_packages`` down the classic (non-tariff) branch., `test_traffic_packages_expose_promo_group_discount` — A 20% traffic promo-group discount surfaces on every package., `test_traffic_packages_no_discount_when_group_has_none` — No promo discount → no discount fields, raw price unchanged., `test_traffic_packages_respect_apply_discounts_to_addons_flag` — When the promo group opts out of addon discounts, traffic stays full price., `test_traffic_packages_apply_discount_in_tariff_mode` — Tariff-mode packages go through the same discount path as classic mode., `test_traffic_packages_floor_displayed_price_at_one_ruble` — An extreme discount never displays below 1₽ — matching POST's max(100,...) floor., `test_traffic_packages_default_group_uses_prorated_period_hint` — Default group period-based traffic discount uses the same ceil(remaining days)
@@ -3983,6 +4007,9 @@
 - `tests/database/crud/test_subscription.py` — Python-модуль
   Классы: нет
   Функции: `test_create_trial_subscription_uses_all_available_squads_by_default`, `test_extend_subscription_convert_trial_false_keeps_trial` — Bug #629889 guardrail: subscription_crud.extend_subscription(tariff_id=..., convert_trial=False), `test_extend_subscription_default_converts_trial_on_purchase` — Default convert_trial=True (a real tariff purchase) still clears is_trial., `test_reset_trials_deletes_panel_first_and_skips_panel_failures` — #630055-trial: панель удаляется ПЕРВОЙ; если удалить в панели не удалось —, `test_reset_trials_keeps_row_when_panel_id_is_unusable` — Непригодный локальный идентификатор (RemnaWaveInvalidUserIdError) — это битая, `test_reset_trials_disable_mode_keeps_panel_account` — REMNAWAVE_USER_DELETE_MODE=disable: аккаунт в панели отключается, а не удаляется,, `test_reset_trials_panel_not_configured_db_only` — Панель не настроена → orphan'ить нечего, чистим только БД, без вызовов панели., `test_is_trial_already_used_gate` — Единый гейт триала (раньше дублировался в 4 местах purchase.py)., `test_subscription_property_ignores_pending_trial_draft` — Незавершённый платный триал не должен подставляться как основная подписка.
+- `tests/database/crud/test_ticket_status.py` — Python-модуль
+  Классы: нет
+  Функции: `test_status_event_preserves_previous_status`
 - `tests/database/crud/test_wipe_trial_panel_lookup.py` — Python-модуль
   Классы: нет
   Функции: `api`, `patched_service` — Подменяем SubscriptionService целиком: нужен только его API-клиент., `db`, `test_adopts_by_short_uuid_and_deletes_the_right_account` — Ключевой сценарий: id ещё не пробэкфилен, но панель знает shortUuid., `test_does_not_orphan_a_live_panel_account` — Пропустить панель и удалить строку — значит оставить ACTIVE-сироту., `test_panel_error_during_lookup_does_not_wipe_the_row` — Таймаут — не доказательство. Строку оставляем следующему запуску., `test_unknown_short_uuid_does_not_block_the_reset_forever` — Панель этот shortUuid забыла — удалять нечего, но и застревать нельзя., `test_row_that_never_had_a_panel_user_needs_no_lookup`, `test_existing_numeric_id_is_used_directly`, `test_disable_mode_deactivates_instead_of_deleting`, `test_disable_mode_keeps_single_tariff_user_identity` — Аккаунт остаётся (отключённым) — users.remnawave_id обязан остаться с ним:, `test_delete_mode_still_clears_single_tariff_user_identity` — Регресс-стража: в режиме delete аккаунта больше нет — ссылку на него стираем., `test_disable_mode_treats_gone_or_already_disabled_as_success`, `test_multi_tariff_trial_reset_clears_dead_account_on_user`, `test_multi_tariff_trial_reset_keeps_live_account_of_other_subscription` — У человека записан аккаунт живой платной подписки — сброс триала его не трогает., `test_multi_tariff_trial_reset_in_disable_mode_keeps_link` — disable: аккаунт жив (отключён) — связь с ним стирать нельзя.
@@ -4362,6 +4389,7 @@
 - `tests/handlers/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/handlers/ai_support/`
 - `tests/handlers/test_addon_cart_resume.py` — Python-модуль
   Классы: нет
   Функции: `cart_service`, `test_topup_auto_purchases_addon_cart`, `test_topup_without_intent_leaves_addon_cart_alone` — Документирует старую поломку: корзина без флага — «нет свежего намерения»., `test_button_resumes_addon_cart_instead_of_corrupting_it`, `test_button_with_still_insufficient_balance_sends_back_to_topup`, `test_button_reports_failure_without_deleting_cart`, `test_devices_cart_uses_the_same_button_path`, `test_manual_resume_goes_through_dispatcher_as_manual`, `test_manual_success_text_has_no_word_automatically`, `test_every_addon_cart_in_code_carries_topup_intent`
@@ -4500,6 +4528,9 @@
 - `tests/handlers/test_tariff_switch_subscription_resolution.py` — Python-модуль
   Классы: нет
   Функции: `test_switch_resolver_prefers_fsm_over_callback_trailing`, `test_switch_resolver_falls_back_to_single_active_when_no_fsm`, `test_switch_resolver_asks_to_choose_when_ambiguous`
+- `tests/handlers/test_telegram_ticket_video.py` — Python-модуль
+  Классы: `RecordingBot` (5 методов)
+  Функции: `test_ticket_handler_preserves_media`, `test_attachment_button_delivers_original_photo_and_video`, `test_video_ticket_view_exposes_attachments`, `test_user_notification_delivers_admin_attachment`, `test_admin_notification_delivers_attachment_to_ticket_topic`
 - `tests/handlers/test_ticket_group_card_refresh.py` — Python-модуль
   Классы: нет
   Функции: `admin_and_crud`, `test_close_in_group_redraws_the_group_card_without_fsm_buttons`, `test_permanent_block_in_group_redraws_the_card_and_skips_the_private_view`, `test_unblock_in_group_redraws_the_card`, `test_private_chat_keeps_the_admin_view` — В личке админа поведение прежнее: полный экран тикета с FSM-кнопками.
@@ -4518,6 +4549,12 @@
 - `tests/handlers/test_withdrawal_group_card.py` — Python-модуль
   Классы: нет
   Функции: `approved`, `test_approve_in_group_leaves_only_the_next_action`, `test_approve_in_private_keeps_profile_and_navigation`
+
+#### tests/handlers/ai_support
+
+- `tests/handlers/ai_support/test_chat.py` — Python-модуль
+  Классы: `HandoffDb` (5 методов)
+  Функции: `user`, `message`, `contract`, `test_disabled_preserves_original_unknown_response`, `test_unimplemented_settings_do_not_break_fallback`, `test_private_text_and_state_filters`, `test_answer_escaped_disclosed_and_remembered`, `test_history_excludes_duplicate_disclosure`, `test_redis_failure_uses_empty_history`, `test_unavailable_outcomes_offer_support`, `test_model_exception_degrades_safely`, `test_cabinet_mode_links_to_existing_support`, `test_handoff_outcome_calls_ticket_transfer`, `test_handoff_one_ticket_or_contact`, `test_operator_callback_checks_owner`, `test_feedback_ownership_and_operator_offer`, `test_admin_status_masks_secret_and_shows_stats`
 
 ### tests/integration
 
@@ -4597,6 +4634,7 @@
   Классы: нет
   Функции: нет
 - `tests/services/ai_support/`
+- `tests/services/ai_support_integ/`
 - `tests/services/dpichecker/`
 - `tests/services/panel_sync/`
 - `tests/services/reachability/`
@@ -5248,7 +5286,7 @@
   Функции: `subscription`, `test_account_overview_has_only_allowed_fields`, `test_devices_uses_existing_api_and_discards_hwid`, `test_account_error_and_permission_gates`
 - `tests/services/ai_support/test_knowledge_settings.py` — Python-модуль
   Классы: нет
-  Функции: `page`, `test_kb_selection_order_language_and_html`, `test_cache_reload_and_db_fallback`, `test_settings_category_masks_and_textarea`, `test_normalization_and_prompt_order`
+  Функции: `page`, `test_kb_selection_order_language_and_html`, `test_cache_reload_and_db_fallback`, `test_settings_category_masks_and_textarea`, `test_normalization_and_prompt_order`, `test_prompt_merges_consecutive_roles_and_keeps_owner_contacts`
 - `tests/services/ai_support/test_migration.py` — Python-модуль
   Классы: нет
   Функции: `migration`, `run`, `snapshot`, `test_sqlite_schema_parity_unique_and_downgrade`, `test_postgres_upgrade_parity_downgrade`
@@ -5264,6 +5302,21 @@
 - `tests/services/ai_support/test_service.py` — Python-модуль
   Классы: нет
   Функции: `kb`, `response`, `call`, `ctx`, `test_answer_journal_feedback_stats_and_retention`, `test_duplicate_and_human_request`, `test_human_detector`, `test_human_false_positives`, `test_handoff_model_and_thinking_roundtrip`, `test_tool_round_limit`, `test_account_tools_only_context_user`, `test_limits_budget_and_concurrency`, `test_error_alerts_and_guard`, `test_disabled_and_db_errors`, `test_log_texts_off`, `test_handoff_empty_final_uses_template`, `test_total_deadline_including_tools`, `test_global_concurrency_four`, `test_budget_cache_invalidates_after_write`, `test_journal_failure_blocks_publish`, `test_total_deadline_bounds_alert_and_finalization`
+
+#### tests/services/ai_support_integ
+
+- `tests/services/ai_support_integ/test_drafts_and_hooks.py` — Python-модуль
+  Классы: `CreateDb` (4 методов)
+  Функции: `request_record`, `draft`, `test_draft_rights_and_idempotency`, `test_invalid_draft_cannot_be_published`, `test_stale_draft_not_attached`, `test_crud_created_event_contains_first_message_id`, `test_rest_created_payload_and_registration_order`, `test_mobile_ws_enqueues_after_commit_only_for_customer`, `test_notice_escapes_inserts_and_uses_existing_ticket_delivery`, `test_notice_respects_ai_toggle`, `test_drafts_and_core_alerts_use_support_toggles_even_if_copies_disabled`
+- `tests/services/ai_support_integ/test_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_concurrent_publish_rechecks_trigger_under_row_lock`, `test_chat_handoff_survives_restart_and_creates_one_ticket`
+- `tests/services/ai_support_integ/test_publish.py` — Python-модуль
+  Классы: `Db` (8 методов)
+  Функции: `ticket`, `delivery`, `test_publish_status_and_exactly_one_event`, `test_publish_ai_rechecks_before_commit`, `test_ai_author_is_existing_admin_account` — Синтетического автора не создаём: автор ответа ИИ — найденный в базе админ из ADMIN_IDS., `test_ai_reply_skipped_without_admin_author`, `test_human_draft_is_audited_as_human`, `test_delivery_all_channels_with_independent_toggles`, `test_delivery_failure_does_not_skip_cabinet`
+- `tests/services/ai_support_integ/test_ticket_worker.py` — Python-модуль
+  Классы: `SnapshotDb` (2 методов)
+  Функции: `msg`, `ticket`, `contract`, `loaded`, `test_auto_answer_once_and_no_recursive_admin_event`, `test_event_listener_returns_before_model`, `test_auto_guards_never_invoke_model`, `test_real_snapshot_guards`, `test_handoff_publishes_open_then_marks_and_notifies`, `test_non_answers_never_publish`, `test_generation_loses_race_and_does_not_publish`, `test_draft_helps_after_human_reply_and_never_sends_to_client`, `test_draft_limit_ten`, `test_question_includes_all_customer_messages_since_support`, `test_queue_full_does_not_raise`
 
 #### tests/services/dpichecker
 
@@ -5579,6 +5632,9 @@
 - `tests/webapi/test_ticket_media_items.py` — Python-модуль
   Классы: нет
   Функции: `test_gallery_is_serialized`, `test_single_file_message_has_no_gallery`, `test_gallery_alone_still_counts_as_media` — У пачки может не быть основного file_id — сообщение всё равно с медиа., `test_broken_gallery_does_not_break_the_answer`
+- `tests/webapi/test_ticket_reply_events.py` — Python-модуль
+  Классы: нет
+  Функции: `test_webapi_reply_emits_exactly_one_message_event` — Настоящий add_message сохраняет ответ и отправляет событие один раз.
 - `tests/webapi/test_user_activity_endpoint.py` — Python-модуль
   Классы: нет
   Функции: `test_activity_returns_timeline_for_internal_id`, `test_activity_accepts_telegram_id`, `test_activity_filters_by_type`, `test_activity_rejects_unknown_type`, `test_activity_404_for_missing_user`
