@@ -2915,6 +2915,7 @@
 - `docs/handoffs/handoff-2026-10-21-premium-emoji.md` — файл
 - `docs/handoffs/handoff-2026-11-07-ai-support.md` — файл
 - `docs/handoffs/handoff-2026-11-07-ai-vision.md` — файл
+- `docs/handoffs/handoff-2026-11-08-upstream-5.2.0.md` — файл
 
 ## migrations
 
