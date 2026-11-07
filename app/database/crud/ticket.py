@@ -226,6 +226,7 @@ class TicketCRUD:
         if not ticket:
             return False
 
+        old_status = ticket.status
         ticket.status = status
         ticket.updated_at = datetime.now(UTC)
 
@@ -243,7 +244,7 @@ class TicketCRUD:
                 {
                     'ticket_id': ticket_id,
                     'user_id': ticket.user_id,
-                    'old_status': ticket.status,  # На самом деле это уже новый статус, но для простоты оставим так
+                    'old_status': old_status,
                     'new_status': status,
                     'closed_at': closed_at.isoformat() if closed_at else None,
                 },
