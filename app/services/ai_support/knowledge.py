@@ -29,6 +29,7 @@ class TextParser(HTMLParser):
         self.parts = []
         self.links = []
         self.hidden = 0
+        self.lists = []  # стек [тег, номер пункта]: <ol> → «1.», <ul> → «-»
 
     def handle_starttag(self, tag, attrs):
         if tag in ('script', 'style'):
@@ -37,8 +38,14 @@ class TextParser(HTMLParser):
             return
         if tag in ('p', 'div', 'br', 'h1', 'h2', 'h3', 'ul', 'ol'):
             self.parts.append('\n')
+        if tag in ('ul', 'ol'):
+            self.lists.append([tag, 0])
         if tag == 'li':
-            self.parts.append('\n- ')
+            if self.lists and self.lists[-1][0] == 'ol':
+                self.lists[-1][1] += 1
+                self.parts.append(f'\n{self.lists[-1][1]}. ')
+            else:
+                self.parts.append('\n- ')
         if tag == 'a':
             self.links.append(dict(attrs).get('href', ''))
 
@@ -52,7 +59,9 @@ class TextParser(HTMLParser):
             link = self.links.pop()
             if link:
                 self.parts.append(f' ({link})')
-        if tag in ('p', 'div', 'li', 'h1', 'h2', 'h3'):
+        if tag in ('ul', 'ol') and self.lists:
+            self.lists.pop()
+        if tag in ('p', 'div', 'h1', 'h2', 'h3', 'ul', 'ol'):
             self.parts.append('\n')
 
     def handle_data(self, data):

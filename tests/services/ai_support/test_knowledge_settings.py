@@ -127,3 +127,8 @@ def test_prompt_merges_consecutive_roles_and_keeps_owner_contacts(monkeypatch):
     assert messages[3]['content'] == 'первое\n\nвторое'
     # Инструкции владельца — доверенный текст: публичные контакты не обезличиваются.
     assert '@batonsupport' in messages[2]['content'] and 'support@donbaton.tech' in messages[2]['content']
+
+
+def test_html_text_numbers_ordered_lists():
+    text = knowledge.html_text('<p>Шаги:</p><ol><li>Раз</li><li>Два</li></ol><ul><li>пункт</li></ul>')
+    assert '1. Раз' in text and '2. Два' in text and '- пункт' in text

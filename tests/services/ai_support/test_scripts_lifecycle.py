@@ -59,3 +59,10 @@ async def test_eval_restores_model_and_disables_account_tools(monkeypatch, capsy
     assert answer.call_args.args[2].allow_account_tools is False
     assert answer.call_args.args[2].channel == api.AiChannel.ADMIN_TEST
     assert '1/1' in capsys.readouterr().out
+
+
+def test_seed_markdown_keeps_numbered_steps():
+    import scripts.ai_support_seed_kb as seed
+
+    html_value = seed.to_html(['Текст', '1. Раз', '2. Два', '- пункт'])
+    assert html_value == '<p>Текст</p><ol><li>Раз</li><li>Два</li></ol><ul><li>пункт</li></ul>'

@@ -23,33 +23,39 @@ def inline(text: str) -> str:
 
 
 def to_html(lines: list[str]) -> str:
+    """Абзацы и списки: «1.» — нумерованный (<ol>), «-»/«*» — маркированный (<ul>)."""
     chunks, paragraph = [], []
-    in_list = False
+    list_tag = None
 
     def flush():
         if paragraph:
             chunks.append('<p>' + inline(' '.join(paragraph)) + '</p>')
             paragraph.clear()
 
+    def close_list():
+        nonlocal list_tag
+        if list_tag:
+            chunks.append(f'</{list_tag}>')
+            list_tag = None
+
     for line in lines:
-        item = re.match(r'^\s*(?:[-*]|\d+\.)\s+(.+)', line)
+        item = re.match(r'^\s*(?:([-*])|\d+\.)\s+(.+)', line)
         if item:
             flush()
-            if not in_list:
-                chunks.append('<ul>')
-                in_list = True
-            chunks.append('<li>' + inline(item[1]) + '</li>')
+            tag = 'ul' if item[1] else 'ol'
+            if list_tag != tag:
+                close_list()
+                chunks.append(f'<{tag}>')
+                list_tag = tag
+            chunks.append('<li>' + inline(item[2]) + '</li>')
         else:
-            if in_list:
-                chunks.append('</ul>')
-                in_list = False
+            close_list()
             if line.strip():
                 paragraph.append(line.strip())
             else:
                 flush()
     flush()
-    if in_list:
-        chunks.append('</ul>')
+    close_list()
     return ''.join(chunks)
 
 
