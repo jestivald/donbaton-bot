@@ -380,3 +380,23 @@ async def test_total_deadline_bounds_alert_and_finalization(journal, transport, 
     result = await api.answer('Вопрос', [], ctx())
     assert result.error_code == 'journal'
     assert time.monotonic() - started < 0.15
+
+
+@pytest.mark.parametrize(
+    ('text', 'handoff'),
+    [
+        ('Передаю вопрос оператору: ответ придёт сюда.', True),
+        ('Подписка активна. Передал ваш вопрос оператору, ответ придёт сюда.', True),
+        ('Вопрос передан сотруднику поддержки.', True),
+        ('Если ошибка останется — передам вопрос оператору.', False),
+        ('Обновите подписку в приложении и выберите другую вкладку.', False),
+    ],
+)
+async def test_handoff_claim_in_text_becomes_handoff(journal, transport, kb, text, handoff):
+    transport(lambda request: response(text))
+    result = await api.answer('Не работает YouTube', [], ctx())
+    if handoff:
+        assert result.outcome == api.AiOutcome.HANDOFF and result.handoff_reason == api.HandoffReason.OTHER
+        assert result.reply_text == text
+    else:
+        assert result.outcome == api.AiOutcome.ANSWERED and result.handoff_reason is None

@@ -18,6 +18,13 @@ from app.services.ai_support.redaction import redact
 
 logger = structlog.get_logger(__name__)
 HANDOFF_TEXT = 'Вопрос передан оператору. Ответ придёт сюда.'
+# Модель иногда пишет «передаю вопрос оператору», не вызвав handoff_to_human (07.11: тикеты #19, #22 ушли в answered
+# мимо SLA). Настоящее/прошедшее время («передаю», «передал», «передан») — это передача; условное «передам» — нет.
+HANDOFF_CLAIM_RE = re.compile(
+    r'(?<![\w-])(?:переда(?:ю|л[аи]?|н[аоы]?|[её]м)|перевожу|перев[её]л[аи]?)(?![\w-])[^.!?\n]{0,60}?'
+    r'(?<![\w-])(?:оператор\w*|сотрудник\w*|специалист\w*|человек\w*)',
+    re.IGNORECASE,
+)
 _alert_handler: AdminAlertHandler | None = None
 _alert_times: dict[str, float] = {}
 _provider_failures = 0
@@ -132,6 +139,10 @@ async def generate(question, history, ctx, config, request_id, run: Run, deadlin
                 )
             if text is None:
                 return AiAnswer(AiOutcome.FILTERED, error_code='output_filtered')
+            if not run.tool_state.reason and HANDOFF_CLAIM_RE.search(text):
+                # Клиенту уже обещана передача — оформляем её, иначе тикет уйдёт в answered мимо очереди и SLA.
+                run.tool_state.reason = HandoffReason.OTHER
+                run.tool_state.summary = 'ИИ сообщил клиенту о передаче оператору без вызова инструмента'
             return AiAnswer(
                 AiOutcome.HANDOFF if run.tool_state.reason else AiOutcome.ANSWERED,
                 reply_text=text,
