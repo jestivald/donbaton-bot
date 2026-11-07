@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -248,4 +249,14 @@ async def shutdown() -> None:
 
 def describe_settings() -> dict[str, Any]:
     """Сводка настроек для экрана админки (без значения ключа: только «задан/не задан»)."""
+    raise NotImplementedError
+
+
+# kind: 'auth' (401/403 — неверный ключ), 'balance' (402 — кончился баланс), 'budget' (дневной бюджет),
+# 'provider_down' (серия 5xx/таймаутов); text — готовое русское сообщение для админов, без секретов.
+AdminAlertHandler = Callable[[str, str], Awaitable[None]]
+
+
+def set_admin_alert_handler(handler: AdminAlertHandler | None) -> None:
+    """Интеграция регистрирует отправку тревог админам; ядро зовёт её не чаще раза в час на каждый kind."""
     raise NotImplementedError
