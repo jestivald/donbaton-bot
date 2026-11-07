@@ -342,3 +342,120 @@ async def test_handoff_appends_to_active_ticket_once(monkeypatch, message, user)
     assert added[0][1].startswith('Обращение из чата ИИ №201')
     reply_notify.assert_awaited_once()
     assert '№55' in message.answer.call_args.args[0]
+
+
+@pytest.mark.parametrize(('chat_enabled', 'vision_enabled'), [(False, True), (True, False), (False, False)])
+async def test_media_disabled_preserves_original_response(monkeypatch, message, user, chat_enabled, vision_enabled):
+    message.text = None
+    message.caption = 'Не работает'
+    monkeypatch.setattr(api, 'bot_chat_enabled', lambda: chat_enabled)
+    monkeypatch.setattr(api, 'vision_enabled', lambda: vision_enabled)
+    await chat.handle_ai_media(message, user)
+    actual = message.answer.call_args
+    message.answer.reset_mock()
+    await chat.handle_unknown_message(message, user)
+    assert message.answer.call_args == actual
+    api.answer.assert_not_awaited()
+
+
+@pytest.mark.parametrize('caption', ['Ошибка в Happ', None])
+@pytest.mark.parametrize('kind', ['photo', 'document'])
+async def test_media_answer_buttons_and_text_only_memory(monkeypatch, message, user, caption, kind):
+    message.text = None
+    message.caption = caption
+    message.photo = [SimpleNamespace(file_id='photo', file_size=50, width=10, height=10)] if kind == 'photo' else []
+    message.document = (
+        SimpleNamespace(file_id='document', file_size=50, mime_type='image/png') if kind == 'document' else None
+    )
+    monkeypatch.setattr(api, 'vision_enabled', lambda: True)
+    image = api.AiImage(b'private screenshot', 'image/png')
+    fetch = AsyncMock(return_value=[image])
+    monkeypatch.setattr(chat, 'fetch_telegram_images', fetch)
+    await chat.handle_ai_media(message, user)
+    fetch.assert_awaited_once_with(message.bot, [kind])
+    assert api.answer.call_args.args[0] == (caption or '')
+    assert api.answer.call_args.kwargs['images'] == [image]
+    memory = await chat._request_turns(123, user.id)
+    assert memory[0] == api.ChatTurn('user', caption or '')
+    assert 'private screenshot' not in str(chat.cache.set.await_args_list)
+    assert 'private screenshot' not in str(chat._request_memory)
+    buttons = message.answer.call_args.kwargs['reply_markup'].inline_keyboard
+    assert buttons[-1][0].callback_data == 'aio:123'
+
+
+async def test_media_download_error_still_answers_caption(monkeypatch, message, user):
+    message.text = None
+    message.caption = 'Ошибка в Happ'
+    message.photo = [SimpleNamespace(file_id='bad', file_size=50, width=10, height=10)]
+    message.bot.get_file = AsyncMock(side_effect=RuntimeError('недоступен'))
+    monkeypatch.setattr(api, 'vision_enabled', lambda: True)
+    monkeypatch.setattr(chat.settings, 'AI_SUPPORT_VISION_ENABLED', True)
+    await chat.handle_ai_media(message, user)
+    assert api.answer.call_args.args[0] == 'Ошибка в Happ\n\n(клиент приложил изображение, его не удалось посмотреть)'
+    assert 'Настройки' in message.answer.call_args.args[0]
+    assert (await chat._request_turns(123, user.id))[0] == api.ChatTurn('user', 'Ошибка в Happ')
+
+
+@pytest.mark.parametrize(
+    ('kind', 'chat_type', 'bot', 'state', 'expected'),
+    [
+        ('photo', 'private', False, None, True),
+        ('image', 'private', False, None, True),
+        ('document', 'private', False, None, False),
+        ('video', 'private', False, None, False),
+        ('photo', 'group', False, None, False),
+        ('photo', 'private', True, None, False),
+        ('photo', 'private', False, 'TicketState', False),
+    ],
+)
+async def test_media_routing_filters(kind, chat_type, bot, state, expected):
+    dp = Dispatcher()
+    chat.register_handlers(dp)
+    media = {}
+    if kind == 'photo':
+        media['photo'] = [types.PhotoSize(file_id='photo', file_unique_id='unique', width=100, height=100)]
+    elif kind in {'image', 'document'}:
+        media['document'] = types.Document(
+            file_id='doc', file_unique_id='unique', mime_type='image/png' if kind == 'image' else 'application/pdf'
+        )
+    event = types.Message(
+        message_id=1,
+        date=datetime.now(UTC),
+        chat=types.Chat(id=77, type=chat_type),
+        from_user=types.User(id=77, is_bot=bot, first_name='Клиент'),
+        caption='Подпись',
+        **media,
+    )
+    handler = dp.message.handlers[1]
+    accepted, _ = await handler.check(event, raw_state=state)
+    assert accepted is expected
+
+
+async def test_media_download_runs_in_bounded_background_task(monkeypatch, message, user):
+    message.text = None
+    message.caption = ''
+    message.photo = [SimpleNamespace(file_id='photo', file_size=50, width=10, height=10)]
+    monkeypatch.setattr(api, 'vision_enabled', lambda: True)
+    monkeypatch.setattr(chat, 'handle_ai_message', ORIGINAL_HANDLE)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fetch(*args):
+        entered.set()
+        await release.wait()
+        return [api.AiImage(b'png', 'image/png')]
+
+    downloader = AsyncMock(side_effect=fetch)
+    monkeypatch.setattr(chat, 'fetch_telegram_images', downloader)
+    await asyncio.wait_for(chat.handle_ai_media(message, user), 0.2)
+    assert chat._inflight
+    await asyncio.wait_for(entered.wait(), 1)
+    api.answer.assert_not_awaited()
+    # Загрузка удерживает тот же лимит, что и ожидание модели.
+    monkeypatch.setattr(chat, 'MAX_INFLIGHT', 1)
+    await chat.handle_ai_media(message, user)
+    assert 'Сейчас не могу' in message.answer.call_args.args[0]
+    assert downloader.await_count == 1
+    release.set()
+    await asyncio.gather(*list(chat._inflight))
+    api.answer.assert_awaited_once()

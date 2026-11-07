@@ -947,7 +947,7 @@
 - `app/handlers/admin/`
 - `app/handlers/ai_support.py` — Python-модуль
   Классы: нет
-  Функции: `support_keyboard`, `answer_keyboard`, `handle_ai_message`, `handoff_to_operator`, `handle_feedback`, `handle_operator`, `register_handlers`
+  Функции: `support_keyboard`, `answer_keyboard`, `handle_ai_message`, `handle_ai_media`, `handoff_to_operator`, `handle_feedback`, `handle_operator`, `register_handlers`
 - `app/handlers/balance/`
 - `app/handlers/channel_member.py` — Python-модуль
   Классы: нет
@@ -1957,8 +1957,11 @@
   Классы: нет
   Функции: нет
 - `app/services/ai_support/api.py` — Python-модуль
-  Классы: `AiChannel`, `AiOutcome`, `HandoffReason`, `ChatTurn`, `AiRequestContext`, `AiAnswer`, `AiRequestRecord`, `AiStats`, `KbStatus`
-  Функции: `is_enabled` — Общий выключатель И задан ключ API., `bot_chat_enabled` — Отвечать ли на свободный текст в личке бота (учитывает is_enabled())., `ticket_mode` — Режим в тикетах: off / draft / auto ('off', если is_enabled() ложно)., `max_ai_replies_per_ticket`, `notify_admins_enabled` — Слать ли админам в топик тикетов копии ответов ИИ и передачи человеку., `history_turns` — Сколько последних реплик диалога передавать модели., `chat_memory_ttl_seconds` — Сколько хранить память диалога свободного текста в боте., `reply_footer_text` — Подпись под ответом ИИ в тикете (как позвать человека)., `answer` — Сгенерировать ответ клиенту., `is_human_request` — Быстрый детектор «позовите оператора/человека» без вызова модели., `get_request`, `record_feedback` — Отзыв клиента; True — записано (только владелец запроса, повтор перезаписывает)., `attach_reply_message` — Связать запрос с опубликованным сообщением тикета (ответ ИИ, его отправка из черновика или передача)., `mark_handoff_done` — Отметить, что передача человеку выполнена (тикет создан/админы уведомлены)., `ai_reply_message_ids` — ID сообщений тикета, опубликованных ИИ-помощником (чтобы отличать их от ответов людей)., `count_ai_replies_in_ticket`, `ticket_has_handoff` — Была ли в тикете передача человеку (после неё ИИ в этом тикете молчит)., `get_stats`, `kb_status`, `invalidate_kb_cache`, `startup` — Запуск при старте бота (после загрузки настроек): HTTP-клиент, фоновая чистка журнала., `shutdown` — Остановка: закрыть HTTP-клиент, отменить фоновые задачи., `describe_settings` — Сводка настроек для экрана админки (без значения ключа: только «задан/не задан»)., `set_admin_alert_handler` — Интеграция регистрирует отправку тревог админам; ядро зовёт её не чаще раза в час на каждый kind.
+  Классы: `AiChannel`, `AiOutcome`, `HandoffReason`, `AiImage`, `ChatTurn`, `AiRequestContext`, `AiAnswer`, `AiRequestRecord`, `AiStats`, `KbStatus`
+  Функции: `is_enabled` — Общий выключатель И задан ключ API., `bot_chat_enabled` — Отвечать ли на свободный текст в личке бота (учитывает is_enabled())., `vision_enabled` — Зрение включено владельцем и поддерживается выбранной моделью., `ticket_mode` — Режим в тикетах: off / draft / auto ('off', если is_enabled() ложно)., `max_ai_replies_per_ticket`, `notify_admins_enabled` — Слать ли админам в топик тикетов копии ответов ИИ и передачи человеку., `history_turns` — Сколько последних реплик диалога передавать модели., `chat_memory_ttl_seconds` — Сколько хранить память диалога свободного текста в боте., `reply_footer_text` — Подпись под ответом ИИ в тикете (как позвать человека)., `answer` — Сгенерировать ответ клиенту., `is_human_request` — Быстрый детектор «позовите оператора/человека» без вызова модели., `get_request`, `record_feedback` — Отзыв клиента; True — записано (только владелец запроса, повтор перезаписывает)., `attach_reply_message` — Связать запрос с опубликованным сообщением тикета (ответ ИИ, его отправка из черновика или передача)., `mark_handoff_done` — Отметить, что передача человеку выполнена (тикет создан/админы уведомлены)., `ai_reply_message_ids` — ID сообщений тикета, опубликованных ИИ-помощником (чтобы отличать их от ответов людей)., `count_ai_replies_in_ticket`, `ticket_has_handoff` — Была ли в тикете передача человеку (после неё ИИ в этом тикете молчит)., `get_stats`, `kb_status`, `invalidate_kb_cache`, `startup` — Запуск при старте бота (после загрузки настроек): HTTP-клиент, фоновая чистка журнала., `shutdown` — Остановка: закрыть HTTP-клиент, отменить фоновые задачи., `describe_settings` — Сводка настроек для экрана админки (без значения ключа: только «задан/не задан»)., `set_admin_alert_handler` — Интеграция регистрирует отправку тревог админам; ядро зовёт её не чаще раза в час на каждый kind.
+- `app/services/ai_support/images.py` — Python-модуль
+  Классы: нет
+  Функции: `unavailable_question`, `usable_images` — Повторная проверка границ перед отправкой, включая вызовы API без загрузчика., `telegram_image_refs` — Для фото выбираем самый большой доступный размер, помещающийся в лимит., `ticket_image_refs` — Только вложения клиента после последнего ответа поддержки, без дубля первого элемента галереи., `fetch_telegram_images` — Не бросает ошибок загрузки; таймаут охватывает get_file и скачивание одного файла.
 - `app/services/ai_support/knowledge.py` — Python-модуль
   Классы: `TextParser` (4 методов), `Knowledge`
   Функции: `html_text`, `localized`, `build`, `load`, `invalidate_kb_cache`, `kb_status`
@@ -1991,7 +1994,7 @@
   Функции: `set_admin_alert_handler`, `alert`, `is_human_request`, `generate`, `check_limits`, `answer`
 - `app/services/ai_support/settings_view.py` — Python-модуль
   Классы: `Config`
-  Функции: `number`, `is_enabled`, `bot_chat_enabled`, `ticket_mode`, `max_ai_replies_per_ticket`, `notify_admins_enabled`, `history_turns`, `chat_memory_ttl_seconds`, `reply_footer_text`, `snapshot`, `describe_settings`
+  Функции: `number`, `is_enabled`, `bot_chat_enabled`, `vision_enabled`, `ticket_mode`, `max_ai_replies_per_ticket`, `notify_admins_enabled`, `history_turns`, `chat_memory_ttl_seconds`, `reply_footer_text`, `snapshot`, `describe_settings`
 - `app/services/ai_support/tools.py` — Python-модуль
   Классы: `ToolState`
   Функции: `date_text`, `schema`, `definitions`, `category`, `subscriptions_for`, `account_overview`, `devices`, `execute`
@@ -2794,6 +2797,7 @@
 - `docs/handoffs/handoff-2026-10-01-upstream-5.0.0.md` — файл
 - `docs/handoffs/handoff-2026-10-21-premium-emoji.md` — файл
 - `docs/handoffs/handoff-2026-11-07-ai-support.md` — файл
+- `docs/handoffs/handoff-2026-11-07-ai-vision.md` — файл
 
 ## migrations
 
@@ -4555,7 +4559,7 @@
 
 - `tests/handlers/ai_support/test_chat.py` — Python-модуль
   Классы: `HandoffDb` (5 методов)
-  Функции: `user`, `message`, `contract`, `test_disabled_preserves_original_unknown_response`, `test_unimplemented_settings_do_not_break_fallback`, `test_private_text_and_state_filters`, `test_answer_escaped_disclosed_and_remembered`, `test_history_excludes_duplicate_disclosure`, `test_redis_failure_uses_empty_history`, `test_unavailable_outcomes_offer_support`, `test_model_exception_degrades_safely`, `test_cabinet_mode_links_to_existing_support`, `test_handoff_outcome_calls_ticket_transfer`, `test_handoff_one_ticket_or_contact`, `test_operator_callback_checks_owner`, `test_feedback_ownership_and_operator_offer`, `test_admin_status_masks_secret_and_shows_stats`, `test_handler_returns_before_model_finishes` — Хендлер не ждёт модель: транзакция AuthMiddleware завершается, соединение БД свободно., `test_inflight_limit_degrades_to_support`, `test_handoff_appends_to_active_ticket_once`
+  Функции: `user`, `message`, `contract`, `test_disabled_preserves_original_unknown_response`, `test_unimplemented_settings_do_not_break_fallback`, `test_private_text_and_state_filters`, `test_answer_escaped_disclosed_and_remembered`, `test_history_excludes_duplicate_disclosure`, `test_redis_failure_uses_empty_history`, `test_unavailable_outcomes_offer_support`, `test_model_exception_degrades_safely`, `test_cabinet_mode_links_to_existing_support`, `test_handoff_outcome_calls_ticket_transfer`, `test_handoff_one_ticket_or_contact`, `test_operator_callback_checks_owner`, `test_feedback_ownership_and_operator_offer`, `test_admin_status_masks_secret_and_shows_stats`, `test_handler_returns_before_model_finishes` — Хендлер не ждёт модель: транзакция AuthMiddleware завершается, соединение БД свободно., `test_inflight_limit_degrades_to_support`, `test_handoff_appends_to_active_ticket_once`, `test_media_disabled_preserves_original_response`, `test_media_answer_buttons_and_text_only_memory`, `test_media_download_error_still_answers_caption`, `test_media_routing_filters`, `test_media_download_runs_in_bounded_background_task`
 
 ### tests/integration
 
@@ -5285,6 +5289,9 @@
 - `tests/services/ai_support/test_account_tools.py` — Python-модуль
   Классы: `DB` (5 методов)
   Функции: `subscription`, `test_account_overview_has_only_allowed_fields`, `test_devices_uses_existing_api_and_discards_hwid`, `test_account_error_and_permission_gates`
+- `tests/services/ai_support/test_images.py` — Python-модуль
+  Классы: нет
+  Функции: `vision`, `bot_with`, `test_vision_settings_defaults_and_category`, `test_vision_capability`, `test_fetch_keeps_bytes_in_memory_and_limits_count`, `test_mime_by_signature_or_extension`, `test_declared_oversize_skipped_before_download`, `test_real_size_limit_even_without_file_size`, `test_exact_size_is_allowed`, `test_download_error_skips_and_continues`, `test_timeout_includes_both_telegram_operations`, `test_disabled_no_bot_or_zero_limits_do_not_download`, `test_photo_uses_largest_size_that_fits`, `test_image_document_selection`, `test_api_images_rechecked_for_size_mime_and_count`, `test_provider_hard_limit_32_mib`
 - `tests/services/ai_support/test_knowledge_settings.py` — Python-модуль
   Классы: нет
   Функции: `page`, `test_kb_selection_order_language_and_html`, `test_cache_reload_and_db_fallback`, `test_settings_category_masks_and_textarea`, `test_normalization_and_prompt_order`, `test_prompt_merges_consecutive_roles_and_keeps_owner_contacts`, `test_html_text_numbers_ordered_lists`, `test_long_question_keeps_latest_clarification`, `test_assistant_history_without_ai_prefix_and_footer`
@@ -5302,7 +5309,7 @@
   Функции: `test_markdown_to_hidden_faq`, `test_lifecycle_idempotent_and_closes`, `test_eval_restores_model_and_disables_account_tools`, `test_seed_markdown_keeps_numbered_steps`
 - `tests/services/ai_support/test_service.py` — Python-модуль
   Классы: нет
-  Функции: `kb`, `response`, `call`, `ctx`, `test_answer_journal_feedback_stats_and_retention`, `test_duplicate_and_human_request`, `test_human_detector`, `test_human_false_positives`, `test_handoff_model_and_thinking_roundtrip`, `test_tool_round_limit`, `test_account_tools_only_context_user`, `test_limits_budget_and_concurrency`, `test_error_alerts_and_guard`, `test_disabled_and_db_errors`, `test_log_texts_off`, `test_handoff_empty_final_uses_template`, `test_total_deadline_including_tools`, `test_global_concurrency_four`, `test_budget_cache_invalidates_after_write`, `test_journal_failure_blocks_publish`, `test_total_deadline_bounds_alert_and_finalization`, `test_handoff_claim_in_text_becomes_handoff`, `test_model_reply_prefix_is_stripped`
+  Функции: `kb`, `response`, `call`, `ctx`, `test_answer_journal_feedback_stats_and_retention`, `test_duplicate_and_human_request`, `test_human_detector`, `test_human_false_positives`, `test_handoff_model_and_thinking_roundtrip`, `test_tool_round_limit`, `test_account_tools_only_context_user`, `test_limits_budget_and_concurrency`, `test_error_alerts_and_guard`, `test_disabled_and_db_errors`, `test_log_texts_off`, `test_handoff_empty_final_uses_template`, `test_total_deadline_including_tools`, `test_global_concurrency_four`, `test_budget_cache_invalidates_after_write`, `test_journal_failure_blocks_publish`, `test_total_deadline_bounds_alert_and_finalization`, `test_handoff_claim_in_text_becomes_handoff`, `test_model_reply_prefix_is_stripped`, `test_vision_request_body_and_journal`, `test_vision_empty_question_and_tool_roundtrip`, `test_vision_core_enforces_image_limits`
 
 #### tests/services/ai_support_integ
 
@@ -5317,7 +5324,7 @@
   Функции: `ticket`, `delivery`, `test_publish_status_and_exactly_one_event`, `test_publish_ai_rechecks_before_commit`, `test_ai_author_is_existing_admin_account` — Синтетического автора не создаём: автор ответа ИИ — найденный в базе админ из ADMIN_IDS., `test_ai_reply_skipped_without_admin_author`, `test_human_draft_is_audited_as_human`, `test_delivery_all_channels_with_independent_toggles`, `test_delivery_failure_does_not_skip_cabinet`
 - `tests/services/ai_support_integ/test_ticket_worker.py` — Python-модуль
   Классы: `SnapshotDb` (2 методов)
-  Функции: `msg`, `ticket`, `contract`, `loaded`, `test_auto_answer_once_and_no_recursive_admin_event`, `test_event_listener_returns_before_model`, `test_auto_guards_never_invoke_model`, `test_real_snapshot_guards`, `test_handoff_publishes_open_then_marks_and_notifies`, `test_non_answers_never_publish`, `test_generation_loses_race_and_does_not_publish`, `test_draft_helps_after_human_reply_and_never_sends_to_client`, `test_draft_limit_ten`, `test_question_includes_all_customer_messages_since_support`, `test_queue_full_does_not_raise`, `test_stale_handoff_still_notifies_admins_without_client_message` — Новое сообщение клиента во время генерации: решение «передать» выполняется для админов, клиенту не пишем., `test_stale_answer_is_dropped_silently`, `test_handoff_reply_has_no_operator_footer`, `test_chat_handoff_messages_are_not_answered_by_ai`, `test_auto_reply_has_no_ai_prefix`
+  Функции: `msg`, `ticket`, `contract`, `loaded`, `test_auto_answer_once_and_no_recursive_admin_event`, `test_event_listener_returns_before_model`, `test_auto_guards_never_invoke_model`, `test_real_snapshot_guards`, `test_handoff_publishes_open_then_marks_and_notifies`, `test_non_answers_never_publish`, `test_generation_loses_race_and_does_not_publish`, `test_draft_helps_after_human_reply_and_never_sends_to_client`, `test_draft_limit_ten`, `test_question_includes_all_customer_messages_since_support`, `test_queue_full_does_not_raise`, `test_stale_handoff_still_notifies_admins_without_client_message` — Новое сообщение клиента во время генерации: решение «передать» выполняется для админов, клиенту не пишем., `test_stale_answer_is_dropped_silently`, `test_handoff_reply_has_no_operator_footer`, `test_chat_handoff_messages_are_not_answered_by_ai`, `test_auto_reply_has_no_ai_prefix`, `with_media`, `test_refs_after_last_support_deduplicate_gallery_and_limit`, `test_worker_downloads_client_attachments_from_process_bot`, `test_photo_only_ignored_when_vision_disabled`, `test_worker_download_failure_preserves_answer_flow`, `test_draft_does_not_resend_attachments_before_support`
 
 #### tests/services/dpichecker
 

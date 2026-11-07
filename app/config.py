@@ -189,6 +189,9 @@ class Settings(BaseSettings):
     AI_SUPPORT_BASE_URL: str = 'https://api.deepseek.com'
     AI_SUPPORT_API_KEY: str | None = None
     AI_SUPPORT_MODEL: str = 'deepseek-flash'
+    AI_SUPPORT_VISION_ENABLED: bool = False
+    AI_SUPPORT_VISION_MAX_IMAGES: int = 3
+    AI_SUPPORT_VISION_MAX_MB: int = 5
     AI_SUPPORT_THINKING_ENABLED: bool = False
     AI_SUPPORT_TEMPERATURE: float = 0.2
     AI_SUPPORT_MAX_OUTPUT_TOKENS: int = 1200

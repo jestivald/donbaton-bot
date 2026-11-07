@@ -736,6 +736,14 @@ class BotConfigurationService:
         'AI_SUPPORT_BASE_URL': {'description': 'Базовый адрес API без /chat/completions.'},
         'AI_SUPPORT_API_KEY': {'description': 'Секретный ключ API. В интерфейсах отображается только маска.'},
         'AI_SUPPORT_MODEL': {'description': 'Имя модели: deepseek-flash или deepseek-v4-pro; можно указать другую.'},
+        'AI_SUPPORT_VISION_ENABLED': {
+            'description': 'Читать скриншоты клиента: DeepSeek flash или совместимая модель со зрением.',
+            'warning': 'Провайдер получает исходное изображение целиком, включая видимые персональные данные и QR-коды.',
+        },
+        'AI_SUPPORT_VISION_MAX_IMAGES': {'description': 'Максимум изображений в одном запросе ИИ; по умолчанию 3.'},
+        'AI_SUPPORT_VISION_MAX_MB': {
+            'description': 'Максимальный размер одного изображения в МиБ; по умолчанию 5, не более 32.',
+        },
         'AI_SUPPORT_THINKING_ENABLED': {'description': 'Размышления DeepSeek; обычно для поддержки выключены.'},
         'AI_SUPPORT_TEMPERATURE': {'description': 'Температура генерации; по умолчанию 0.2.'},
         'AI_SUPPORT_MAX_OUTPUT_TOKENS': {'description': 'Максимум выходных токенов, включая размышления.'},

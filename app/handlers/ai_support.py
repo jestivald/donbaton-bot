@@ -1,4 +1,4 @@
-"""ИИ для свободного текста в личке; остальные обработчики имеют приоритет."""
+"""ИИ для свободного текста и скриншотов в личке; остальные обработчики имеют приоритет."""
 
 import asyncio
 import contextlib
@@ -20,6 +20,7 @@ from app.handlers.common import handle_unknown_message
 from app.handlers.tickets import notify_admins_about_new_ticket, notify_admins_about_ticket_reply
 from app.localization.texts import get_texts
 from app.services.ai_support import api
+from app.services.ai_support.images import fetch_telegram_images, telegram_image_refs, unavailable_question
 from app.services.support_settings_service import SupportSettingsService
 from app.utils.cache import cache
 
@@ -151,6 +152,17 @@ async def handle_ai_message(message: types.Message, db_user: User | None = None)
     task.add_done_callback(_inflight.discard)
 
 
+async def handle_ai_media(message: types.Message, db_user: User | None = None) -> None:
+    try:
+        enabled = api.bot_chat_enabled() and api.vision_enabled()
+    except Exception:
+        enabled = False
+    if not enabled or db_user is None:
+        await handle_unknown_message(message, db_user)
+        return
+    await handle_ai_message(message, db_user)
+
+
 async def _process_chat(message: types.Message, user_id: int, language: str) -> None:
     try:
         async with _chat_locks[user_id % len(_chat_locks)]:
@@ -165,13 +177,23 @@ async def _answer_chat(message: types.Message, user_id: int, language: str) -> N
     typing = asyncio.create_task(_typing(message))
     try:
         history = await _read_history(user_id)
+        text = message.text if message.text is not None else (message.caption or '')
+        question = text
+        images = []
+        if message.text is None:
+            images = await fetch_telegram_images(message.bot, telegram_image_refs(message))
+            if not images:
+                question = unavailable_question(text)
         result = await api.answer(
-            message.text, history, api.AiRequestContext(api.AiChannel.BOT_CHAT, user_id, language=language)
+            question,
+            history,
+            api.AiRequestContext(api.AiChannel.BOT_CHAT, user_id, language=language),
+            **({'images': images} if images else {}),
         )
     finally:
         typing.cancel()
         await asyncio.gather(typing, return_exceptions=True)
-    turns = [*history, api.ChatTurn('user', message.text)]
+    turns = [*history, api.ChatTurn('user', text)]
     if result.reply_text and result.outcome in {api.AiOutcome.ANSWERED, api.AiOutcome.HANDOFF}:
         turns.append(api.ChatTurn('assistant', result.reply_text))
     if result.request_id is not None:
@@ -351,5 +373,13 @@ def register_handlers(dp: Dispatcher) -> None:
         F.successful_payment.is_(None),
         F.text.is_not(None),
         ~F.text.startswith('/'),
+        F.chat.type == 'private',
+    )
+    dp.message.register(
+        handle_ai_media,
+        StateFilter(None),
+        F.from_user.is_bot.is_(False),
+        F.successful_payment.is_(None),
+        F.photo | F.document.mime_type.startswith('image/'),
         F.chat.type == 'private',
     )

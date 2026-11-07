@@ -93,10 +93,10 @@ class Run:
     prompt_version: str = ''
 
 
-async def generate(question, history, ctx, config, request_id, run: Run, deadline):
+async def generate(question, history, ctx, config, request_id, run: Run, deadline, images=None):
     kb = await knowledge.load(ctx.language)
     run.kb_version = kb.status.version
-    messages = prompts.messages(question, history, ctx, kb, config)
+    messages = prompts.messages(question, history, ctx, kb, config, images=images)
     definitions = tools.definitions(ctx, config)
     for round_number in range(4):
         if not run.prompt_version:
@@ -178,7 +178,7 @@ async def check_limits(ctx, config):
     return None
 
 
-async def answer(question, history, ctx) -> AiAnswer:
+async def answer(question, history, ctx, images=None) -> AiAnswer:
     global _provider_failures
     if not settings_view.is_enabled():
         return AiAnswer(AiOutcome.DISABLED)
@@ -190,6 +190,7 @@ async def answer(question, history, ctx) -> AiAnswer:
     result = AiAnswer(AiOutcome.ERROR, error_code='internal')
     try:
         config = settings_view.snapshot()
+        logger.debug('Запрос ИИ-поддержки', image_count=len(images or []))
         deadline = started + config.timeout
         # Оставляем часть общего дедлайна для короткой финализации журнала.
         work_deadline = deadline - min(1.0, config.timeout / 10)
@@ -210,7 +211,9 @@ async def answer(question, history, ctx) -> AiAnswer:
                     async with limits.semaphore:
                         result = await check_limits(ctx, config)
                         if result is None:
-                            result = await generate(question, history, ctx, config, request_id, run, work_deadline)
+                            result = await generate(
+                                question, history, ctx, config, request_id, run, work_deadline, images=images
+                            )
                             _provider_failures = 0
     except provider.ProviderError as exc:
         result = AiAnswer(AiOutcome.ERROR, error_code=exc.code)

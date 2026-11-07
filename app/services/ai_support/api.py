@@ -1,7 +1,7 @@
 """Контракт ИИ-помощника поддержки ДонБатона (DeepSeek / OpenAI-совместимый провайдер).
 
-Интеграции (бот, тикеты, админка) импортируют ТОЛЬКО этот модуль. Реализация живёт в соседних
-модулях пакета и подставляется сюда; сигнатуры ниже — договор между исполнителями, менять их
+Интеграции (бот, тикеты, админка) используют этот модуль; загрузка вложений вынесена в images.
+Реализация живёт в соседних модулях пакета; сигнатуры ниже — договор между исполнителями, менять их
 можно только согласованно.
 
 Общие правила реализации:
@@ -9,7 +9,8 @@
   превращается в ``AiAnswer(outcome=AiOutcome.ERROR, ...)`` / ``False`` / пустой результат и пишется в лог;
 - каждая функция сама открывает короткие сессии БД (``AsyncSessionLocal``); HTTP-запрос к провайдеру
   выполняется вне транзакции;
-- тексты клиента перед отправкой провайдеру обезличиваются, ответ модели проходит выходной фильтр.
+- тексты клиента перед отправкой провайдеру обезличиваются, ответ модели проходит выходной фильтр;
+- изображения при включённом зрении передаются как есть, только в памяти, без записи в журнал.
 """
 
 from __future__ import annotations
@@ -56,6 +57,12 @@ class HandoffReason(StrEnum):
     LEGAL = 'legal'  # претензии, персональные данные
     OUTAGE = 'outage'  # похоже на массовый сбой
     OTHER = 'other'
+
+
+@dataclass(frozen=True)
+class AiImage:
+    data: bytes = field(repr=False)  # байты изображения не должны попадать в диагностический repr
+    mime: str
 
 
 @dataclass(frozen=True)
@@ -147,6 +154,13 @@ def bot_chat_enabled() -> bool:
     return settings_view.bot_chat_enabled()
 
 
+def vision_enabled() -> bool:
+    """Зрение включено владельцем и поддерживается выбранной моделью."""
+    from app.services.ai_support import settings_view
+
+    return settings_view.vision_enabled()
+
+
 def ticket_mode() -> TicketMode:
     """Режим в тикетах: off / draft / auto ('off', если is_enabled() ложно)."""
     from app.services.ai_support import settings_view
@@ -191,7 +205,9 @@ def reply_footer_text() -> str:
 # ---------------------------------------------------------------- основное
 
 
-async def answer(question: str, history: list[ChatTurn], ctx: AiRequestContext) -> AiAnswer:
+async def answer(
+    question: str, history: list[ChatTurn], ctx: AiRequestContext, images: list[AiImage] | None = None
+) -> AiAnswer:
     """Сгенерировать ответ клиенту.
 
     Внутри: проверка включения, лимитов клиента и дневного бюджета; для TICKET — атомарная заявка
@@ -202,7 +218,7 @@ async def answer(question: str, history: list[ChatTurn], ctx: AiRequestContext) 
     """
     from app.services.ai_support import service
 
-    return await service.answer(question, history, ctx)
+    return await service.answer(question, history, ctx, images=images)
 
 
 def is_human_request(text: str) -> bool:

@@ -11,8 +11,10 @@ from app.database.crud.ticket import TicketCRUD
 from app.database.database import AsyncSessionLocal
 from app.database.models import SupportAuditLog, Ticket, TicketMessage
 from app.services.ai_support import api
+from app.services.ai_support.images import fetch_telegram_images, ticket_image_refs, unavailable_question
 from app.services.ai_support_notify import admin_alert, notify_ticket_answer, send_notice
 from app.services.event_emitter import event_emitter
+from app.services.maintenance_service import maintenance_service
 from app.services.support_settings_service import SupportSettingsService
 from app.services.ticket_reply_service import publish_support_reply
 
@@ -196,7 +198,13 @@ class AiTicketService:
         elif await _draft_count(ticket.id) >= 10:
             return
         question, history = conversation_input(messages)
-        if not question.strip():
+        images = []
+        refs = ticket_image_refs(messages) if api.vision_enabled() else []
+        if refs:
+            images = await fetch_telegram_images(maintenance_service._bot, refs)
+            if not images:
+                question = unavailable_question(question)
+        if not question.strip() and not images:
             return
         result = await api.answer(
             question,
@@ -209,6 +217,7 @@ class AiTicketService:
                 trigger_message_id=job.message_id,
                 ticket_title=ticket.title,
             ),
+            **({'images': images} if images else {}),
         )
         if result.outcome == api.AiOutcome.DUPLICATE:
             return

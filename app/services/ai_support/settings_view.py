@@ -29,6 +29,9 @@ class Config:
     output_price: float
     owner_instructions: str
     status_note: str
+    vision: bool = False
+    max_images: int = 3
+    max_image_bytes: int = 5 * 1024 * 1024
 
 
 def number(suffix: str) -> float:
@@ -47,6 +50,13 @@ def is_enabled() -> bool:
 
 def bot_chat_enabled() -> bool:
     return is_enabled() and bool(settings.AI_SUPPORT_BOT_CHAT_ENABLED)
+
+
+def vision_enabled() -> bool:
+    return bool(settings.AI_SUPPORT_VISION_ENABLED) and (
+        settings.AI_SUPPORT_PROVIDER == 'openai_compatible'
+        or (settings.AI_SUPPORT_PROVIDER == 'deepseek' and 'flash' in (settings.AI_SUPPORT_MODEL or '').lower())
+    )
 
 
 def ticket_mode():
@@ -94,6 +104,9 @@ def snapshot() -> Config:
         output_price=number('PRICE_OUTPUT_PER_1M'),
         owner_instructions=settings.AI_SUPPORT_OWNER_INSTRUCTIONS_TEMPLATE or '',
         status_note=settings.AI_SUPPORT_STATUS_NOTE_TEMPLATE or '',
+        vision=vision_enabled(),
+        max_images=int(number('VISION_MAX_IMAGES')),
+        max_image_bytes=min(32, int(number('VISION_MAX_MB'))) * 1024 * 1024,
     )
 
 
@@ -107,6 +120,9 @@ def describe_settings() -> dict[str, Any]:
         'model': settings.AI_SUPPORT_MODEL,
         'api_key_configured': bool((settings.AI_SUPPORT_API_KEY or '').strip()),
         'thinking_enabled': snapshot().thinking,
+        'vision_enabled': vision_enabled(),
+        'vision_max_images': snapshot().max_images,
+        'vision_max_mb': snapshot().max_image_bytes // (1024 * 1024),
         'daily_budget_usd': number('DAILY_BUDGET_USD'),
         'user_daily_limit': int(number('USER_DAILY_LIMIT')),
         'share_account_data': bool(settings.AI_SUPPORT_SHARE_ACCOUNT_DATA),

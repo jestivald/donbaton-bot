@@ -8,6 +8,7 @@ import pytest
 
 from app.services import ai_support_tickets as worker
 from app.services.ai_support import api
+from app.services.ai_support.images import ticket_image_refs
 from app.services.event_emitter import EventEmitter
 
 
@@ -293,3 +294,98 @@ async def test_auto_reply_has_no_ai_prefix(loaded):
     text = worker.publish_support_reply.call_args.kwargs['text']
     assert not text.startswith(api.AI_REPLY_PREFIX)
     assert text.startswith('Проверьте настройки') and text.endswith('Позовите оператора')
+
+
+def with_media(message, media_type=None, file_id=None, items=None):
+    message.media_type = media_type
+    message.media_file_id = file_id
+    message.media_items = items
+    return message
+
+
+def test_refs_after_last_support_deduplicate_gallery_and_limit(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, 'AI_SUPPORT_VISION_MAX_IMAGES', 2)
+    messages = [
+        with_media(msg(1), 'photo', 'old-client'),
+        with_media(msg(2, admin=True), 'photo', 'support'),
+        with_media(
+            msg(3), 'photo', 'new', [{'type': 'photo', 'file_id': 'new'}, {'type': 'video', 'file_id': 'video'}]
+        ),
+        with_media(msg(4), items=[{'type': 'document', 'file_id': 'document'}, {'type': 'photo', 'file_id': 'extra'}]),
+    ]
+    assert ticket_image_refs(messages) == ['new', 'document']
+
+
+@pytest.mark.parametrize('mode', ['auto', 'draft'])
+async def test_worker_downloads_client_attachments_from_process_bot(monkeypatch, loaded, ticket, mode):
+    from app.config import settings
+
+    monkeypatch.setattr(api, 'vision_enabled', lambda: True)
+    monkeypatch.setattr(api, 'ticket_mode', lambda: mode)
+    monkeypatch.setattr(settings, 'AI_SUPPORT_VISION_ENABLED', True)
+    ticket.messages[:] = [
+        with_media(msg(9, ''), 'photo', 'bot-photo'),
+        with_media(msg(10, ''), 'document', 'web-image', [{'type': 'document', 'file_id': 'web-image'}]),
+    ]
+
+    async def download(path, destination, **kwargs):
+        destination.write(b'\x89PNG\r\n\x1a\nprivate image')
+
+    bot = SimpleNamespace(
+        get_file=AsyncMock(return_value=SimpleNamespace(file_path='file.png', file_size=50)),
+        download_file=AsyncMock(side_effect=download),
+    )
+    monkeypatch.setattr(worker.maintenance_service, '_bot', bot)
+    await worker.AiTicketService().process(worker.TicketJob(3, 10))
+    assert [call.args[0] for call in bot.get_file.await_args_list] == ['bot-photo', 'web-image']
+    assert len(api.answer.call_args.kwargs['images']) == 2
+    assert not api.answer.call_args.args[0].strip()
+    assert api.answer.call_args.args[2].ticket_id == ticket.id
+    if mode == 'auto':
+        worker.publish_support_reply.assert_awaited_once()
+    else:
+        worker.publish_support_reply.assert_not_awaited()
+        assert worker.notify_ticket_answer.call_args.kwargs['draft'] is True
+
+
+async def test_photo_only_ignored_when_vision_disabled(monkeypatch, loaded, ticket):
+    monkeypatch.setattr(api, 'vision_enabled', lambda: False)
+    ticket.messages[:] = [with_media(msg(10, ''), 'photo', 'photo')]
+    fetch = AsyncMock()
+    monkeypatch.setattr(worker, 'fetch_telegram_images', fetch)
+    await worker.AiTicketService().process(worker.TicketJob(3, 10))
+    api.answer.assert_not_awaited()
+    fetch.assert_not_awaited()
+
+
+@pytest.mark.parametrize('text', ['', 'Ошибка Happ'])
+async def test_worker_download_failure_preserves_answer_flow(monkeypatch, loaded, ticket, text):
+    from app.config import settings
+
+    monkeypatch.setattr(api, 'vision_enabled', lambda: True)
+    monkeypatch.setattr(settings, 'AI_SUPPORT_VISION_ENABLED', True)
+    ticket.messages[:] = [with_media(msg(10, text), 'photo', 'bad')]
+    bot = SimpleNamespace(get_file=AsyncMock(side_effect=RuntimeError('недоступен')))
+    monkeypatch.setattr(worker.maintenance_service, '_bot', bot)
+    await worker.AiTicketService().process(worker.TicketJob(3, 10))
+    assert 'его не удалось посмотреть' in api.answer.call_args.args[0]
+    assert 'images' not in api.answer.call_args.kwargs
+    worker.publish_support_reply.assert_awaited_once()
+
+
+async def test_draft_does_not_resend_attachments_before_support(monkeypatch, loaded, ticket):
+    monkeypatch.setattr(api, 'vision_enabled', lambda: True)
+    monkeypatch.setattr(api, 'ticket_mode', lambda: 'draft')
+    ticket.messages[:] = [
+        with_media(msg(8), 'photo', 'old'),
+        with_media(msg(9, 'Ответ', True), 'photo', 'admin'),
+        with_media(msg(10, 'Уточнение'), 'photo', 'new'),
+    ]
+    fetch = AsyncMock(return_value=[api.AiImage(b'png', 'image/png')])
+    monkeypatch.setattr(worker, 'fetch_telegram_images', fetch)
+    monkeypatch.setattr(worker.maintenance_service, '_bot', object())
+    await worker.AiTicketService().process(worker.TicketJob(3, 10))
+    fetch.assert_awaited_once_with(worker.maintenance_service._bot, ['new'])
+    assert api.answer.call_args.args[0] == 'Уточнение'
