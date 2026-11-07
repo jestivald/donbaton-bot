@@ -233,6 +233,7 @@ async def create_ticket(
             'ticket.created',
             {
                 'ticket_id': ticket.id,
+                'message_id': message.id,
                 'user_id': user.id,
                 'title': ticket.title,
                 'status': ticket.status,
