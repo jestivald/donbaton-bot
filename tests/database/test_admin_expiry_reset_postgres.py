@@ -18,6 +18,12 @@ from app.services.subscription_service import SubscriptionService, reset_subscri
 from tests.fixtures.postgres_db import postgres_session
 
 
+@pytest.fixture(autouse=True)
+def _upstream_hwid_trim_enabled(monkeypatch):
+    """ДонБатон: PANEL_SYNC_TRIM_EXCESS_HWID=False по умолчанию; эти тесты апстрима проверяют поведение с удалением лишних HWID."""
+    monkeypatch.setattr(settings, 'PANEL_SYNC_TRIM_EXCESS_HWID', True)
+
+
 pytestmark = pytest.mark.postgres
 
 

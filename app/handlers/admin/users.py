@@ -6822,6 +6822,8 @@ async def _change_subscription_type(
 
         # Выбранная в мультитарифе подписка, а не «лучшая активная»: переключать
         # тип надо ровно у той, чью карточку открыл админ.
+        # ДонБатон: явная подписка учитывается и без мультитарифа (админка шлёт `_s{id}` всегда; тест
+        # tests/donbaton/test_admin_network_guards.py) — отказ апстрима 5.2 «мультитариф выключен» сюда не переносим.
         if subscription_id is not None and subscription_id <= 0:
             return False, None
         subscription = await _resolve_admin_subscription(db, user_id, subscription_id)

@@ -107,7 +107,19 @@ async def test_explicit_foreign_or_missing_subscription_never_falls_back(postgre
     await test_admin_trial_conversion_sends_selected_cap(postgres_database, monkeypatch, True, 1, selected=selected)
 
 
-@pytest.mark.parametrize('subscription_id', [0, 10])
+@pytest.mark.parametrize(
+    'subscription_id',
+    [
+        0,
+        pytest.param(
+            10,
+            marks=pytest.mark.skip(
+                reason='ДонБатон: явная подписка учитывается и без мультитарифа '
+                '(tests/donbaton/test_admin_network_guards.py::test_bot_type_change_keeps_working_for_legacy_and_uses_selected_subscription)'
+            ),
+        ),
+    ],
+)
 async def test_explicit_multi_callback_after_mode_change_is_rejected(postgres_database, monkeypatch, subscription_id):
     monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', False)
     async with postgres_session(postgres_database, list(Base.metadata.sorted_tables)) as db:
@@ -123,6 +135,8 @@ async def test_explicit_multi_callback_after_mode_change_is_rejected(postgres_da
             )
         )
         await db.commit()
-        assert not await users._change_subscription_type(db, 1, 'paid', 99, subscription_id)
+        # ДонБатон: subscription_id — именованный, результат — (успех, причина отказа).
+        success, _refusal = await users._change_subscription_type(db, 1, 'paid', 99, subscription_id=subscription_id)
+        assert not success
         await db.refresh(await db.get(Subscription, 10))
         assert (await db.get(Subscription, 10)).is_trial
