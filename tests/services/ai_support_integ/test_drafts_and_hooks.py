@@ -172,9 +172,9 @@ async def test_mobile_ws_enqueues_after_commit_only_for_customer(monkeypatch):
         async def refresh(self, obj, attrs=None):
             pass
 
-    def enqueue(ticket_id, message_id):
+    def enqueue(ticket_id, message_id, user_id):
         assert 'commit' in calls
-        calls.append(('enqueue', ticket_id, message_id))
+        calls.append(('enqueue', ticket_id, message_id, user_id))
 
     monkeypatch.setattr(worker, 'enqueue_ticket_message', enqueue)
     monkeypatch.setattr(support_ws, '_get_visible_ticket', AsyncMock(return_value=ticket))
@@ -194,7 +194,7 @@ async def test_mobile_ws_enqueues_after_commit_only_for_customer(monkeypatch):
         context = SimpleNamespace(role=role, user_id=7)
         session = support_ws.SupportWsSession(websocket=SimpleNamespace(), context=context)
         await support_ws._handle_ticket_reply(ReplyDb(), session, {'ticketId': '3', 'body': 'Мой вопрос'})
-    assert calls == ['commit', ('enqueue', 3, 15), 'commit']
+    assert calls == ['commit', ('enqueue', 3, 15, 7), 'commit']
 
 
 async def test_notice_escapes_inserts_and_uses_existing_ticket_delivery(monkeypatch):

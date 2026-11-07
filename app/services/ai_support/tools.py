@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.database.database import AsyncSessionLocal
 from app.database.models import Subscription, Transaction, User
 from app.services.ai_support.api import HandoffReason
+from app.services.ai_support.output_guard import operator_summary
 from app.services.ai_support.redaction import redact
 
 
@@ -242,7 +243,7 @@ async def execute(call, ctx, config, state: ToolState):
             if set(args) != {'reason', 'summary'} or not isinstance(args['summary'], str):
                 return UNAVAILABLE
             state.reason = HandoffReason(args['reason'])
-            state.summary = redact(args['summary'])[:500]
+            state.summary = operator_summary(args['summary'], state.reason)
             return {'accepted': True, 'note': 'Сообщи клиенту, что вопрос передан оператору; ответ придёт сюда'}
         if not (config.share_account and ctx.allow_account_tools and ctx.user_id) or args:
             return UNAVAILABLE

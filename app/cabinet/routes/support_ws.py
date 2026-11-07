@@ -945,7 +945,7 @@ async def _handle_ticket_reply(db: AsyncSession, session: SupportWsSession, payl
     if not is_from_admin:
         from app.services.ai_support_tickets import enqueue_ticket_message
 
-        enqueue_ticket_message(ticket.id, message.id)
+        enqueue_ticket_message(ticket.id, message.id, ticket.user_id)
 
     media_file_id = primary.get('file_id') if primary else None
     media_type = primary.get('type') if primary else None

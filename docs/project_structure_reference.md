@@ -1477,7 +1477,7 @@
   Функции: `ticket_keyboard`, `send_notice` — Все внешние вставки экранируются после обрезки, включая тексты тревог., `admin_alert`, `notify_ticket_answer`
 - `app/services/ai_support_tickets.py` — Python-модуль
   Классы: `TicketJob`, `AiTicketService` (7 методов)
-  Функции: `load_conversation` — Короткий снимок; к моменту обращения к модели сессия уже закрыта., `conversation_input`, `enqueue_ticket_message` — Безопасная точка входа для мобильного WS и других источников.
+  Функции: `load_conversation` — Актуальность — одним ID; истории загружается только ограниченный хвост., `conversation_input`, `enqueue_ticket_message` — Безопасная точка входа для мобильного WS и других источников.
 - `app/services/antilopay_service.py` — Python-модуль
   Классы: `AntilopayAPIError` (1 методов), `AntilopayService` (12 методов)
   Функции: нет
@@ -1970,7 +1970,7 @@
   Функции: `day_start`, `acquire_user`, `release_user`, `invalidate_budget`, `spent_today`, `user_requests_today`
 - `app/services/ai_support/output_guard.py` — Python-модуль
   Классы: нет
-  Функции: `guard`
+  Функции: `normalize` — Раскрываем несколько слоёв кодирования и убираем невидимые управляющие символы., `allowed_link` — Точные адресаты; у кабинета и Telegram дополнительно ограничены пути и параметры., `strip_links`, `sentence_limit`, `has_control_leak`, `guard`, `operator_summary` — Резюме — неподтверждённые данные, отдельные от клиентского ответа.
 - `app/services/ai_support/pricing.py` — Python-модуль
   Классы: нет
   Функции: `is_peak`, `cost`
@@ -1982,7 +1982,7 @@
   Функции: `startup`, `get_client`, `shutdown`, `parse_usage`, `retry_delay`, `parse_response`, `complete`
 - `app/services/ai_support/redaction.py` — Python-модуль
   Классы: нет
-  Функции: `luhn`, `private_url`, `contains_ip`, `redact`, `redact_url`
+  Функции: `luhn`, `private_url`, `contains_ip`, `bounded_text`, `redact`, `redact_url`
 - `app/services/ai_support/repository.py` — Python-модуль
   Классы: нет
   Функции: `fallback` — Контракт чтения/обратной связи безопасен при недоступной БД., `claim`, `update_request`, `finish`, `get_request`, `record_feedback`, `attach_reply_message`, `mark_handoff_done`, `ai_reply_message_ids`, `count_ai_replies_in_ticket`, `ticket_has_handoff`, `get_stats`
@@ -1991,7 +1991,7 @@
   Функции: `cleanup`, `run`, `startup`, `shutdown`
 - `app/services/ai_support/service.py` — Python-модуль
   Классы: `Run`
-  Функции: `set_admin_alert_handler`, `alert`, `is_human_request`, `generate`, `check_limits`, `answer`
+  Функции: `has_handoff_claim`, `set_admin_alert_handler`, `alert`, `is_human_request`, `generate`, `check_limits`, `answer`
 - `app/services/ai_support/settings_view.py` — Python-модуль
   Классы: `Config`
   Функции: `number`, `is_enabled`, `bot_chat_enabled`, `vision_enabled`, `ticket_mode`, `max_ai_replies_per_ticket`, `notify_admins_enabled`, `history_turns`, `chat_memory_ttl_seconds`, `reply_footer_text`, `snapshot`, `describe_settings`
@@ -4558,8 +4558,8 @@
 #### tests/handlers/ai_support
 
 - `tests/handlers/ai_support/test_chat.py` — Python-модуль
-  Классы: `HandoffDb` (5 методов)
-  Функции: `user`, `message`, `contract`, `test_disabled_preserves_original_unknown_response`, `test_unimplemented_settings_do_not_break_fallback`, `test_private_text_and_state_filters`, `test_answer_escaped_disclosed_and_remembered`, `test_history_excludes_duplicate_disclosure`, `test_redis_failure_uses_empty_history`, `test_unavailable_outcomes_offer_support`, `test_model_exception_degrades_safely`, `test_cabinet_mode_links_to_existing_support`, `test_handoff_outcome_calls_ticket_transfer`, `test_handoff_one_ticket_or_contact`, `test_operator_callback_checks_owner`, `test_feedback_ownership_and_operator_offer`, `test_admin_status_masks_secret_and_shows_stats`, `test_handler_returns_before_model_finishes` — Хендлер не ждёт модель: транзакция AuthMiddleware завершается, соединение БД свободно., `test_inflight_limit_degrades_to_support`, `test_handoff_appends_to_active_ticket_once`, `test_media_disabled_preserves_original_response`, `test_media_answer_buttons_and_text_only_memory`, `test_media_download_error_still_answers_caption`, `test_media_routing_filters`, `test_media_download_runs_in_bounded_background_task`
+  Классы: `HandoffDb` (6 методов)
+  Функции: `user`, `message`, `contract`, `test_disabled_preserves_original_unknown_response`, `test_unimplemented_settings_do_not_break_fallback`, `test_private_text_and_state_filters`, `test_answer_escaped_disclosed_and_remembered`, `test_history_excludes_duplicate_disclosure`, `test_redis_failure_uses_empty_history`, `test_unavailable_outcomes_offer_support`, `test_model_exception_degrades_safely`, `test_cabinet_mode_links_to_existing_support`, `test_handoff_outcome_calls_ticket_transfer`, `test_handoff_one_ticket_or_contact`, `test_operator_callback_checks_owner`, `test_feedback_ownership_and_operator_offer`, `test_admin_status_masks_secret_and_shows_stats`, `test_handler_returns_before_model_finishes` — Хендлер не ждёт модель: транзакция AuthMiddleware завершается, соединение БД свободно., `test_inflight_limit_degrades_to_support`, `test_handoff_appends_to_active_ticket_once`, `test_media_disabled_preserves_original_response`, `test_media_answer_buttons_and_text_only_memory`, `test_media_download_error_still_answers_caption`, `test_media_routing_filters`, `test_media_download_runs_in_bounded_background_task`, `test_h1_one_pending_chat_task_reserved_before_scheduling`, `test_h1_blocked_active_ticket_cannot_be_bypassed`, `test_h1_chat_handoff_daily_limit`
 
 ### tests/integration
 
@@ -5300,7 +5300,7 @@
   Функции: `migration`, `run`, `snapshot`, `test_sqlite_schema_parity_unique_and_downgrade`, `test_postgres_upgrade_parity_downgrade`
 - `tests/services/ai_support/test_privacy.py` — Python-модуль
   Классы: нет
-  Функции: `test_redaction`, `test_connection_schemes`, `test_public_text_and_urls_unchanged`, `test_filtered`, `test_allowed_output_links`, `test_plain_text_and_sentence_limit`, `test_subscription_domain_with_trailing_dot_or_bare_host`, `test_url_paths_and_private_telegram_links_are_redacted`, `test_guard_rejects_percent_encoded_internal_host`
+  Функции: `test_redaction`, `test_connection_schemes`, `test_public_text_and_urls_unchanged`, `test_filtered`, `test_allowed_output_links`, `test_plain_text_and_sentence_limit`, `test_subscription_domain_with_trailing_dot_or_bare_host`, `test_url_paths_and_private_telegram_links_are_redacted`, `test_guard_rejects_percent_encoded_internal_host`, `test_h1_encoded_control_and_markup_filtered`, `test_h1_unapproved_links_removed_without_losing_answer`, `test_h1_approved_links_preserved`, `test_h1_answer_limit_is_2000_on_sentence_boundary`, `test_h1_short_context_secrets`, `test_h1_encoded_email_and_otp_in_url`
 - `tests/services/ai_support/test_provider.py` — Python-модуль
   Классы: нет
   Функции: `test_body_and_usage`, `test_retries`, `test_network_retry_and_retry_after_deadline`, `test_deadline`, `test_empty_truncated`, `test_peak_and_cost`
@@ -5309,7 +5309,7 @@
   Функции: `test_markdown_to_hidden_faq`, `test_lifecycle_idempotent_and_closes`, `test_eval_restores_model_and_disables_account_tools`, `test_seed_markdown_keeps_numbered_steps`
 - `tests/services/ai_support/test_service.py` — Python-модуль
   Классы: нет
-  Функции: `kb`, `response`, `call`, `ctx`, `test_answer_journal_feedback_stats_and_retention`, `test_duplicate_and_human_request`, `test_human_detector`, `test_human_false_positives`, `test_handoff_model_and_thinking_roundtrip`, `test_tool_round_limit`, `test_account_tools_only_context_user`, `test_limits_budget_and_concurrency`, `test_error_alerts_and_guard`, `test_disabled_and_db_errors`, `test_log_texts_off`, `test_handoff_empty_final_uses_template`, `test_total_deadline_including_tools`, `test_global_concurrency_four`, `test_budget_cache_invalidates_after_write`, `test_journal_failure_blocks_publish`, `test_total_deadline_bounds_alert_and_finalization`, `test_handoff_claim_in_text_becomes_handoff`, `test_model_reply_prefix_is_stripped`, `test_vision_request_body_and_journal`, `test_vision_empty_question_and_tool_roundtrip`, `test_vision_core_enforces_image_limits`
+  Функции: `kb`, `response`, `call`, `ctx`, `test_answer_journal_feedback_stats_and_retention`, `test_duplicate_and_human_request`, `test_human_detector`, `test_human_false_positives`, `test_handoff_model_and_thinking_roundtrip`, `test_tool_round_limit`, `test_account_tools_only_context_user`, `test_limits_budget_and_concurrency`, `test_error_alerts_and_guard`, `test_disabled_and_db_errors`, `test_log_texts_off`, `test_handoff_empty_final_uses_template`, `test_total_deadline_including_tools`, `test_global_concurrency_four`, `test_budget_cache_invalidates_after_write`, `test_journal_failure_blocks_publish`, `test_total_deadline_bounds_alert_and_finalization`, `test_handoff_claim_in_text_becomes_handoff`, `test_model_reply_prefix_is_stripped`, `test_vision_request_body_and_journal`, `test_vision_empty_question_and_tool_roundtrip`, `test_vision_core_enforces_image_limits`, `test_h1_money_promises_become_template_handoff`, `test_h1_control_leaks_filtered`, `test_h1_handoff_claim_negation_and_english`, `test_h1_operator_summary_validated_on_all_paths`, `test_h1_provider_payload_masks_short_secrets_and_encoded_email`, `test_h1_prompt_caps_text_before_redaction`, `test_h1_prompt_trust_policy`, `test_h1_first_human_handoff_survives_exhausted_ai_budget`, `test_h1_completed_handoff_timestamp_is_idempotent`, `test_h1_chat_handoff_quota_persists_under_user_lock`, `test_h1_control_leak_filtered_even_after_tool_handoff`, `test_h1_human_reply_query_preserves_old_reply_and_sent_draft`
 
 #### tests/services/ai_support_integ
 
@@ -5324,7 +5324,7 @@
   Функции: `ticket`, `delivery`, `test_publish_status_and_exactly_one_event`, `test_publish_ai_rechecks_before_commit`, `test_ai_author_is_existing_admin_account` — Синтетического автора не создаём: автор ответа ИИ — найденный в базе админ из ADMIN_IDS., `test_ai_reply_skipped_without_admin_author`, `test_human_draft_is_audited_as_human`, `test_delivery_all_channels_with_independent_toggles`, `test_delivery_failure_does_not_skip_cabinet`
 - `tests/services/ai_support_integ/test_ticket_worker.py` — Python-модуль
   Классы: `SnapshotDb` (2 методов)
-  Функции: `msg`, `ticket`, `contract`, `loaded`, `test_auto_answer_once_and_no_recursive_admin_event`, `test_event_listener_returns_before_model`, `test_auto_guards_never_invoke_model`, `test_real_snapshot_guards`, `test_handoff_publishes_open_then_marks_and_notifies`, `test_non_answers_never_publish`, `test_generation_loses_race_and_does_not_publish`, `test_draft_helps_after_human_reply_and_never_sends_to_client`, `test_draft_limit_ten`, `test_question_includes_all_customer_messages_since_support`, `test_queue_full_does_not_raise`, `test_stale_handoff_still_notifies_admins_without_client_message` — Новое сообщение клиента во время генерации: решение «передать» выполняется для админов, клиенту не пишем., `test_stale_answer_is_dropped_silently`, `test_handoff_reply_has_no_operator_footer`, `test_chat_handoff_messages_are_not_answered_by_ai`, `test_auto_reply_has_no_ai_prefix`, `with_media`, `test_refs_after_last_support_deduplicate_gallery_and_limit`, `test_worker_downloads_client_attachments_from_process_bot`, `test_photo_only_ignored_when_vision_disabled`, `test_worker_download_failure_preserves_answer_flow`, `test_draft_does_not_resend_attachments_before_support`
+  Функции: `msg`, `ticket`, `contract`, `loaded`, `test_auto_answer_once_and_no_recursive_admin_event`, `test_event_listener_returns_before_model`, `test_auto_guards_never_invoke_model`, `test_real_snapshot_guards`, `test_handoff_publishes_open_then_marks_and_notifies`, `test_non_answers_never_publish`, `test_generation_loses_race_and_does_not_publish`, `test_draft_helps_after_human_reply_and_never_sends_to_client`, `test_draft_limit_ten`, `test_question_includes_all_customer_messages_since_support`, `test_queue_full_does_not_raise`, `test_stale_handoff_still_notifies_admins_without_client_message` — Новое сообщение клиента во время генерации: решение «передать» выполняется для админов, клиенту не пишем., `test_stale_answer_is_dropped_silently`, `test_handoff_reply_has_no_operator_footer`, `test_chat_handoff_messages_are_not_answered_by_ai`, `test_auto_reply_has_no_ai_prefix`, `with_media`, `test_refs_after_last_support_deduplicate_gallery_and_limit`, `test_worker_downloads_client_attachments_from_process_bot`, `test_photo_only_ignored_when_vision_disabled`, `test_worker_download_failure_preserves_answer_flow`, `test_draft_does_not_resend_attachments_before_support`, `test_h1_queue_coalesces_ticket_and_caps_each_user`, `test_h1_snapshot_checks_latest_id_before_loading_history`, `test_h1_snapshot_fetches_only_bounded_tail`, `test_h1_updates_running_ticket_without_parallel_processing`, `test_h1_old_human_reply_stops_auto_even_outside_tail`, `test_h1_conversation_is_bounded_before_model`
 
 #### tests/services/dpichecker
 

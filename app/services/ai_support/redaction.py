@@ -92,7 +92,24 @@ def _amount_or_date(text: str, match) -> bool:
     return bool(re.match(r'\s*(?:₽|руб\b|рублей\b|RUB\b|доллар|\$|€)', suffix, re.IGNORECASE) or compact_date)
 
 
+MAX_INPUT_CHARS = 4000
+SECRET_RE = re.compile(
+    r'(?P<label>\b(?:одноразов\w*(?:\s+код\w*)?|пароль|password|pass|код|code|otp|pin|cvv|cvc)\b)'
+    r'(?P<separator>\s*(?:[:=—-]\s*)?)["\']?(?P<value>[^\s,;"\']+)',
+    re.IGNORECASE,
+)
+
+
+def bounded_text(text: str, limit: int = MAX_INPUT_CHARS) -> str:
+    value = str(text or '')
+    if len(value) <= limit:
+        return value
+    return value[: limit // 4] + '\n…\n' + value[-(limit - limit // 4 - 3) :]
+
+
 def redact(text: str) -> str:
+    text = bounded_text(text)
+    text = SECRET_RE.sub(lambda m: m['label'] + m['separator'] + '[секрет]', text)
     text = KEY_RE.sub('[ключ подключения]', str(text or ''))
     text = EMAIL_RE.sub('[почта]', text)
     text = re.sub(r'\bHWID\s*[:=]\s*[^\s,;]+', '[идентификатор]', text, flags=re.IGNORECASE)
@@ -125,9 +142,18 @@ def redact_url(value: str) -> str:
     parts = urlsplit(value if '://' in value else 'https://' + value)
     if parts.username or parts.password or contains_ip(value):
         return '[токен]'
-    query = unquote(parts.query + '&' + parts.fragment)
+    decoded = value
+    for _ in range(4):
+        decoded = unquote(decoded)
+    if EMAIL_RE.search(decoded):
+        return '[почта]'
+    query = parts.query + '&' + parts.fragment
+    for _ in range(4):
+        query = unquote(query)
     public_app = parts.hostname == 'play.google.com' and parts.path == '/store/apps/details'
-    if re.search(r'(?:^|[?&#])(?:token|key|auth|password|secret|email)=', query, re.IGNORECASE):
+    if re.search(
+        r'(?:^|[?&#])(?:token|key|auth|password|pass|secret|email|otp|pin|code|cvv|cvc)=', query, re.IGNORECASE
+    ):
         return '[токен]'
     if not public_app and (TOKEN_RE.search(query) or re.search(r'(?:^|&)id=\d{7,}', query)):
         return '[токен]'

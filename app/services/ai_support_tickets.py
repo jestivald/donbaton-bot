@@ -1,17 +1,18 @@
 """Неблокирующая очередь ответов ИИ на клиентские сообщения тикетов."""
 
 import asyncio
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.database.crud.ticket import TicketCRUD
 from app.database.database import AsyncSessionLocal
-from app.database.models import SupportAuditLog, Ticket, TicketMessage
+from app.database.models import AiSupportRequest, SupportAuditLog, Ticket, TicketMessage
 from app.services.ai_support import api
 from app.services.ai_support.images import fetch_telegram_images, ticket_image_refs, unavailable_question
+from app.services.ai_support.redaction import bounded_text
 from app.services.ai_support_notify import admin_alert, notify_ticket_answer, send_notice
 from app.services.event_emitter import event_emitter
 from app.services.maintenance_service import maintenance_service
@@ -26,12 +27,25 @@ logger = structlog.get_logger(__name__)
 class TicketJob:
     ticket_id: int
     message_id: int
+    user_id: int | None = None
+
+
+MAX_HISTORY_MESSAGES = 32
+MAX_PENDING_PER_USER = 3
 
 
 async def load_conversation(job: TicketJob):
-    """Короткий снимок; к моменту обращения к модели сессия уже закрыта."""
+    """Актуальность — одним ID; истории загружается только ограниченный хвост."""
     async with AsyncSessionLocal() as db:
-        ticket = await TicketCRUD.get_ticket_by_id(db, job.ticket_id, load_messages=True, load_user=True)
+        latest = await db.scalar(
+            select(TicketMessage.id)
+            .where(TicketMessage.ticket_id == job.ticket_id)
+            .order_by(TicketMessage.id.desc())
+            .limit(1)
+        )
+        if latest != job.message_id:
+            return None
+        ticket = await TicketCRUD.get_ticket_by_id(db, job.ticket_id, load_messages=False, load_user=True)
         if (
             ticket is None
             or ticket.status == 'closed'
@@ -40,15 +54,45 @@ async def load_conversation(job: TicketJob):
             or await TicketCRUD.is_user_globally_blocked(db, ticket.user_id)
         ):
             return None
-        messages = sorted(ticket.messages, key=lambda message: message.id)
+        rows = await db.scalars(
+            select(TicketMessage)
+            .where(TicketMessage.ticket_id == job.ticket_id)
+            .order_by(TicketMessage.id.desc())
+            .limit(MAX_HISTORY_MESSAGES)
+        )
+        messages = list(reversed(rows.all()))
         if not messages or messages[-1].id != job.message_id or messages[-1].is_from_admin:
             return None
         return ticket, messages
 
 
+async def _has_human_reply(ticket_id: int) -> bool:
+    """Ответ человека в старой части истории тоже навсегда выключает автоответ."""
+    async with AsyncSessionLocal() as db:
+        ai_ids = select(AiSupportRequest.reply_message_id).where(
+            AiSupportRequest.ticket_id == ticket_id, AiSupportRequest.reply_message_id.is_not(None)
+        )
+        sent_drafts = select(SupportAuditLog.details['message_id'].as_integer()).where(
+            SupportAuditLog.ticket_id == ticket_id, SupportAuditLog.action == 'ai_support_human_reply'
+        )
+        return (
+            await db.scalar(
+                select(TicketMessage.id)
+                .where(
+                    TicketMessage.ticket_id == ticket_id,
+                    TicketMessage.is_from_admin.is_(True),
+                    or_(TicketMessage.id.not_in(ai_ids), TicketMessage.id.in_(sent_drafts)),
+                )
+                .limit(1)
+            )
+            is not None
+        )
+
+
 def conversation_input(messages: list[TicketMessage]) -> tuple[str, list[api.ChatTurn]]:
     last_support = max((i for i, message in enumerate(messages) if message.is_from_admin), default=-1)
-    question = '\n\n'.join(message.message_text or '' for message in messages[last_support + 1 :])
+    question = '\n\n'.join((message.message_text or '')[:4000] for message in messages[last_support + 1 :])
+    question = bounded_text(question)
     turns = [
         api.ChatTurn('assistant' if message.is_from_admin else 'user', message.message_text or '')
         for message in messages[: last_support + 1]
@@ -67,16 +111,6 @@ async def _draft_count(ticket_id: int) -> int:
             )
             or 0
         )
-
-
-async def _human_published_ids(ticket_id: int) -> set[int]:
-    async with AsyncSessionLocal() as db:
-        rows = await db.scalars(
-            select(SupportAuditLog).where(
-                SupportAuditLog.ticket_id == ticket_id, SupportAuditLog.action == 'ai_support_human_reply'
-            )
-        )
-        return {row.details['message_id'] for row in rows if row.details and 'message_id' in row.details}
 
 
 async def _reserve_draft(ticket_id: int, request_id: int) -> bool:
@@ -108,12 +142,11 @@ async def _ticket_open(ticket_id: int) -> bool:
 
 class AiTicketService:
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[TicketJob] = asyncio.Queue(maxsize=1000)
+        self._queue: asyncio.Queue[int] = asyncio.Queue(maxsize=1000)
         self._workers: list[asyncio.Task] = []
-        self._pending: set[TicketJob] = set()
+        self._pending: dict[int, TicketJob] = {}
+        self._user_pending: Counter[int] = Counter()
         self._completed: OrderedDict[TicketJob, None] = OrderedDict()
-        # Полосы обеспечивают порядок внутри тикета и ограниченный объём памяти.
-        self._locks = [asyncio.Lock() for _ in range(64)]
 
     async def start(self) -> None:
         if self._workers:
@@ -131,46 +164,63 @@ class AiTicketService:
         await asyncio.gather(*self._workers, return_exceptions=True)
         self._workers.clear()
         self._pending.clear()
+        self._user_pending.clear()
         self._completed.clear()
         while not self._queue.empty():
             self._queue.get_nowait()
             self._queue.task_done()
         api.set_admin_alert_handler(None)
 
-    def enqueue(self, ticket_id: int, message_id: int) -> bool:
-        """Только put_nowait: обработчик события никогда не ждёт модель или БД."""
-        job = TicketJob(ticket_id, message_id)
-        if not self._workers or job in self._pending or job in self._completed:
+    def enqueue(self, ticket_id: int, message_id: int, user_id: int) -> bool:
+        """Один слот на тикет, до трёх на клиента; источники передают серверный ID владельца."""
+        job = TicketJob(ticket_id, message_id, user_id)
+        if not self._workers or job in self._completed:
+            return False
+        pending = self._pending.get(ticket_id)
+        if pending is not None:
+            if pending.user_id != user_id or message_id <= pending.message_id:
+                return False
+            self._pending[ticket_id] = job
+            return True
+        if self._user_pending[user_id] >= MAX_PENDING_PER_USER or len(self._pending) >= self._queue.maxsize:
             return False
         try:
-            self._queue.put_nowait(job)
+            self._queue.put_nowait(ticket_id)
         except asyncio.QueueFull:
             logger.warning('Очередь ИИ-поддержки заполнена', ticket_id=ticket_id)
             return False
-        self._pending.add(job)
+        self._pending[ticket_id] = job
+        self._user_pending[user_id] += 1
         return True
 
     def _on_event(self, event: dict) -> None:
         payload = event.get('payload', {})
         if payload.get('is_from_admin', False):
             return
-        ticket_id, message_id = payload.get('ticket_id'), payload.get('message_id')
-        if isinstance(ticket_id, int) and isinstance(message_id, int):
-            self.enqueue(ticket_id, message_id)
+        ticket_id, message_id, user_id = (payload.get(key) for key in ('ticket_id', 'message_id', 'user_id'))
+        if all(type(value) is int for value in (ticket_id, message_id, user_id)):
+            self.enqueue(ticket_id, message_id, user_id)
 
     async def _worker(self) -> None:
         while True:
-            job = await self._queue.get()
+            ticket_id = await self._queue.get()
+            job = self._pending[ticket_id]
             try:
-                async with self._locks[job.ticket_id % len(self._locks)]:
-                    await self.process(job)
+                await self.process(job)
                 self._completed[job] = None
                 if len(self._completed) > 2000:
                     self._completed.popitem(last=False)
             except Exception:
                 logger.exception('Сбой обработки тикета ИИ', ticket_id=job.ticket_id)
             finally:
-                self._pending.discard(job)
+                if self._pending[ticket_id] != job:
+                    # Пока модель отвечала, клиент уточнил вопрос. Слот остаётся за тем же тикетом.
+                    self._queue.put_nowait(ticket_id)
+                else:
+                    del self._pending[ticket_id]
+                    self._user_pending[job.user_id] -= 1
+                    if not self._user_pending[job.user_id]:
+                        del self._user_pending[job.user_id]
                 self._queue.task_done()
 
     async def process(self, job: TicketJob) -> None:
@@ -184,13 +234,8 @@ class AiTicketService:
         if any((m.message_text or '').startswith('Обращение из чата ИИ №') for m in (messages[0], messages[-1])):
             return
         if mode == 'auto':
-            ai_ids = await api.ai_reply_message_ids(ticket.id)
-            human_ids = await _human_published_ids(ticket.id)
             if (
-                any(
-                    message.is_from_admin and (message.id not in ai_ids or message.id in human_ids)
-                    for message in messages
-                )
+                await _has_human_reply(ticket.id)
                 or await api.ticket_has_handoff(ticket.id)
                 or await api.count_ai_replies_in_ticket(ticket.id) >= api.max_ai_replies_per_ticket()
             ):
@@ -266,10 +311,10 @@ class AiTicketService:
 ai_ticket_service = AiTicketService()
 
 
-def enqueue_ticket_message(ticket_id: int, message_id: int) -> bool:
+def enqueue_ticket_message(ticket_id: int, message_id: int, user_id: int) -> bool:
     """Безопасная точка входа для мобильного WS и других источников."""
     try:
-        return ai_ticket_service.enqueue(ticket_id, message_id)
+        return ai_ticket_service.enqueue(ticket_id, message_id, user_id)
     except Exception:
         logger.exception('Не удалось поставить тикет в очередь ИИ', ticket_id=ticket_id)
         return False

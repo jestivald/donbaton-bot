@@ -10,17 +10,18 @@ from time import monotonic
 import structlog
 from aiogram import Dispatcher, F, types
 from aiogram.filters import StateFilter
-from sqlalchemy import select, text as sql_text
+from sqlalchemy import func, select, text as sql_text, update
 
 from app.config import settings
 from app.database.crud.ticket import TicketCRUD, TicketMessageCRUD
 from app.database.database import AsyncSessionLocal
-from app.database.models import Ticket, TicketMessage, User
+from app.database.models import AiSupportRequest, Ticket, TicketMessage, User
 from app.handlers.common import handle_unknown_message
 from app.handlers.tickets import notify_admins_about_new_ticket, notify_admins_about_ticket_reply
 from app.localization.texts import get_texts
 from app.services.ai_support import api
 from app.services.ai_support.images import fetch_telegram_images, telegram_image_refs, unavailable_question
+from app.services.ai_support.limits import day_start
 from app.services.support_settings_service import SupportSettingsService
 from app.utils.cache import cache
 
@@ -133,6 +134,12 @@ async def _unavailable(message: types.Message, language: str) -> None:
 # меню и платежи. Поэтому генерация — в фоновой задаче, а одновременно ждущих ответов не больше MAX_INFLIGHT.
 MAX_INFLIGHT = 12
 _inflight: set[asyncio.Task] = set()
+_inflight_users: set[int] = set()
+
+
+def _release_chat(task: asyncio.Task, user_id: int) -> None:
+    _inflight.discard(task)
+    _inflight_users.discard(user_id)
 
 
 async def handle_ai_message(message: types.Message, db_user: User | None = None) -> None:
@@ -144,12 +151,23 @@ async def handle_ai_message(message: types.Message, db_user: User | None = None)
     if not enabled or db_user is None:
         await handle_unknown_message(message, db_user)
         return
+    if db_user.id in _inflight_users:
+        await message.answer(
+            get_texts(language).t('AI_SUPPORT_BUSY', 'Ещё отвечаю на предыдущий вопрос, подождите немного')
+        )
+        return
     if len(_inflight) >= MAX_INFLIGHT:
         await _unavailable(message, language)
         return
-    task = asyncio.create_task(_process_chat(message, db_user.id, language), name=f'ai-chat-{db_user.id}')
+    # До первого переключения event loop резервируем клиента, включая ожидание полосовой блокировки.
+    _inflight_users.add(db_user.id)
+    try:
+        task = asyncio.create_task(_process_chat(message, db_user.id, language), name=f'ai-chat-{db_user.id}')
+    except BaseException:
+        _inflight_users.discard(db_user.id)
+        raise
     _inflight.add(task)
-    task.add_done_callback(_inflight.discard)
+    task.add_done_callback(lambda done: _release_chat(done, db_user.id))
 
 
 async def handle_ai_media(message: types.Message, db_user: User | None = None) -> None:
@@ -229,6 +247,8 @@ async def _answer_chat(message: types.Message, user_id: int, language: str) -> N
 
 HANDOFF_MARKER = 'Обращение из чата ИИ №'
 HANDOFF_REPEAT_SECONDS = 600
+MAX_DAILY_HANDOFFS = 3
+HANDOFF_LIMIT_REACHED = -1
 
 
 async def _get_or_create_handoff(user_id: int, request_id: int, turns: list[api.ChatTurn], reason: str | None):
@@ -240,6 +260,16 @@ async def _get_or_create_handoff(user_id: int, request_id: int, turns: list[api.
     marker = f'{HANDOFF_MARKER}{request_id}\n'
     async with AsyncSessionLocal() as db:
         await db.execute(sql_text('SELECT pg_advisory_xact_lock(714202, :user_id)'), {'user_id': user_id})
+        # Строка тикета заперта до записи: запрет ответа нельзя обойти передачей из чата.
+        active = await db.scalar(
+            select(Ticket)
+            .where(Ticket.user_id == user_id, Ticket.status.in_(['open', 'answered', 'pending']))
+            .order_by(Ticket.updated_at.desc(), Ticket.id.desc())
+            .limit(1)
+            .with_for_update()
+        )
+        if active is not None and active.is_user_reply_blocked:
+            return None
         existing = await db.scalar(
             select(TicketMessage.ticket_id)
             .join(Ticket, TicketMessage.ticket_id == Ticket.id)
@@ -250,15 +280,40 @@ async def _get_or_create_handoff(user_id: int, request_id: int, turns: list[api.
             return existing
         if not SupportSettingsService.is_tickets_enabled() or await TicketCRUD.is_user_globally_blocked(db, user_id):
             return None
+        completed_ticket = await db.scalar(
+            select(AiSupportRequest.ticket_id).where(
+                AiSupportRequest.id == request_id,
+                AiSupportRequest.user_id == user_id,
+                AiSupportRequest.channel == api.AiChannel.BOT_CHAT.value,
+                AiSupportRequest.handoff_done_at.is_not(None),
+            )
+        )
+        if completed_ticket is not None:
+            return completed_ticket
+        count = await db.scalar(
+            select(func.count(AiSupportRequest.id)).where(
+                AiSupportRequest.user_id == user_id,
+                AiSupportRequest.channel == api.AiChannel.BOT_CHAT.value,
+                AiSupportRequest.handoff_done_at >= day_start(),
+            )
+        )
+        if count >= MAX_DAILY_HANDOFFS:
+            return HANDOFF_LIMIT_REACHED
+        # Резерв журнала коммитится вместе с сообщением CRUD под той же блокировкой клиента.
+        # Ошибка до commit откатывает и запись, и резерв; после commit следующая передача уже видит лимит.
+        await db.execute(
+            update(AiSupportRequest)
+            .where(
+                AiSupportRequest.id == request_id,
+                AiSupportRequest.user_id == user_id,
+                AiSupportRequest.channel == api.AiChannel.BOT_CHAT.value,
+                AiSupportRequest.handoff_done_at.is_(None),
+            )
+            .values(handoff_done_at=datetime.now(UTC), outcome='handoff', ticket_id=active.id if active else None)
+        )
         questions = [turn.text for turn in turns if turn.role == 'user']
         transcript = '\n\n'.join(f'{"Клиент" if turn.role == "user" else "ИИ"}: {turn.text}' for turn in turns)
         body = f'{marker}\n{transcript}\n\nПричина передачи: {reason or api.HandoffReason.CLIENT_REQUEST}'
-        active = await db.scalar(
-            select(Ticket)
-            .where(Ticket.user_id == user_id, Ticket.status.in_(['open', 'answered', 'pending']))
-            .order_by(Ticket.updated_at.desc(), Ticket.id.desc())
-            .limit(1)
-        )
         if active is not None:
             last = await db.scalar(
                 select(TicketMessage)
@@ -279,6 +334,8 @@ async def _get_or_create_handoff(user_id: int, request_id: int, turns: list[api.
             if not recent_handoff:
                 await TicketMessageCRUD.add_message(db, active.id, user_id, body, is_from_admin=False)
                 await notify_admins_about_ticket_reply(active, body, db)
+            else:
+                await db.commit()
             return active.id
         title = f'Вопрос из чата с ИИ: {questions[-1] if questions else "Нужен оператор"}'[:255]
         ticket = await TicketCRUD.create_ticket(db, user_id, title, body)
@@ -309,6 +366,11 @@ async def handoff_to_operator(
     texts = get_texts(language)
     try:
         ticket_id = await _get_or_create_handoff(user_id, request_id, turns, reason)
+        if ticket_id == HANDOFF_LIMIT_REACHED:
+            await message.answer(
+                texts.t('AI_SUPPORT_HANDOFF_ALREADY_PENDING', 'Ваш вопрос уже у оператора, ответ придёт сюда')
+            )
+            return
         if ticket_id is None:
             await message.answer(
                 _explanation_prefix(explanation)

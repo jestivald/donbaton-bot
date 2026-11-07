@@ -191,15 +191,23 @@ class HandoffDb:
         if self.lock.locked():
             self.lock.release()
 
-    async def execute(self, query, params):
+    async def execute(self, query, params=None):
         self.statements.append(str(query))
-        await self.lock.acquire()
+        if 'pg_advisory' in str(query):
+            await self.lock.acquire()
+
+    async def commit(self):
+        pass
 
     async def scalar(self, query):
         sql = str(query)
         self.statements.append(sql)
         if sql.startswith('SELECT ticket_messages.ticket_id'):  # поиск по маркеру запроса
             return self.ticket.id if self.ticket is not None else None
+        if 'count(' in sql:
+            return 0
+        if sql.startswith('SELECT ai_support_requests.ticket_id'):
+            return None
         if 'tickets.status IN' in sql:  # активный тикет клиента
             return self.active
         if 'ORDER BY ticket_messages.id DESC' in sql:  # последнее сообщение активного тикета
@@ -319,7 +327,7 @@ async def test_inflight_limit_degrades_to_support(monkeypatch, message, user):
 
 async def test_handoff_appends_to_active_ticket_once(monkeypatch, message, user):
     db = HandoffDb()
-    db.active = SimpleNamespace(id=55, user_id=user.id)
+    db.active = SimpleNamespace(id=55, user_id=user.id, is_user_reply_blocked=False)
     monkeypatch.setattr(chat, 'AsyncSessionLocal', lambda: db)
     monkeypatch.setattr(chat.SupportSettingsService, 'is_tickets_enabled', lambda: True)
     monkeypatch.setattr(chat.TicketCRUD, 'is_user_globally_blocked', AsyncMock(return_value=None))
@@ -454,8 +462,70 @@ async def test_media_download_runs_in_bounded_background_task(monkeypatch, messa
     # Загрузка удерживает тот же лимит, что и ожидание модели.
     monkeypatch.setattr(chat, 'MAX_INFLIGHT', 1)
     await chat.handle_ai_media(message, user)
-    assert 'Сейчас не могу' in message.answer.call_args.args[0]
+    assert 'Ещё отвечаю' in message.answer.call_args.args[0]
     assert downloader.await_count == 1
     release.set()
     await asyncio.gather(*list(chat._inflight))
     api.answer.assert_awaited_once()
+
+
+async def test_h1_one_pending_chat_task_reserved_before_scheduling(monkeypatch, message, user):
+    release = asyncio.Event()
+
+    async def slow(*args):
+        await release.wait()
+
+    model = AsyncMock(side_effect=slow)
+    monkeypatch.setattr(chat, '_process_chat', model)
+    try:
+        for _ in range(12):
+            await ORIGINAL_HANDLE(message, user)
+        assert len(chat._inflight) == 1
+        assert message.answer.await_count == 11
+        assert 'Ещё отвечаю' in message.answer.call_args.args[0]
+        await asyncio.sleep(0)
+        model.assert_awaited_once()
+    finally:
+        release.set()
+        await asyncio.gather(*list(chat._inflight))
+    await ORIGINAL_HANDLE(message, user)
+    await asyncio.gather(*list(chat._inflight))
+    assert model.await_count == 2
+
+
+async def test_h1_blocked_active_ticket_cannot_be_bypassed(monkeypatch, message, user):
+    db = HandoffDb()
+    db.active = SimpleNamespace(id=55, user_id=user.id, is_user_reply_blocked=True)
+    monkeypatch.setattr(chat, 'AsyncSessionLocal', lambda: db)
+    monkeypatch.setattr(chat.SupportSettingsService, 'is_tickets_enabled', lambda: True)
+    monkeypatch.setattr(chat.TicketCRUD, 'is_user_globally_blocked', AsyncMock(return_value=False))
+    add, create, notify = AsyncMock(), AsyncMock(), AsyncMock()
+    monkeypatch.setattr(chat.TicketMessageCRUD, 'add_message', add)
+    monkeypatch.setattr(chat.TicketCRUD, 'create_ticket', create)
+    monkeypatch.setattr(chat, 'notify_admins_about_ticket_reply', notify)
+    await chat.handoff_to_operator(message, user.id, 'ru', 123, [api.ChatTurn('user', 'оператор')])
+    add.assert_not_awaited()
+    create.assert_not_awaited()
+    notify.assert_not_awaited()
+    assert 'FOR UPDATE' in next(sql for sql in db.statements if 'tickets.status IN' in sql)
+    assert 'Свяжитесь' in message.answer.call_args.args[0]
+
+
+async def test_h1_chat_handoff_daily_limit(monkeypatch, message, user):
+    class QuotaDb(HandoffDb):
+        async def scalar(self, query):
+            if 'count(' in str(query):
+                return 3
+            return await super().scalar(query)
+
+    db = QuotaDb()
+    monkeypatch.setattr(chat, 'AsyncSessionLocal', lambda: db)
+    monkeypatch.setattr(chat.SupportSettingsService, 'is_tickets_enabled', lambda: True)
+    monkeypatch.setattr(chat.TicketCRUD, 'is_user_globally_blocked', AsyncMock(return_value=False))
+    create, notify = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(chat.TicketCRUD, 'create_ticket', create)
+    monkeypatch.setattr(chat, 'notify_admins_about_new_ticket', notify)
+    await chat.handoff_to_operator(message, user.id, 'ru', 123, [api.ChatTurn('user', 'оператор')])
+    create.assert_not_awaited()
+    notify.assert_not_awaited()
+    assert message.answer.call_args.args[0] == 'Ваш вопрос уже у оператора, ответ придёт сюда'

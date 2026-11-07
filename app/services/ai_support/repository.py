@@ -121,7 +121,10 @@ async def attach_reply_message(request_id: int, reply_message_id: int) -> None:
 
 @fallback(lambda: None)
 async def mark_handoff_done(request_id: int, ticket_id: int | None) -> None:
-    values = {'outcome': 'handoff', 'handoff_done_at': datetime.now(UTC)}
+    values = {
+        'outcome': 'handoff',
+        'handoff_done_at': func.coalesce(AiSupportRequest.handoff_done_at, datetime.now(UTC)),
+    }
     if ticket_id is not None:
         values['ticket_id'] = ticket_id
     await update_request(request_id, **values)

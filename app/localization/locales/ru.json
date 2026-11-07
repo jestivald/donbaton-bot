@@ -2365,5 +2365,7 @@
   "AI_SUPPORT_DRAFT_STALE": "Тикет закрыт или появились новые сообщения.",
   "AI_SUPPORT_REFRESH": "🔄 Обновить базу",
   "AI_SUPPORT_TEST": "🧪 Проверить ответ",
-  "AI_SUPPORT_SETTINGS": "⚙️ Настройки"
+  "AI_SUPPORT_SETTINGS": "⚙️ Настройки",
+  "AI_SUPPORT_BUSY": "Ещё отвечаю на предыдущий вопрос, подождите немного",
+  "AI_SUPPORT_HANDOFF_ALREADY_PENDING": "Ваш вопрос уже у оператора, ответ придёт сюда"
 }

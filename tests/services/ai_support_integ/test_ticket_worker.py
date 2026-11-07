@@ -51,7 +51,7 @@ def contract(monkeypatch):
     monkeypatch.setattr(worker, 'send_notice', AsyncMock())
     monkeypatch.setattr(worker, '_draft_count', AsyncMock(return_value=0))
     monkeypatch.setattr(worker, '_reserve_draft', AsyncMock(return_value=True))
-    monkeypatch.setattr(worker, '_human_published_ids', AsyncMock(return_value=set()))
+    monkeypatch.setattr(worker, '_has_human_reply', AsyncMock(return_value=False), raising=False)
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ async def test_auto_answer_once_and_no_recursive_admin_event(loaded, monkeypatch
     service = worker.AiTicketService()
     await service.start()
     try:
-        event = {'ticket_id': 3, 'message_id': 10, 'is_from_admin': False}
+        event = {'ticket_id': 3, 'message_id': 10, 'user_id': 7, 'is_from_admin': False}
         await bus.emit('ticket.message_added', event)
         await bus.emit('ticket.message_added', event)
         await asyncio.wait_for(service._queue.join(), timeout=1)
@@ -103,7 +103,9 @@ async def test_event_listener_returns_before_model(loaded, monkeypatch):
     service = worker.AiTicketService()
     await service.start()
     try:
-        await asyncio.wait_for(bus.emit('ticket.created', {'ticket_id': 3, 'message_id': 10}), timeout=0.1)
+        await asyncio.wait_for(
+            bus.emit('ticket.created', {'ticket_id': 3, 'message_id': 10, 'user_id': 7}), timeout=0.1
+        )
         await asyncio.wait_for(entered.wait(), timeout=1)
         assert not release.is_set()
     finally:
@@ -117,11 +119,12 @@ async def test_auto_guards_never_invoke_model(monkeypatch, ticket, loaded, guard
     if guard == 'off':
         monkeypatch.setattr(api, 'ticket_mode', lambda: 'off')
     elif guard == 'human':
+        monkeypatch.setattr(worker, '_has_human_reply', AsyncMock(return_value=True))
         ticket.messages.insert(0, msg(9, 'Ответ человека', True))
     elif guard == 'human_draft':
+        monkeypatch.setattr(worker, '_has_human_reply', AsyncMock(return_value=True))
         ticket.messages.insert(0, msg(9, 'Отправленный черновик', True))
         monkeypatch.setattr(api, 'ai_reply_message_ids', AsyncMock(return_value={9}))
-        monkeypatch.setattr(worker, '_human_published_ids', AsyncMock(return_value={9}))
     elif guard == 'handoff':
         monkeypatch.setattr(api, 'ticket_has_handoff', AsyncMock(return_value=True))
     elif guard == 'limit':
@@ -145,7 +148,14 @@ class SnapshotDb:
 
 @pytest.mark.parametrize('guard', ['closed', 'blocked_ticket', 'blocked_user', 'newer', 'admin', 'disabled', 'missing'])
 async def test_real_snapshot_guards(monkeypatch, ticket, guard):
-    monkeypatch.setattr(worker, 'AsyncSessionLocal', SnapshotDb)
+    class GuardDb(SnapshotDb):
+        async def scalar(self, query):
+            return ticket.messages[-1].id
+
+        async def scalars(self, query):
+            return SimpleNamespace(all=lambda: list(reversed(ticket.messages)))
+
+    monkeypatch.setattr(worker, 'AsyncSessionLocal', GuardDb)
     monkeypatch.setattr(worker.TicketCRUD, 'get_ticket_by_id', AsyncMock(return_value=ticket))
     monkeypatch.setattr(worker.TicketCRUD, 'is_user_globally_blocked', AsyncMock(return_value=None))
     monkeypatch.setattr(worker.SupportSettingsService, 'is_tickets_enabled', lambda: guard != 'disabled')
@@ -236,8 +246,8 @@ async def test_queue_full_does_not_raise():
     service = worker.AiTicketService()
     service._workers = [object()]
     service._queue = asyncio.Queue(maxsize=1)
-    assert service.enqueue(1, 1)
-    assert not service.enqueue(2, 2)
+    assert service.enqueue(1, 1, 7)
+    assert not service.enqueue(2, 2, 8)
 
 
 async def test_stale_handoff_still_notifies_admins_without_client_message(monkeypatch, ticket):
@@ -389,3 +399,104 @@ async def test_draft_does_not_resend_attachments_before_support(monkeypatch, loa
     await worker.AiTicketService().process(worker.TicketJob(3, 10))
     fetch.assert_awaited_once_with(worker.maintenance_service._bot, ['new'])
     assert api.answer.call_args.args[0] == 'Уточнение'
+
+
+async def test_h1_queue_coalesces_ticket_and_caps_each_user():
+    service = worker.AiTicketService()
+    service._workers = [object()]
+
+    def enqueue(ticket_id, message_id, user_id):
+        service._on_event({'payload': {'ticket_id': ticket_id, 'message_id': message_id, 'user_id': user_id}})
+
+    enqueue(1, 1, 7)
+    enqueue(1, 2, 7)
+    assert service._queue.qsize() == 1
+    assert service._pending[1].message_id == 2
+    enqueue(2, 3, 7)
+    enqueue(3, 4, 7)
+    enqueue(4, 5, 7)
+    assert service._queue.qsize() == 3
+    enqueue(5, 6, 8)
+    assert service._queue.qsize() == 4
+
+
+async def test_h1_snapshot_checks_latest_id_before_loading_history(monkeypatch, ticket):
+    class Db(SnapshotDb):
+        async def scalar(self, query):
+            assert 'SELECT ticket_messages.id' in str(query)
+            assert 'LIMIT' in str(query)
+            return 11
+
+    monkeypatch.setattr(worker, 'AsyncSessionLocal', Db)
+    load = AsyncMock(return_value=ticket)
+    monkeypatch.setattr(worker.TicketCRUD, 'get_ticket_by_id', load)
+    assert await worker.load_conversation(worker.TicketJob(3, 10)) is None
+    load.assert_not_awaited()
+
+
+async def test_h1_snapshot_fetches_only_bounded_tail(monkeypatch, ticket):
+    queries = []
+
+    class Db(SnapshotDb):
+        async def scalar(self, query):
+            return 10
+
+        async def scalars(self, query):
+            queries.append(str(query))
+            return SimpleNamespace(all=lambda: ticket.messages)
+
+    monkeypatch.setattr(worker, 'AsyncSessionLocal', Db)
+    load = AsyncMock(return_value=ticket)
+    monkeypatch.setattr(worker.TicketCRUD, 'get_ticket_by_id', load)
+    monkeypatch.setattr(worker.TicketCRUD, 'is_user_globally_blocked', AsyncMock(return_value=False))
+    monkeypatch.setattr(worker.SupportSettingsService, 'is_tickets_enabled', lambda: True)
+    assert await worker.load_conversation(worker.TicketJob(3, 10))
+    assert load.call_args.kwargs['load_messages'] is False
+    assert queries and all('LIMIT' in sql for sql in queries)
+
+
+async def test_h1_updates_running_ticket_without_parallel_processing(monkeypatch):
+    service = worker.AiTicketService()
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def process(job):
+        calls.append((job.ticket_id, job.message_id))
+        if len(calls) == 1:
+            entered.set()
+            await release.wait()
+
+    monkeypatch.setattr(service, 'process', process)
+    await service.start()
+    try:
+        assert service.enqueue(3, 10, 7)
+        await asyncio.wait_for(entered.wait(), 1)
+        for message_id in range(11, 30):
+            assert service.enqueue(3, message_id, 7)
+        assert service._queue.qsize() == 0
+        assert len(service._pending) == 1
+        assert service.enqueue(4, 40, 7)
+        assert service.enqueue(5, 50, 7)
+        assert not service.enqueue(6, 60, 7)
+        release.set()
+        await asyncio.wait_for(service._queue.join(), 1)
+        assert [item for item in calls if item[0] == 3] == [(3, 10), (3, 29)]
+        assert not service._pending and not service._user_pending
+        assert service.enqueue(6, 60, 7)
+        await asyncio.wait_for(service._queue.join(), 1)
+    finally:
+        release.set()
+        await service.stop()
+
+
+async def test_h1_old_human_reply_stops_auto_even_outside_tail(monkeypatch, loaded):
+    monkeypatch.setattr(worker, '_has_human_reply', AsyncMock(return_value=True))
+    await worker.AiTicketService().process(worker.TicketJob(3, 10))
+    api.answer.assert_not_awaited()
+
+
+def test_h1_conversation_is_bounded_before_model(monkeypatch):
+    question, history = worker.conversation_input([msg(i, str(i) + 'x' * 4000) for i in range(32)])
+    assert len(question) <= 4000
+    assert question.startswith('0') and question.endswith('x')
+    assert not history

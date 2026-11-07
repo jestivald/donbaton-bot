@@ -79,3 +79,41 @@ Telegram-админки и SLA); `is_user_reply_blocked` вместо несущ
 - 20:00:05 база знаний (`seed_kb.sh APPLY=1`); публичные `/api/cabinet/info-pages` страниц `ai-*` не отдают (404 / нет в списке).
 - 20:00:16 кабинет (`deploy-cabinet.sh APPLY=1`): healthy, новый бандл на `lk` и сайте, старый — 200.
 - ИИ после выкладки **выключен** (`AI_SUPPORT_ENABLED=false`, ключа нет). Включение — после ключа владельца и прогона «золотого набора».
+
+
+## H1 — усиление после красной команды J1 (07.11.2026)
+
+Изменения подготовлены в `codex/ai-vision-20261107` поверх `8f8bd795`; без сети, коммита и выкладки.
+
+- Чат: максимум одна фоновая задача на клиента; повтор получает локализованное сообщение ожидания.
+  Общий предел 12 задач сохранён. Передача учитывает блокировку активного тикета под `FOR UPDATE`;
+  отдельная квота — 3 передачи за сутки МСК по `ai_support_requests.handoff_done_at` под блокировкой клиента.
+  Резерв журнала коммитится вместе с записью тикета; повтор не обновляет время выполненной передачи.
+- Тикеты: один слот очереди на тикет с обновлением до последнего `message_id`, максимум 3 слота на клиента
+  (включая выполняемые). Источники событий и мобильный WS передают серверный `user_id` владельца.
+  Актуальность проверяется запросом одного ID; в память выбирается хвост из 32 сообщений. Ответ человека
+  в старой части истории по-прежнему выключает автоответ: отдельный SQL-поиск по всей переписке.
+- Выход: нормализация NFKC/невидимых символов/HTML/percent-кодирования, разрешительный список ссылок,
+  повторные проверки после снятия разметки, детекторы служебных утечек и финансовых обещаний.
+  Запрещённые ссылки заменяются на «(ссылка удалена)», обещания — на передачу `money` с `HANDOFF_TEXT`.
+  Ответ ограничен 2000 знаками. Резюме имеет отдельный валидатор, лимит 500 и пометку «[авто, не проверено]».
+- Вход: короткие секреты после контекстных меток и percent-кодированная почта в URL маскируются;
+  до обезличивания вопрос ограничивается 4000 знаками. Промпт `20261107-4` определяет границы доверия:
+  посторонние поручения и джейлбрейки получают короткий отказ; проблемы сервиса сохраняют эскалацию.
+- Контракт `api.py` и миграции не менялись. Мягкое ограничение бюджета (F05) не входит в H1 и сохраняется.
+  Лимиты фоновых задач/очереди действуют внутри процесса; живая модель и PostgreSQL здесь не проверялись.
+
+Проверки H1 в этой песочнице:
+
+- Регрессии `-k h1` на исходном коде HEAD: **109 failed, 10 passed**; после восстановления исправлений
+  весь целевой набор `tests/services/ai_support tests/handlers/ai_support tests/services/ai_support_integ`
+  с `-m "not postgres"`: **425 passed, 3 deselected**, ошибок нет.
+- Полный `.venv/bin/python -m pytest -q -p no:cacheprovider -m "not postgres and not bschek_live"`:
+  **11215 passed, 7 failed, 5 skipped, 329 deselected**. Все 7 ошибок — `PermissionError: [Errno 1]
+  Operation not permitted` на `socket.bind`: `test_clients_require_one_distinct_credential_per_route`
+  в `tests/donbaton/test_lte_telemetry_producer.py`; в `tests/external/test_yookassa_webhook.py` —
+  `test_handle_webhook_success`, `test_handle_webhook_rejects_cf_connecting_ip_alone_behind_local_peer`,
+  `test_handle_webhook_with_optional_signature`, `test_handle_webhook_accepts_canceled_event`,
+  `test_handle_webhook_rejects_non_yookassa_ip_by_default`, `test_handle_webhook_skip_ip_check_bypasses_ip_gate`.
+- `.venv/bin/ruff check app tests` и `.venv/bin/ruff format --check app tests` — чисто (1558 файлов).
+  `scripts/generate_structure_reference.py` пересобран; `--check` и `git diff --check` проходят.

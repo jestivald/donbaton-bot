@@ -12,7 +12,7 @@ import structlog
 
 from app.services.ai_support import knowledge, limits, pricing, prompts, provider, repository, settings_view, tools
 from app.services.ai_support.api import AdminAlertHandler, AiAnswer, AiOutcome, HandoffReason
-from app.services.ai_support.output_guard import guard
+from app.services.ai_support.output_guard import PROMISE_RE, guard, has_control_leak, normalize, operator_summary
 from app.services.ai_support.redaction import redact
 
 
@@ -22,9 +22,26 @@ HANDOFF_TEXT = 'Вопрос передан оператору. Ответ пр�
 # мимо SLA). Настоящее/прошедшее время («передаю», «передал», «передан») — это передача; условное «передам» — нет.
 HANDOFF_CLAIM_RE = re.compile(
     r'(?<![\w-])(?:переда(?:ю|л[аи]?|н[аоы]?|[её]м)|перевожу|перев[её]л[аи]?)(?![\w-])[^.!?\n]{0,60}?'
-    r'(?<![\w-])(?:оператор\w*|сотрудник\w*|специалист\w*|человек\w*)',
+    r'(?<![\w-])(?:оператор\w*|сотрудник\w*|специалист\w*|человек\w*)|'
+    r'\b(?:forwarded|passed|transferred|escalated)\b[^.!?\n]{0,60}?\bto\s+'
+    r'(?:(?:a|an|our)\s+)?(?:human|operator|agent|support|specialist)\b',
     re.IGNORECASE,
 )
+
+
+def has_handoff_claim(text: str) -> bool:
+    for match in HANDOFF_CLAIM_RE.finditer(text):
+        prefix = text[max(0, match.start() - 40) : match.start()]
+        if not re.search(
+            r'\b(?:не|not|never|haven[’\']t|hasn[’\']t|wasn[’\']t)\s*'
+            r'(?:(?:yet|been|being|был|была|было|были|будет|будут)\s*)?$',
+            prefix,
+            re.IGNORECASE,
+        ):
+            return True
+    return False
+
+
 _alert_handler: AdminAlertHandler | None = None
 _alert_times: dict[str, float] = {}
 _provider_failures = 0
@@ -128,6 +145,8 @@ async def generate(question, history, ctx, config, request_id, run: Run, deadlin
         message = completion.message
         calls = message.get('tool_calls') or []
         if not calls:
+            if has_control_leak(message.get('content') or ''):
+                return AiAnswer(AiOutcome.FILTERED, error_code='output_filtered')
             text = guard(
                 prompts.clean_assistant_text(message.get('content') or '')
                 or (HANDOFF_TEXT if run.tool_state.reason else '')
@@ -142,7 +161,14 @@ async def generate(question, history, ctx, config, request_id, run: Run, deadlin
                 )
             if text is None:
                 return AiAnswer(AiOutcome.FILTERED, error_code='output_filtered')
-            if not run.tool_state.reason and HANDOFF_CLAIM_RE.search(text):
+            if PROMISE_RE.search(text) or PROMISE_RE.search(normalize(message.get('content') or '')):
+                return AiAnswer(
+                    AiOutcome.HANDOFF,
+                    reply_text=HANDOFF_TEXT,
+                    handoff_reason=HandoffReason.MONEY,
+                    operator_summary=operator_summary(None, HandoffReason.MONEY),
+                )
+            if not run.tool_state.reason and has_handoff_claim(text):
                 # Клиенту уже обещана передача — оформляем её, иначе тикет уйдёт в answered мимо очереди и SLA.
                 run.tool_state.reason = HandoffReason.OTHER
                 run.tool_state.summary = 'ИИ сообщил клиенту о передаче оператору без вызова инструмента'
@@ -237,6 +263,8 @@ async def answer(question, history, ctx, images=None) -> AiAnswer:
     finally:
         # Блокировка живёт до записи журнала: следующий запрос увидит стоимость и лимит.
         try:
+            if result.outcome == AiOutcome.HANDOFF:
+                result.operator_summary = operator_summary(result.operator_summary, result.handoff_reason)
             if request_id is not None:
                 async with asyncio.timeout(max(0, min(5, deadline - time.monotonic()))):
                     await repository.finish(
