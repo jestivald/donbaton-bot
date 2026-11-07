@@ -151,6 +151,13 @@ def _get_support_settings_keyboard(language: str) -> types.InlineKeyboardMarkup:
         ]
     )
 
+    rows.append(
+        [
+            types.InlineKeyboardButton(
+                text=texts.t('AI_SUPPORT_TITLE', '🤖 ИИ-помощник'), callback_data='admin_ai_support'
+            )
+        ]
+    )
     rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='admin_submenu_support')])
 
     return types.InlineKeyboardMarkup(inline_keyboard=rows)

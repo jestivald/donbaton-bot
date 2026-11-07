@@ -360,6 +360,14 @@ async def main():
         monitoring_service.bot = bot
         grace_access_runtime.bot = bot
         maintenance_service.set_bot(bot)
+        try:
+            from app.services.ai_support import api as ai_support_api
+            from app.services.ai_support_tickets import ai_ticket_service
+
+            await ai_support_api.startup()
+            await ai_ticket_service.start()
+        except Exception:
+            logger.exception('Не удалось запустить ИИ-поддержку; основной поток продолжает работу')
         broadcast_service.set_bot(bot)
         ban_notification_service.set_bot(bot)
         traffic_monitoring_scheduler.set_bot(bot)
@@ -970,6 +978,14 @@ async def main():
                 logger.warning('Не удалось отправить уведомление об остановке', error=shutdown_notify_error)
 
         logger.info('ℹ️ Остановка сервиса автопроверки пополнений...')
+        try:
+            from app.services.ai_support import api as ai_support_api
+            from app.services.ai_support_tickets import ai_ticket_service
+
+            await ai_ticket_service.stop()
+            await ai_support_api.shutdown()
+        except Exception:
+            logger.exception('Не удалось остановить ИИ-поддержку')
         try:
             await auto_payment_verification_service.stop()
         except Exception as error:

@@ -57,6 +57,7 @@ class TicketCRUD:
                 'ticket.created',
                 {
                     'ticket_id': ticket.id,
+                    'message_id': message.id,
                     'user_id': user_id,
                     'title': title,
                     'status': ticket.status,

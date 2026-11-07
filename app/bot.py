@@ -5,6 +5,7 @@ from aiogram.fsm.storage.redis import RedisStorage
 
 from app.config import settings
 from app.handlers import (
+    ai_support,
     balance,
     common,
     contests as user_contests,
@@ -21,6 +22,7 @@ from app.handlers import (
     tickets,
 )
 from app.handlers.admin import (
+    ai_support as admin_ai_support,
     backup as admin_backup,
     blacklist as admin_blacklist,
     blocked_users as admin_blocked_users,
@@ -222,6 +224,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     admin_system_logs.register_handlers(dp)
     admin_welcome_text.register_welcome_text_handlers(dp)
     admin_tickets.register_handlers(dp)
+    admin_ai_support.register_handlers(dp)
     admin_reports.register_handlers(dp)
     admin_bot_configuration.register_handlers(dp)
     admin_pricing.register_handlers(dp)
@@ -239,6 +242,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     admin_overpay_certificate.register_handlers(dp)
     register_channel_member_handlers(dp)
     register_gift_activation_handlers(dp)
+    ai_support.register_handlers(dp)
     common.register_handlers(dp)
     register_stars_handlers(dp)
     user_contests.register_handlers(dp)
