@@ -35,8 +35,10 @@ def explicit_close_request(text: str) -> bool:
     if re.search(r'\b(?:не|нельзя|not|don[’\']t|как|how|если|if)\b', value):
         return False
     return bool(
-        re.search(r'\bзакр(?:ой(?:те)?|ывай(?:те)?)\b', value)
+        re.search(r'\bзакр(?:ой(?:те)?|ывай(?:те)?|ывать|ываем)\b', value)
         or re.search(r'\b(?:можно|прошу|можете)\s+закрыть\b', value)
+        # Ответ одним словом на вопрос ИИ «закрывать обращение?»: «закрыть», «да, закрыть».
+        or re.fullmatch(r'\W*(?:да\W+)?закрыть\W*', value)
         or re.search(r'\bclose\s+(?:(?:the|my|this)\s+)?(?:ticket|case|request)\b', value)
     )
 

@@ -2374,6 +2374,7 @@
   "AI_SUPPORT_REFRESH": "🔄 Обновить базу",
   "AI_SUPPORT_TEST": "🧪 Проверить ответ",
   "AI_SUPPORT_SETTINGS": "⚙️ Настройки",
+  "AI_SUPPORT_LEGACY_KEYBOARD": "这些按钮来自旧版机器人，已不再可用，我已将其移除。购买、续费、设备和邀请都在“个人中心”：发送 /start 打开菜单。如有问题，请直接输入文字。",
   "AI_SUPPORT_BUSY": "Ещё отвечаю на предыдущий вопрос, подождите немного",
   "AI_SUPPORT_HANDOFF_ALREADY_PENDING": "Ваш вопрос уже у оператора, ответ придёт сюда",
   "TARIFF_PURCHASE_CONFIRMATION_EXPIRED": "此确认已过期，请重新选择套餐。",

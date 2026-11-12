@@ -529,3 +529,27 @@ async def test_h1_chat_handoff_daily_limit(monkeypatch, message, user):
     create.assert_not_awaited()
     notify.assert_not_awaited()
     assert message.answer.call_args.args[0] == 'Ваш вопрос уже у оператора, ответ придёт сюда'
+
+
+@pytest.mark.parametrize('text', ['🏠 Главное меню', '💳 Купить подписку', '👥 Пригласи друга', '❓ Помощь', ' 🏠 Главное меню '])
+async def test_legacy_reply_buttons_remove_keyboard_without_ai(message, user, text):
+    message.text = text
+    await chat.handle_ai_message(message, user)
+    api.answer.assert_not_awaited()
+    assert message.answer.await_count == 1
+    sent = message.answer.call_args
+    assert isinstance(sent.kwargs['reply_markup'], types.ReplyKeyboardRemove)
+    assert '/start' in sent.args[0]
+
+
+async def test_legacy_reply_buttons_handled_when_ai_disabled(monkeypatch, message, user):
+    monkeypatch.setattr(api, 'bot_chat_enabled', lambda: False)
+    message.text = '💳 Купить подписку'
+    await chat.handle_ai_message(message, user)
+    assert isinstance(message.answer.call_args.kwargs['reply_markup'], types.ReplyKeyboardRemove)
+
+
+async def test_text_mentioning_menu_still_goes_to_ai(message, user):
+    message.text = 'Где главное меню? 🏠 Главное меню не открывается'
+    await chat.handle_ai_message(message, user)
+    api.answer.assert_awaited()

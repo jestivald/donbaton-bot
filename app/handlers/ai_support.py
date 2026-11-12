@@ -143,8 +143,32 @@ def _release_chat(task: asyncio.Task, user_id: int) -> None:
     _inflight_users.discard(user_id)
 
 
+# Reply-клавиатура бота до 04.09.2026: у части клиентов она осталась, а нажатия приходили в ИИ как вопросы
+# (09–12.11.2026: 41 из ~85 сообщений чата, тикеты #34 и #37). Убираем клавиатуру без обращения к ИИ.
+LEGACY_REPLY_BUTTONS = frozenset({'🏠 Главное меню', '💳 Купить подписку', '👥 Пригласи друга', '❓ Помощь'})
+
+
+def is_legacy_reply_button(text: str | None) -> bool:
+    return (text or '').replace('\ufe0f', '').strip() in LEGACY_REPLY_BUTTONS
+
+
+async def handle_legacy_reply_button(message: types.Message, language: str) -> None:
+    await message.answer(
+        get_texts(language).t(
+            'AI_SUPPORT_LEGACY_KEYBOARD',
+            'Эти кнопки остались от старой версии бота и больше не работают — убрал их. '
+            'Покупка, продление, устройства и приглашения — в «Личном кабинете»: отправьте /start, '
+            'и откроется меню. Если есть вопрос — напишите его текстом.',
+        ),
+        reply_markup=types.ReplyKeyboardRemove(),
+    )
+
+
 async def handle_ai_message(message: types.Message, db_user: User | None = None) -> None:
     language = db_user.language if db_user else 'ru'
+    if is_legacy_reply_button(message.text):
+        await handle_legacy_reply_button(message, language)
+        return
     try:
         enabled = api.bot_chat_enabled()
     except Exception:

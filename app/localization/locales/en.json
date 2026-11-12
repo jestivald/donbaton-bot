@@ -2374,6 +2374,7 @@
   "AI_SUPPORT_REFRESH": "🔄 Обновить базу",
   "AI_SUPPORT_TEST": "🧪 Проверить ответ",
   "AI_SUPPORT_SETTINGS": "⚙️ Настройки",
+  "AI_SUPPORT_LEGACY_KEYBOARD": "These buttons are left over from the old version of the bot and no longer work, so I removed them. Purchases, renewals, devices and invitations are in the “Personal account”: send /start to open the menu. If you have a question, just type it.",
   "AI_SUPPORT_BUSY": "I am still answering your previous question. Please wait a moment.",
   "AI_SUPPORT_HANDOFF_ALREADY_PENDING": "Your question is already with an operator. The reply will arrive here.",
   "TARIFF_PURCHASE_CONFIRMATION_EXPIRED": "This confirmation has expired. Please select the tariff again.",
