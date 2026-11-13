@@ -18,6 +18,7 @@
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 from aiogram import types
@@ -505,8 +506,16 @@ async def test_cabinet_trial_has_no_renewal_options_and_a_clear_refusal(monkeypa
         assert await cabinet_renewal.get_renewal_options(user=user, db=db, subscription_id=None) == []
 
         with pytest.raises(HTTPException) as error:
+            # 5.2.1: продление кабинета идемпотентно — operation_id и исходный срок обязательны.
             await cabinet_renewal.renew_subscription(
-                RenewalRequest(period_days=30), user=user, db=db, subscription_id=None
+                RenewalRequest(
+                    operation_id=uuid4(),
+                    expected_end_date=sub.end_date,
+                    period_days=30,
+                ),
+                user=user,
+                db=db,
+                subscription_id=None,
             )
         assert error.value.status_code == 400
         assert error.value.detail == 'Пробный период нельзя продлить — выберите тариф.'
