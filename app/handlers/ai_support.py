@@ -108,6 +108,28 @@ async def _remember(request_id: int, user_id: int, turns: list[api.ChatTurn]) ->
         logger.debug('Память чата ИИ недоступна')
 
 
+async def _remember_handoff(user_id: int, text: str) -> None:
+    """Подтверждение передачи — в историю чата.
+
+    Кнопка «Оператор» создаёт тикет мимо модели; без этой записи на «когда придёт?» модель не знает о передаче
+    и отвечает «я пока не передавал» (13.11.2026, тикет #39).
+    """
+    try:
+        raw = await cache.get(f'ai_support:chat:{user_id}')
+        turns = [
+            {'role': item['role'], 'text': item['text']}
+            for item in raw or []
+            if isinstance(item, dict) and item.get('role') in {'user', 'assistant'} and 'text' in item
+        ]
+        turns.append({'role': 'assistant', 'text': text})
+        limit = api.history_turns()
+        await cache.set(
+            f'ai_support:chat:{user_id}', turns[-limit:] if limit > 0 else [], api.chat_memory_ttl_seconds()
+        )
+    except Exception:
+        logger.debug('Память чата ИИ недоступна')
+
+
 async def _request_turns(request_id: int, user_id: int) -> list[api.ChatTurn]:
     try:
         data = await cache.get(f'ai_support:request:{request_id}')
@@ -392,9 +414,9 @@ async def handoff_to_operator(
     try:
         ticket_id = await _get_or_create_handoff(user_id, request_id, turns, reason)
         if ticket_id == HANDOFF_LIMIT_REACHED:
-            await message.answer(
-                texts.t('AI_SUPPORT_HANDOFF_ALREADY_PENDING', 'Ваш вопрос уже у оператора, ответ придёт сюда')
-            )
+            pending = texts.t('AI_SUPPORT_HANDOFF_ALREADY_PENDING', 'Ваш вопрос уже у оператора, ответ придёт сюда')
+            await message.answer(pending)
+            await _remember_handoff(user_id, pending)
             return
         if ticket_id is None:
             await message.answer(
@@ -413,6 +435,7 @@ async def handoff_to_operator(
             _explanation_prefix(explanation) + html.escape(night_handoff_reply(confirmation, language)),
             parse_mode='HTML',
         )
+        await _remember_handoff(user_id, confirmation)
     except Exception:
         logger.exception('Не удалось передать чат ИИ оператору', request_id=request_id)
         await _unavailable(message, language)

@@ -531,7 +531,9 @@ async def test_h1_chat_handoff_daily_limit(monkeypatch, message, user):
     assert message.answer.call_args.args[0] == 'Ваш вопрос уже у оператора, ответ придёт сюда'
 
 
-@pytest.mark.parametrize('text', ['🏠 Главное меню', '💳 Купить подписку', '👥 Пригласи друга', '❓ Помощь', ' 🏠 Главное меню '])
+@pytest.mark.parametrize(
+    'text', ['🏠 Главное меню', '💳 Купить подписку', '👥 Пригласи друга', '❓ Помощь', ' 🏠 Главное меню ']
+)
 async def test_legacy_reply_buttons_remove_keyboard_without_ai(message, user, text):
     message.text = text
     await chat.handle_ai_message(message, user)
@@ -553,3 +555,37 @@ async def test_text_mentioning_menu_still_goes_to_ai(message, user):
     message.text = 'Где главное меню? 🏠 Главное меню не открывается'
     await chat.handle_ai_message(message, user)
     api.answer.assert_awaited()
+
+
+async def test_handoff_confirmation_is_remembered_in_chat_history(monkeypatch, message, user):
+    """13.11.2026 #39: кнопка «Оператор» создала тикет, а на «когда придёт?» ИИ ответил «я пока не передавал»."""
+    db = HandoffDb()
+    monkeypatch.setattr(chat, 'AsyncSessionLocal', lambda: db)
+    monkeypatch.setattr(chat.SupportSettingsService, 'is_tickets_enabled', lambda: True)
+    monkeypatch.setattr(chat.TicketCRUD, 'is_user_globally_blocked', AsyncMock(return_value=None))
+    monkeypatch.setattr(chat, 'notify_admins_about_new_ticket', AsyncMock())
+
+    async def create(*args):
+        db.ticket = SimpleNamespace(id=39)
+        return db.ticket
+
+    monkeypatch.setattr(chat.TicketCRUD, 'create_ticket', AsyncMock(side_effect=create))
+    history = [{'role': 'user', 'text': 'Ничего не работает'}, {'role': 'assistant', 'text': 'Что именно?'}]
+    monkeypatch.setattr(chat.cache, 'get', AsyncMock(return_value=history))
+    await chat.handoff_to_operator(message, user.id, user.language, 458, [api.ChatTurn('user', 'Ничего не работает')])
+    key, saved, ttl = chat.cache.set.call_args.args
+    assert key == 'ai_support:chat:7' and ttl == 300
+    assert saved[:2] == history
+    assert saved[-1]['role'] == 'assistant' and '№39' in saved[-1]['text']
+    # история, которую увидит модель на следующий вопрос, содержит подтверждение передачи
+    monkeypatch.setattr(chat.cache, 'get', AsyncMock(return_value=saved))
+    turns = await chat._read_history(user.id)
+    assert '№39' in turns[-1].text
+
+
+async def test_handoff_memory_failure_does_not_break_transfer(monkeypatch, message, user):
+    monkeypatch.setattr(chat, '_get_or_create_handoff', AsyncMock(return_value=39))
+    monkeypatch.setattr(chat.cache, 'get', AsyncMock(side_effect=RuntimeError('offline')))
+    await chat.handoff_to_operator(message, user.id, user.language, 458, [])
+    api.mark_handoff_done.assert_awaited_once_with(458, 39)
+    assert '№39' in message.answer.call_args.args[0]
