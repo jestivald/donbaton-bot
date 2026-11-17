@@ -1163,9 +1163,39 @@ def _remember_target_devices(quota, device_limit):
     if not state:
         return
     state = deepcopy(state)  # legacy_state — обычный JSON без MutableDict
-    state['target_device_limit'] = device_limit or 0
+    target = device_limit or 0
+    admin = state.get('admin_device_limit')
+    if admin is not None:
+        # Устройства, выданные админом, покупка не забирает (как у обычной
+        # подписки, где продление лимит не трогает); больший тариф их поднимает.
+        target = 0 if admin == 0 else max(admin, target)
+        state['admin_device_limit'] = target
+    state['target_device_limit'] = target
     state['runtime'].pop('target_devices_applied_at', None)
     quota.legacy_state = state
+
+
+async def record_admin_device_limit(db, subscription, device_limit) -> bool:
+    """Явный лимит устройств от админа для перенесённой подписки.
+
+    Пока действуют прежние условия, ``apply_panel_policy`` при каждой отправке в
+    панель пересчитывает лимит как max(прежний, купленный) — и правка админа
+    (кабинет, Telegram, массовое действие) молча откатывалась: панель получала
+    прежние 4, админ видел «ничего не происходит» (17.11.2026, подписка 584).
+    Значение админа становится и лимитом окна, и целью после него.
+    Возвращает ``False``, если у подписки нет перенесённых условий.
+    """
+    quota = await _quota(db, subscription)
+    state = getattr(quota, 'legacy_state', None) if quota is not None else None
+    if not state:
+        return False
+    value = int(device_limit or 0)
+    state = deepcopy(state)
+    state['admin_device_limit'] = value
+    state['target_device_limit'] = value
+    state['runtime'].pop('target_devices_applied_at', None)
+    quota.legacy_state = state
+    return True
 
 
 def _schedule_legacy_target(quota, tariff):
@@ -1185,8 +1215,12 @@ def _legacy_window_device_limit(state) -> int:
     """Лимит устройств в окне прежних условий: больший из прежнего и купленного.
 
     ``0`` — прежний безлимит устройств (HWID-лимит панели ``null``): покупка
-    тарифа в окне его не урезает.
+    тарифа в окне его не урезает. Явный лимит админа (``admin_device_limit``)
+    действует как есть — в том числе ниже прежнего.
     """
+    admin = state.get('admin_device_limit')
+    if admin is not None:
+        return admin
     legacy = legacy_device_limit(state)
     if legacy == 0:
         return 0

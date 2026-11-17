@@ -611,7 +611,11 @@ async def _do_set_devices(
         await db.rollback()
         return result
 
+    from app.services.lte_quota_service import record_admin_device_limit
+
     sub.device_limit = device_limit
+    # Перенесённой подписке политика Wi-Fi/LTE иначе вернёт прежний лимит.
+    await record_admin_device_limit(db, sub, device_limit)
     await db.commit()
     await db.refresh(sub)
     await _sync_subscription_to_panel(db, user, sub)

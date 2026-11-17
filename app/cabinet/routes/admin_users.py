@@ -2060,7 +2060,11 @@ async def update_user_subscription(
                 detail='device_limit parameter is required for set_device_limit action',
             )
 
+        from app.services.lte_quota_service import record_admin_device_limit
+
         subscription.device_limit = request.device_limit
+        # Перенесённой подписке политика Wi-Fi/LTE иначе вернёт прежний лимит.
+        await record_admin_device_limit(db, subscription, request.device_limit)
         await db.commit()
         await db.refresh(subscription)
 

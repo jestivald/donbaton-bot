@@ -5052,6 +5052,10 @@ async def _update_user_devices(
         old_devices = subscription.device_limit
         subscription.device_limit = devices
         subscription.updated_at = datetime.now(UTC)
+        from app.services.lte_quota_service import record_admin_device_limit
+
+        # Перенесённой подписке политика Wi-Fi/LTE иначе вернёт прежний лимит.
+        await record_admin_device_limit(db, subscription, devices)
 
         await db.commit()
 

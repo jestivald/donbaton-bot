@@ -45,6 +45,7 @@ from app.services.lte_quota_service import (
     legacy_autopay_blocked,
     legacy_purchase_recorded,
     legacy_terms_keep_devices,
+    record_admin_device_limit,
     validate_legacy_renewal,
 )
 from app.services.pricing_engine import PricingEngine
@@ -588,3 +589,96 @@ async def test_same_plan_renewal_of_an_ordinary_subscription_keeps_its_terms(mon
 
         assert (quota.limit_bytes, quota.next_limit_bytes, quota.period_starts_at, quota.base_used_bytes) == before
         assert quota.legacy_state is None
+
+
+# --------------------------------------------------------------------------- #
+# Правка лимита устройств админом (17.11.2026, подписка 584: 7/5/10 → панель 4)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('devices', [10, 2])
+async def test_admin_device_limit_wins_inside_the_window_and_after_it(monkeypatch, devices):
+    """Админ ставит лимит — панель получает его, а не прежний max(); выше и ниже прежних 4."""
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, quota, _, paid_until = await locked_legacy(db, devices=4)
+        inside = NOW + timedelta(hours=1)
+        before = await apply_panel_policy(db, sub, {}, panel_user=sample(BASELINE), now=inside)
+        assert before['hwid_device_limit'] == 4
+
+        sub.device_limit = devices
+        assert await record_admin_device_limit(db, sub, devices) is True
+        await db.commit()
+
+        result = await apply_panel_policy(
+            db, sub, {'hwid_device_limit': devices}, panel_user=sample(BASELINE), now=inside
+        )
+        assert result['hwid_device_limit'] == sub.device_limit == devices
+
+        after = await apply_panel_policy(
+            db, sub, {}, panel_user=sample(BASELINE), now=paid_until + timedelta(seconds=1)
+        )
+        assert after['hwid_device_limit'] == sub.device_limit == devices
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('admin', 'expected'), [(10, 10), (5, 7)])
+async def test_purchase_keeps_admin_devices_and_a_bigger_plan_raises_them(monkeypatch, admin, expected):
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, quota, plans, paid_until = await locked_legacy(db, devices=4)
+        sub.device_limit = admin
+        await record_admin_device_limit(db, sub, admin)
+        await db.commit()
+
+        await checkout(db, sub, plans[10], 30)  # Семейный, 7 устройств
+        inside = await apply_panel_policy(db, sub, {}, panel_user=sample(BASELINE), now=NOW + timedelta(hours=1))
+        assert inside['hwid_device_limit'] == sub.device_limit == expected
+
+        after = await apply_panel_policy(
+            db, sub, {}, panel_user=sample(BASELINE), now=paid_until + timedelta(seconds=1)
+        )
+        assert after['hwid_device_limit'] == sub.device_limit == expected
+
+
+@pytest.mark.asyncio
+async def test_admin_device_limit_is_a_no_op_without_migrated_terms(monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, quota, _, _ = await locked_legacy(db, devices=4)
+        quota.legacy_state = None
+        await db.commit()
+        assert await record_admin_device_limit(db, sub, 9) is False
+
+
+@pytest.mark.asyncio
+async def test_cabinet_admin_set_device_limit_reaches_the_panel(monkeypatch):
+    """Сквозь ручку кабинета: в панель уходит лимит админа, а не прежние 4 (баг 17.11.2026)."""
+    from app.cabinet.routes import admin_users
+    from app.cabinet.schemas.users import UpdateSubscriptionRequest
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        sub, _, _, _ = await locked_legacy(db, devices=4)
+        sent = {}
+
+        async def fake_sync(db_, user, subscription, **kwargs):
+            sent.update(
+                await apply_panel_policy(
+                    db_,
+                    subscription,
+                    {'hwid_device_limit': subscription.device_limit},
+                    panel_user=sample(BASELINE),
+                    now=NOW + timedelta(hours=1),
+                )
+            )
+            await db_.commit()
+            return {'action': 'updated'}
+
+        monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', fake_sync)
+        monkeypatch.setattr(admin_users, '_build_subscription_info_async', AsyncMock(return_value=None))
+        request = UpdateSubscriptionRequest(action='set_device_limit', device_limit=10, subscription_id=sub.id)
+
+        result = await admin_users.update_user_subscription(sub.user_id, request, admin=SimpleNamespace(id=1), db=db)
+
+        assert result.success is True
+        assert sent['hwid_device_limit'] == 10
+        await db.refresh(sub)
+        assert sub.device_limit == 10
